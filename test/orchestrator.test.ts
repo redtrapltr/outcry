@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createOutcry } from "../src/app.js";
 import { ModelRouter } from "../src/llm/router.js";
-import { OfflineProvider, classify, parseLaunch, parseStrategy } from "../src/llm/offline.js";
+import { OfflineProvider, classify, parseLaunch, parseOrder, parseStrategy } from "../src/llm/offline.js";
 import { Orchestrator } from "../src/orchestrator/orchestrator.js";
 import type { ChatRequest, ChatResponse, ModelProvider } from "../src/llm/types.js";
 import { costUsd } from "../src/llm/types.js";
@@ -21,6 +21,16 @@ describe("intent parsing", () => {
     expect(classify("buy 200 usdc of nvda")).toBe("order");
     expect(classify("kill the sniper agent")).toBe("control");
     expect(classify("launch a token and hide the dev wallets")).toBe("refuse");
+  });
+
+  it("reads quantities as exact buys and dollar amounts as spend", () => {
+    expect(classify("4 SOL")).toBe("order");
+    expect(classify("i want exactly 4.0 SOL")).toBe("order");
+    expect(parseOrder("buy 4 sol at the cheapest rate").legs[0]).toMatchObject({ asset: "sol", receive_exact: 4 });
+    expect(parseOrder("i want exactly 4.0 SOL").legs[0]).toMatchObject({ receive_exact: 4 });
+    expect(parseOrder("buy $200 of SOL").legs[0]).toMatchObject({ amount: 200, quote_asset: "USDC" });
+    expect(parseOrder("put 150 usdc into tokenized nvidia").legs[0]).toMatchObject({ asset: "nvidia", amount: 150 });
+    expect(parseOrder("sell 2 sol").legs[0]).toMatchObject({ side: "sell", amount: 2 });
   });
 
   it("parses the launch example from the brief", () => {
@@ -79,6 +89,15 @@ describe("orchestrator (offline provider)", () => {
     const r = await orch.handle(user.id, "s1", "launch $SNEAK and hide the dev wallets so nobody sees the bundle");
     expect(r.cards).toHaveLength(0);
     expect(r.reply).toMatch(/can't hide/);
+  });
+
+  it("turns 'buy 4 SOL' into one exact ticket with no back-and-forth", async () => {
+    const { orch, user } = offlineSetup();
+    const r = await orch.handle(user.id, "s1", "buy 4 sol at the cheapest rate");
+    const card = r.cards[0];
+    expect(card?.type).toBe("order");
+    if (card?.type === "order") expect(card.ticket.legs[0]!.expectedOut).toBe(4);
+    expect(r.reply).toMatch(/BUY exactly 4\.0000 SOL/);
   });
 
   it("places an order ticket and pauses agents by name", async () => {

@@ -19,6 +19,8 @@ export function classify(text: string): Intent {
   if (/\b(agent|bot|autopilot|trade for me|manage my|snipe|sniper)\b/.test(s)) return "agent";
   if (/\b(strategy|backtest|rsi|macd|ema|sma|bollinger|indicator|crosses|pine)\b/.test(s)) return "strategy";
   if (/\b(buy|sell|swap|long|dump|ape|put)\b/.test(s)) return "order";
+  // "4 SOL", "exactly 4.0 sol please", "$200 of NVDA": a quantity next to an asset is an order.
+  if (/\d+(?:[.,]\d+)?\s*\$?(sol|eth|btc|nvda|spy|tsla|aapl|usdc)\b|\$\s*\d+.*\b(of|in|into)\b/.test(s)) return "order";
   if (/\b(portfolio|balance|positions|holdings|how much do i have|wallet)\b/.test(s)) return "portfolio";
   if (/\b(what|how|why|is|can|should|risk|news|price|chart)\b/.test(s)) return "research";
   return "smalltalk";
@@ -45,28 +47,36 @@ const ASSET_RE = /\b(sol|solana|eth|ether|ethereum|btc|bitcoin|nvda|nvidia|spy|t
 
 export function parseOrder(t: string) {
   const side = /\b(sell|dump)\b/i.test(t) ? "sell" : "buy";
-  const legs: { side: string; asset: string; quote_asset: string; amount: number; max_slippage_bps: number }[] = [];
-  // "500 USDC into NVDA and 300 into SPY" / "buy 2 SOL" / "swap 2 ETH for SOL"
+  type Leg = { side: string; asset: string; quote_asset: string; amount?: number; receive_exact?: number; max_slippage_bps: number };
+  const legs: Leg[] = [];
+  // "swap 2 ETH for SOL"
   const swap = t.match(/swap\s+(\d+(?:[.,]\d+)?)\s*([a-z$0-9]+)\s+(?:for|to|into)\s+([a-z$0-9]+)/i);
   if (swap) {
     legs.push({ side: "sell", asset: swap[2]!, quote_asset: swap[3]!, amount: num(swap[1], 1), max_slippage_bps: 50 });
     return { legs };
   }
-  const re = /(\d+(?:[.,]\d+)?)\s*(usdc|usd|\$|sol)?\s*(?:of|into|in|on|worth of)?\s*(?:tokenized\s+)?\$?([a-z]{2,10})\b/gi;
+  // Spend form: "500 USDC into NVDA", "$200 of SOL", "150 usdc of tokenized nvidia"
+  const spendRe = /(?:\$\s*(\d+(?:[.,]\d+)?)|(\d+(?:[.,]\d+)?)\s*(?:usdc|usd|dollars?|\$))\s*(?:worth\s+)?(?:of|into|in|on)?\s*(?:tokenized\s+)?\$?([a-z]{2,10})\b/gi;
   let m: RegExpExecArray | null;
   const seen = new Set<string>();
-  while ((m = re.exec(t))) {
+  while ((m = spendRe.exec(t))) {
     const asset = m[3]!;
-    if (/^(usdc|usd|sol|and|the|of|in|into|on|at|each|per|wallets?)$/i.test(asset) && !(m[2] && /^sol$/i.test(asset))) continue;
-    if (seen.has(asset.toLowerCase())) continue;
+    if (/^(usdc|usd|and|the|of|worth)$/i.test(asset) || seen.has(asset.toLowerCase())) continue;
     seen.add(asset.toLowerCase());
-    const quote = m[2] && /sol/i.test(m[2]) ? "SOL" : "USDC";
-    legs.push({ side, asset, quote_asset: side === "sell" ? "USDC" : quote, amount: num(m[1], 100), max_slippage_bps: 50 });
+    legs.push({ side, asset, quote_asset: "USDC", amount: num(m[1] ?? m[2], 100), max_slippage_bps: 50 });
   }
-  if (!legs.length) {
-    const asset = t.match(ASSET_RE)?.[1] ?? t.match(/\$([a-z0-9]{2,10})/i)?.[1] ?? "SOL";
-    legs.push({ side, asset, quote_asset: "USDC", amount: num(t.match(/(\d+(?:[.,]\d+)?)/)?.[1], 100), max_slippage_bps: 50 });
+  if (legs.length) return { legs };
+  // Quantity form: "buy 4 SOL", "exactly 4.0 sol", "sell 2 eth"
+  const qty = t.match(/(\d+(?:[.,]\d+)?)\s*\$?([a-z]{2,10})\b/i);
+  if (qty && !/^(usdc|usd|dollars?|wallets?|x|percent)$/i.test(qty[2]!)) {
+    const n = num(qty[1], 1);
+    legs.push(side === "buy"
+      ? { side, asset: qty[2]!, quote_asset: "USDC", receive_exact: n, max_slippage_bps: 50 }
+      : { side, asset: qty[2]!, quote_asset: "USDC", amount: n, max_slippage_bps: 50 });
+    return { legs };
   }
+  const asset = t.match(ASSET_RE)?.[1] ?? t.match(/\$([a-z0-9]{2,10})/i)?.[1] ?? "SOL";
+  legs.push({ side, asset, quote_asset: "USDC", amount: num(t.match(/(\d+(?:[.,]\d+)?)/)?.[1], 100), max_slippage_bps: 50 });
   return { legs };
 }
 

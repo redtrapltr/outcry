@@ -24,42 +24,71 @@ export class PaperAdapter implements ExecutionAdapter {
 
   constructor(private market: MarketData) {}
 
-  async quote(leg: OrderLeg & { venue: Venue }, ctx: QuoteContext): Promise<QuotedLeg> {
+  /** Output of a swap for a given input, after venue fee, Outcry fee and price impact. */
+  private swapOut(amountIn: number, side: "buy" | "sell", px: number, qpx: number, feeBps: number, platformBps: number, liquidity: number) {
+    const notionalUsd = side === "buy" ? amountIn * qpx : amountIn * px;
+    // Price impact: sqrt model against pool liquidity (memes) or deep books (majors)
+    const impactBps = Math.min(3_000, Math.max(1, Math.round(10_000 * 0.1 * Math.sqrt(notionalUsd / liquidity))));
+    const venueFeeUsd = (notionalUsd * feeBps) / 10_000;
+    const platformFeeUsd = (notionalUsd * platformBps) / 10_000;
+    const netUsd = notionalUsd - venueFeeUsd - platformFeeUsd;
+    const impactMult = 1 - impactBps / 10_000;
+    const out = side === "buy" ? (netUsd / px) * impactMult : (netUsd / qpx) * impactMult;
+    return { out, impactBps, venueFeeUsd, platformFeeUsd };
+  }
+
+  /** Smallest input that yields `target` output (the curve is monotonic, so bisection is exact enough). */
+  private inputFor(target: number, px: number, qpx: number, feeBps: number, platformBps: number, liquidity: number) {
+    let lo = 0;
+    let hi = ((target * px) / qpx) * 2 + 1e-9;
+    while (this.swapOut(hi, "buy", px, qpx, feeBps, platformBps, liquidity).out < target) hi *= 2;
+    for (let i = 0; i < 60; i++) {
+      const mid = (lo + hi) / 2;
+      if (this.swapOut(mid, "buy", px, qpx, feeBps, platformBps, liquidity).out >= target) hi = mid;
+      else lo = mid;
+    }
+    return Math.ceil(hi * 1e6) / 1e6; // round up to the quote token's precision
+  }
+
+  private context(leg: OrderLeg & { venue: Venue }) {
     const asset = this.market.asset(leg.asset);
     if (!asset) throw new Error(`Unknown asset "${leg.asset}". Try a ticker like SOL, NVDA or a pump.fun mint.`);
     const quote = this.market.asset(leg.quoteAsset);
     if (!quote) throw new Error(`Unknown quote asset "${leg.quoteAsset}"`);
-
-    const px = this.market.priceUsd(asset.symbol);
-    const qpx = this.market.priceUsd(quote.symbol);
     const risk = this.market.tokenRisk(asset.symbol);
-
     let feeBps = VENUE_FEE_BPS[leg.venue];
     if (leg.venue === "jupiter" && risk && risk.ageMinutes < 24 * 60) feeBps = NEW_TOKEN_JUPITER_FEE_BPS;
+    return {
+      asset,
+      quote,
+      px: this.market.priceUsd(asset.symbol),
+      qpx: this.market.priceUsd(quote.symbol),
+      feeBps,
+      liquidity: risk ? risk.liquidityUsd : 50_000_000,
+    };
+  }
 
-    // USD notional of the leg
-    const notionalUsd = leg.side === "buy" ? leg.amount * qpx : leg.amount * px;
-    // Price impact: sqrt model against pool liquidity (memes) or deep books (majors)
-    const liquidity = risk ? risk.liquidityUsd : 50_000_000;
-    const impactBps = Math.min(3_000, Math.max(1, Math.round(10_000 * 0.1 * Math.sqrt(notionalUsd / liquidity))));
-
-    const venueFeeUsd = (notionalUsd * feeBps) / 10_000;
-    const platformFeeUsd = (notionalUsd * ctx.platformFeeBps) / 10_000;
-    const netUsd = notionalUsd - venueFeeUsd - platformFeeUsd;
-    const impactMult = 1 - impactBps / 10_000;
-    const expectedOut = leg.side === "buy" ? (netUsd / px) * impactMult : (netUsd / qpx) * impactMult;
-
-    const route = `${leg.venue}:${quote.symbol}->${asset.symbol}`;
+  async quote(leg: OrderLeg & { venue: Venue }, ctx: QuoteContext): Promise<QuotedLeg> {
+    const c = this.context(leg);
+    let amount = leg.amount;
+    if (leg.receiveExact !== undefined) {
+      if (leg.side !== "buy") throw new Error("Exact-output only applies to buys; for sells, the amount is what you sell");
+      amount = this.inputFor(leg.receiveExact, c.px, c.qpx, c.feeBps, ctx.platformFeeBps, c.liquidity);
+    }
+    if (!(amount > 0)) throw new Error("Amount must be positive");
+    const q = this.swapOut(amount, leg.side, c.px, c.qpx, c.feeBps, ctx.platformFeeBps, c.liquidity);
+    const route = `${leg.venue}:${c.quote.symbol}->${c.asset.symbol}`;
     this.quotes.set(route, Date.now());
     return {
       ...leg,
-      asset: asset.symbol,
-      quoteAsset: quote.symbol,
-      chain: asset.chain,
-      expectedOut,
-      priceImpactBps: impactBps,
-      venueFeeUsd,
-      platformFeeUsd,
+      amount,
+      asset: c.asset.symbol,
+      quoteAsset: c.quote.symbol,
+      chain: c.asset.chain,
+      expectedOut: leg.receiveExact ?? q.out,
+      priceImpactBps: q.impactBps,
+      venueFeeUsd: q.venueFeeUsd,
+      platformFeeUsd: q.platformFeeUsd,
       route,
     };
   }
@@ -68,8 +97,10 @@ export class PaperAdapter implements ExecutionAdapter {
     const spend = leg.side === "buy" ? leg.quoteAsset : leg.asset;
     const receive = leg.side === "buy" ? leg.asset : leg.quoteAsset;
     const have = balances[spend] ?? 0;
-    if (have + 1e-9 < leg.amount) {
-      return { ok: false, deltas: {}, error: `Insufficient ${spend}: have ${round(have)}, need ${round(leg.amount)}` };
+    // Exact-output buys may cost up to the slippage bound, so reserve that much.
+    const need = leg.receiveExact !== undefined ? leg.amount * (1 + leg.maxSlippageBps / 10_000) : leg.amount;
+    if (have + 1e-9 < need) {
+      return { ok: false, deltas: {}, error: `Insufficient ${spend}: have ${round(have)}, need ${round(need)}` };
     }
     const risk = this.market.tokenRisk(leg.asset);
     if (leg.side === "buy" && risk && !risk.freezeRevoked) {
@@ -80,19 +111,24 @@ export class PaperAdapter implements ExecutionAdapter {
 
   async submit(leg: QuotedLeg, _sig: Signature): Promise<SubmitResult> {
     // Fill at a fresh price, bounded by the ticket's max slippage.
-    const px = this.market.priceUsd(leg.asset);
-    const qpx = this.market.priceUsd(leg.quoteAsset);
-    const notional = leg.side === "buy" ? leg.amount * qpx : leg.amount * px;
-    const net = notional - leg.venueFeeUsd - leg.platformFeeUsd;
-    const impact = 1 - leg.priceImpactBps / 10_000;
-    let out = leg.side === "buy" ? (net / px) * impact : (net / qpx) * impact;
+    const c = this.context(leg);
+    const platformBps = leg.amount > 0 ? Math.round((leg.platformFeeUsd / (leg.side === "buy" ? leg.amount * c.qpx : leg.amount * c.px)) * 10_000) : 0;
+    const txId = `paper_${newId("tx")}_${nowIso().slice(11, 19).replace(/:/g, "")}`;
+    if (leg.receiveExact !== undefined) {
+      // Exact output: receive exactly the requested quantity; the input may move within slippage.
+      const need = this.inputFor(leg.receiveExact, c.px, c.qpx, c.feeBps, platformBps, c.liquidity);
+      const maxIn = leg.amount * (1 + leg.maxSlippageBps / 10_000);
+      if (need > maxIn) throw new Error(`Price moved beyond max slippage (${leg.maxSlippageBps} bps); nothing was filled`);
+      return { txId, amountIn: need, amountOut: leg.receiveExact, price: need / leg.receiveExact };
+    }
+    let out = this.swapOut(leg.amount, leg.side, c.px, c.qpx, c.feeBps, platformBps, c.liquidity).out;
     const minOut = leg.expectedOut * (1 - leg.maxSlippageBps / 10_000);
     if (out < minOut) {
       throw new Error(`Price moved beyond max slippage (${leg.maxSlippageBps} bps); nothing was filled`);
     }
     out = Math.min(out, leg.expectedOut * 1.02);
     return {
-      txId: `paper_${newId("tx")}_${nowIso().slice(11, 19).replace(/:/g, "")}`,
+      txId,
       amountIn: leg.amount,
       amountOut: out,
       price: leg.side === "buy" ? leg.amount / out : out / leg.amount,

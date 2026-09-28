@@ -293,7 +293,9 @@ function stamp(host, text, bad) { const s = document.createElement('div'); s.cla
 function orderCard(t) {
   const j = J[t.jacket] || J.swaps;
   const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px';
-  const legs = t.legs.map(l => `<div class="t-row"><span><b>${l.side.toUpperCase()} · ${esc(l.asset)}</b><small>${esc(l.venue)} · ${esc(l.chain)} · impact ${(l.priceImpactBps / 100).toFixed(2)}% · max slip ${(l.maxSlippageBps / 100).toFixed(1)}%</small></span><span style="text-align:right">${amt(l.amount)} ${esc(l.side === 'buy' ? l.quoteAsset : l.asset)}<small>≈ ${amt(l.expectedOut)} ${esc(l.side === 'buy' ? l.asset : l.quoteAsset)}</small></span></div>`).join('');
+  const legs = t.legs.map(l => l.receiveExact != null
+    ? `<div class="t-row"><span><b>BUY · ${esc(l.asset)}</b><small>${esc(l.venue)} · ${esc(l.chain)} · impact ${(l.priceImpactBps / 100).toFixed(2)}% · max slip ${(l.maxSlippageBps / 100).toFixed(1)}%</small></span><span style="text-align:right">receive exactly ${amt(l.receiveExact)} ${esc(l.asset)}<small>pay ≈ ${amt(l.amount)} ${esc(l.quoteAsset)} (max ${amt(l.amount * (1 + l.maxSlippageBps / 10000))})</small></span></div>`
+    : `<div class="t-row"><span><b>${l.side.toUpperCase()} · ${esc(l.asset)}</b><small>${esc(l.venue)} · ${esc(l.chain)} · impact ${(l.priceImpactBps / 100).toFixed(2)}% · max slip ${(l.maxSlippageBps / 100).toFixed(1)}%</small></span><span style="text-align:right">${amt(l.amount)} ${esc(l.side === 'buy' ? l.quoteAsset : l.asset)}<small>≈ ${amt(l.expectedOut)} ${esc(l.side === 'buy' ? l.asset : l.quoteAsset)}</small></span></div>`).join('');
   const fees = t.legs.reduce((s, l) => s + l.venueFeeUsd + l.platformFeeUsd, 0);
   wrap.innerHTML = `<div class="ticket"><div class="t-head" style="background:${j[1]};color:${j[2]}"><span>ORDER TICKET · ${j[0].toUpperCase()}</span><span>${t.source.type === 'agent' ? 'AGENT' : 'YOU'}</span></div>
     ${t.rejection ? `<div class="t-reject"><b>Rejected.</b> ${esc(t.rejection)}</div>` : ''}
@@ -524,6 +526,7 @@ const SUGS = [
   ['launch', 'Launch $WORK on pump.fun, buy with 10 wallets at 0.5 SOL each'],
   ['memes', 'Build me an agent that snipes new pump.fun memes with 200+ holders, $20 per trade'],
   ['strategies', 'Backtest: buy SOL on 4h when RSI crosses above 30 and price above the 200 EMA, exit on MACD cross down or -8%'],
+  ['swaps', 'Buy 4 SOL'],
   ['stocks', 'Put 150 USDC into tokenized NVIDIA'],
   ['swaps', 'Build me a careful agent that trades SOL with an RSI strategy'],
   ['research', 'Show me the newest tokens'],

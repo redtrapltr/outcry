@@ -119,12 +119,32 @@ describe("launches", () => {
     expect(plan.bundle.filter((s) => s.op === "buy")).toHaveLength(10);
   });
 
-  it("blocks look-alike tickers and oversized dev buys", () => {
+  it("lets any ticker and any dev-buy size through, with information notes", () => {
     const { app, user } = setup();
-    expect(app.launches.propose(user.id, { name: "x", ticker: "BONKK", wallets: 1, solPerWallet: 0.1 }).rejection).toMatch(/too close/);
+    const lookalike = app.launches.propose(user.id, { name: "x", ticker: "BONKK", wallets: 1, solPerWallet: 0.1 });
+    expect(lookalike.status).toBe("needs_confirmation");
+    expect(lookalike.notes.join(" ")).toMatch(/similar to an existing ticker/);
     const big = app.launches.propose(user.id, { name: "x", ticker: "HUGE", wallets: 10, solPerWallet: 2 });
-    expect(big.status).toBe("rejected");
-    expect(big.rejection).toMatch(/of supply|Not enough SOL/);
+    expect(big.status).toBe("needs_confirmation"); // 20 SOL ≈ 43% of supply, allowed
+    expect(big.notes.join(" ")).toMatch(/Estimated dev share: 4\d\.\d%/);
+    // Only the wallet balance limits a launch
+    const tooBig = app.launches.propose(user.id, { name: "x", ticker: "MAXX", wallets: 16, solPerWallet: 5 });
+    expect(tooBig.rejection).toMatch(/Not enough SOL/);
+  });
+
+  it("buys an exact quantity (buy 4 SOL) and fills exactly that", async () => {
+    const { app, user } = setup();
+    const t = await app.desk.proposeOrder({ userId: user.id, legs: [{ side: "buy", asset: "SOL", quoteAsset: "USDC", amount: 0, receiveExact: 4, maxSlippageBps: 50 }] });
+    expect(t.status).toBe("needs_confirmation");
+    const leg = t.legs[0]!;
+    expect(leg.expectedOut).toBe(4);
+    const px = app.market.priceUsd("SOL");
+    expect(leg.amount).toBeGreaterThan(4 * px); // includes fees and impact
+    expect(leg.amount).toBeLessThan(4 * px * 1.01);
+    const solBefore = user.balances.SOL!;
+    const done = await app.desk.approve(t.id, { userApproval: approval, secondConfirmation: true });
+    expect(done.status).toBe("filled");
+    expect(user.balances.SOL! - solBefore).toBeCloseTo(4, 9);
   });
 
   it("refuses to build a plan without the disclosure, or beyond one Jito bundle", () => {

@@ -96,10 +96,14 @@ export class ToolExecutor {
           return { ok: true, result: { summary: `Wallet value $${data.walletUsd.toFixed(2)}. Positions: ${top}.`, ...data }, card: { type: "portfolio", data } };
         }
         case "get_quote": {
-          const leg = { side: String(i.side ?? "buy") as "buy" | "sell", asset: String(i.asset), quoteAsset: String(i.quote_asset ?? "USDC"), amount: Number(i.amount), maxSlippageBps: 50 };
+          const exact = i.receive_exact !== undefined && i.receive_exact !== null ? Number(i.receive_exact) : undefined;
+          const leg = { side: String(i.side ?? "buy") as "buy" | "sell", asset: String(i.asset), quoteAsset: normalizeSymbol(String(i.quote_asset ?? "USDC")), amount: Number(i.amount ?? 0), receiveExact: exact, maxSlippageBps: 50 };
           const venue = app.exec.venueFor(leg);
           const q = await app.exec.adapterFor(venue).quote({ ...leg, venue }, { userId, platformFeeBps: app.config.platformFeeBps });
-          return { ok: true, result: { summary: `${leg.side} ${leg.amount} ${leg.side === "buy" ? leg.quoteAsset : leg.asset} of ${q.asset} via ${q.venue}: about ${q.expectedOut.toPrecision(5)} out, impact ${(q.priceImpactBps / 100).toFixed(2)}%.`, quote: q } };
+          const summary = exact !== undefined
+            ? `${exact} ${q.asset} costs ${fmt(q.amount)} ${q.quoteAsset} via ${q.venue} (fees included, impact ${(q.priceImpactBps / 100).toFixed(2)}%).`
+            : `${leg.side} with ${fmt(q.amount)} ${leg.side === "buy" ? q.quoteAsset : q.asset} via ${q.venue}: about ${fmt(q.expectedOut)} ${leg.side === "buy" ? q.asset : q.quoteAsset} out, impact ${(q.priceImpactBps / 100).toFixed(2)}%.`;
+          return { ok: true, result: { summary, quote: q } };
         }
         case "get_token_risk": {
           const r = app.market.tokenRisk(String(i.token));
@@ -145,15 +149,20 @@ export class ToolExecutor {
             side: (String(l.side ?? "buy") === "sell" ? "sell" : "buy") as "buy" | "sell",
             asset: String(l.asset ?? ""),
             quoteAsset: normalizeSymbol(String(l.quote_asset ?? "USDC")),
-            amount: Number(l.amount),
+            amount: Number(l.amount ?? 0),
+            receiveExact: l.receive_exact !== undefined && l.receive_exact !== null ? Number(l.receive_exact) : undefined,
             maxSlippageBps: Number(l.max_slippage_bps ?? 50),
           }));
-          if (!legs.length || legs.some((l) => !l.asset || !(l.amount > 0))) {
-            return { ok: false, validationError: true, result: { error: "Each leg needs a side, an asset and a positive amount" } };
+          if (!legs.length || legs.some((l) => !l.asset || !(l.amount > 0 || (l.receiveExact ?? 0) > 0))) {
+            return { ok: false, validationError: true, result: { error: "Each leg needs a side, an asset, and either amount (to spend or sell) or receive_exact (to buy an exact quantity)" } };
           }
           const t = await app.desk.proposeOrder({ userId, legs });
           if (t.status === "rejected") return { ok: false, result: { error: t.rejection, ticketId: t.id }, card: { type: "order", ticket: t } };
-          const lines = t.legs.map((l) => `${l.side.toUpperCase()} ${l.asset} with ${fmt(l.amount)} ${l.side === "buy" ? l.quoteAsset : l.asset} via ${l.venue} (≈${fmt(l.expectedOut)} ${l.side === "buy" ? l.asset : l.quoteAsset})`);
+          const lines = t.legs.map((l) =>
+            l.receiveExact !== undefined
+              ? `BUY exactly ${fmt(l.receiveExact)} ${l.asset} for ≈${fmt(l.amount)} ${l.quoteAsset} via ${l.venue}`
+              : `${l.side.toUpperCase()} ${l.asset} with ${fmt(l.amount)} ${l.side === "buy" ? l.quoteAsset : l.asset} via ${l.venue} (≈${fmt(l.expectedOut)} ${l.side === "buy" ? l.asset : l.quoteAsset})`,
+          );
           return {
             ok: true,
             result: { summary: `Ticket ready: ${lines.join("; ")}. Total ≈ $${t.totalUsd.toFixed(2)}.${t.warnings.length ? " Check: " + t.warnings.join("; ") + "." : ""} Nothing moves until you sign.`, ticketId: t.id, status: t.status },

@@ -136,7 +136,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     if (!e) throw new HttpError(404, "Not an Outcry launch");
     return e;
   }, false);
-  route("GET", "/api/health", () => ({ ok: true, mode: app.config.mode, auditIntact: app.audit.verify(), llm: llmStatus(router) }), false);
+  route("GET", "/api/health", () => ({ ok: true, mode: app.config.mode, auditIntact: app.audit.verify(), llm: llmStatus(router), recentLlmErrors: router.recentErrors }), false);
 
   return {
     tokens,
