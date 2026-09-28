@@ -81,7 +81,7 @@ describe("orchestrator (offline provider)", () => {
     const r = await orch.handle(user.id, "s1", "backtest: buy ETH on 1d when RSI crosses above 30 and price above 50 ema, stop 10%");
     const card = r.cards.find((c) => c.type === "strategy");
     expect(card?.type).toBe("strategy");
-    expect(r.reply).toMatch(/past, simulated results/);
+    expect(r.reply).toMatch(/SIMULATED prices|real prices/);
   });
 
   it("refuses to hide a dev buy", async () => {

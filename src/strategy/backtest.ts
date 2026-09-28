@@ -44,6 +44,10 @@ export interface Metrics {
 export interface BacktestReport {
   program: StrategyProgram;
   bars: number;
+  /** Where the candles came from; set by the Strategy Lab. */
+  dataSource?: string;
+  realData?: boolean;
+  startEquity?: number;
   from: number;
   to: number;
   full: Metrics;
@@ -254,8 +258,8 @@ export function backtest(program: StrategyProgram, candles: Candle[], startEquit
 export function summarize(r: BacktestReport): string {
   const f = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
   return [
-    `Past ${Math.round((r.to - r.from) / 86_400_000)} days, ${r.full.trades} trades: ${f(r.full.totalReturnPct)} vs ${f(r.full.buyHoldReturnPct)} holding.`,
+    `${new Date(r.from).toISOString().slice(0, 10)} to ${new Date(r.to).toISOString().slice(0, 10)} (${Math.round((r.to - r.from) / 86_400_000)} days, ${r.bars} candles, ${r.dataSource ?? "simulated prices"}), ${r.full.trades} trades: ${f(r.full.totalReturnPct)} on $${(r.startEquity ?? 10_000).toLocaleString("en-US")} vs ${f(r.full.buyHoldReturnPct)} holding.`,
     `Max drawdown ${r.full.maxDrawdownPct.toFixed(1)}% (Monte Carlo range ${r.monteCarloDrawdownPct.p5.toFixed(1)}–${r.monteCarloDrawdownPct.p95.toFixed(1)}%), win rate ${r.full.winRatePct.toFixed(0)}%.`,
-    `Out-of-sample (last 30%): ${f(r.outOfSample.totalReturnPct)}. These are past, simulated results, not a forecast.`,
+    `Out-of-sample (last 30%): ${f(r.outOfSample.totalReturnPct)}. ${r.realData ? "Past results on real prices" : "SIMULATED prices, not the real asset"}; not a forecast.`,
   ].join(" ");
 }

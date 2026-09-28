@@ -260,11 +260,11 @@ describe("strategy engine", () => {
     expect(r.paramCount).toBe(7);
   });
 
-  it("rejects stops in entry conditions and unknown indicators", () => {
+  it("rejects stops in entry conditions and unknown indicators", async () => {
     const { app, user } = setup();
-    const bad = app.lab.compileAndTest(user.id, { timeframe: "1h", asset: "SOL", entry: { stop_loss_pct: 5 }, exit: { take_profit_pct: 5 }, size: { fixed_quote: 100 } });
+    const bad = await app.lab.compileAndTest(user.id, { timeframe: "1h", asset: "SOL", entry: { stop_loss_pct: 5 }, exit: { take_profit_pct: 5 }, size: { fixed_quote: 100 } });
     expect(bad.ok).toBe(false);
-    const unknown = app.lab.compileAndTest(user.id, { timeframe: "1h", asset: "SOL", entry: { gt: [{ supertrend: 10 }, 1] }, exit: { take_profit_pct: 5 }, size: { fixed_quote: 100 } });
+    const unknown = await app.lab.compileAndTest(user.id, { timeframe: "1h", asset: "SOL", entry: { gt: [{ supertrend: 10 }, 1] }, exit: { take_profit_pct: 5 }, size: { fixed_quote: 100 } });
     expect(unknown.ok).toBe(false);
   });
 });
@@ -332,5 +332,52 @@ describe("agent exits are never blocked by spend caps", () => {
     expect(perf.history.length).toBeGreaterThanOrEqual(1);
     expect(perf.closedTrades).toBe(1);
     expect(perf.realizedPnlUsd).toBeLessThan(0);
+  });
+});
+
+describe("strategy lab: periods, sizing, breakouts, real data", () => {
+  const breakout = { name: "BO", timeframe: "1d", asset: "AAPL", entry: { crosses_above: ["close", { highest: 20 }] }, exit: { any: [{ trailing_stop_pct: 7 }, { stop_loss_pct: 8 }] }, size: { fixed_quote: 100 } };
+
+  it("highest(n) excludes the current bar so breakouts can trigger", async () => {
+    const { highest } = await import("../src/strategy/indicators.js");
+    const h = highest([1, 2, 3, 4, 10], 3);
+    expect(h[4]).toBe(4); // previous 3 bars: 2,3,4
+    expect(Number.isNaN(h[2])).toBe(true);
+  });
+
+  it("honours lookback_days, measures on the trade size and labels simulated data", async () => {
+    const { createOutcry } = await import("../src/app.js");
+    const app = createOutcry({ mode: "paper" } as never);
+    const res = await app.lab.compileAndTest("u1", breakout, undefined, { days: 365 });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    const r = res.strategy.report;
+    expect((r.to - r.from) / 86_400_000).toBeGreaterThan(350);
+    expect((r.to - r.from) / 86_400_000).toBeLessThan(370);
+    expect(r.startEquity).toBe(100);
+    expect(r.realData).toBe(false);
+    expect(res.strategy.summary).toMatch(/SIMULATED/);
+    expect(r.full.trades).toBeGreaterThan(0);
+  });
+
+  it("uses real candles from the history provider when available", async () => {
+    const { createOutcry } = await import("../src/app.js");
+    const { RealHistory } = await import("../src/data/history.js");
+    const day = 86_400_000, start = Date.now() - 400 * day;
+    const values = Array.from({ length: 400 }, (_, i) => {
+      const px = 150 + 20 * Math.sin(i / 15) + i * 0.05;
+      return { datetime: new Date(start + i * day).toISOString().slice(0, 10), open: String(px), high: String(px * 1.01), low: String(px * 0.99), close: String(px), volume: "1000" };
+    });
+    const urls: string[] = [];
+    const history = new RealHistory({ twelveDataKey: "test-key", fetch: async (u) => { urls.push(u); return { ok: true, status: 200, json: async () => ({ status: "ok", values }) }; } });
+    const app = createOutcry({ mode: "paper", history } as never);
+    const res = await app.lab.compileAndTest("u1", breakout, undefined, { days: 365 });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(urls[0]).toContain("symbol=AAPL");
+    expect(urls[0]).toContain("interval=1day");
+    expect(res.strategy.report.realData).toBe(true);
+    expect(res.strategy.report.dataSource).toContain("Twelve Data AAPL");
+    expect(res.strategy.summary).toMatch(/real prices/);
   });
 });

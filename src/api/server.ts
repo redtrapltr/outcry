@@ -8,6 +8,7 @@
  * /api/session with passkey (WebAuthn) registration and verifies each
  * `passkeyAssertion` server-side before approving a ticket.
  */
+import { RealHistory } from "../data/history.js";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
@@ -28,7 +29,10 @@ export interface ServerOptions {
 }
 
 export async function buildServer(opts: ServerOptions = {}) {
-  const app = opts.app ?? createOutcry({ mode: (process.env.OUTCRY_MODE as "paper" | "live") ?? "paper" });
+  const app = opts.app ?? createOutcry({
+    mode: (process.env.OUTCRY_MODE as "paper" | "live") ?? "paper",
+    history: process.env.OUTCRY_REAL_HISTORY === "0" ? undefined : new RealHistory({ twelveDataKey: process.env.TWELVEDATA_API_KEY }),
+  });
   const router = opts.router ?? ModelRouter.fromEnv();
   const orch = new Orchestrator(app, router);
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"));

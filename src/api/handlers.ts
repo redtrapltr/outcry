@@ -132,8 +132,9 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   });
 
   // --- strategies ----------------------------------------------------------------------
-  route("POST", "/api/strategies", ({ uid, body }) => {
-    const res = app.lab.compileAndTest(uid, body);
+  route("POST", "/api/strategies", async ({ uid, body }) => {
+    const b = (body ?? {}) as { program?: unknown; lookbackDays?: number };
+    const res = b.program ? await app.lab.compileAndTest(uid, b.program, undefined, { days: b.lookbackDays }) : await app.lab.compileAndTest(uid, body);
     if (!res.ok) throw new HttpError(400, res.error);
     return res.strategy;
   });

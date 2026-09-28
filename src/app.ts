@@ -12,6 +12,7 @@ import { TicketDesk } from "./tickets/desk.js";
 import { CreatorRegistry, LaunchService } from "./launch/service.js";
 import { AgentRuntime } from "./agents/runtime.js";
 import { StrategyLab } from "./strategy/lab.js";
+import type { HistoryProvider } from "./data/history.js";
 import { DEFAULT_POLICY, type PolicyConfig } from "./policy/engine.js";
 
 export interface OutcryConfig {
@@ -21,6 +22,8 @@ export interface OutcryConfig {
   paperDaysBeforeAuto: number;
   policy: PolicyConfig;
   marketSeed: number;
+  /** Real historical candles for backtests; undefined = simulated only. */
+  history?: HistoryProvider;
 }
 
 export const DEFAULT_CONFIG: OutcryConfig = {
@@ -52,7 +55,7 @@ export function createOutcry(overrides: Partial<OutcryConfig> = {}) {
   });
   agents = new AgentRuntime({ users, market, desk, signer, audit, bus, registry, paperDaysBeforeAuto: config.paperDaysBeforeAuto });
   const launches = new LaunchService({ users, signer, desk, market, registry, audit, bus, mode: config.mode, launchFeeSol: config.launchFeeSol, policy: config.policy });
-  const lab = new StrategyLab(market, audit);
+  const lab = new StrategyLab(market, audit, config.history);
 
   return { config, audit, bus, market, signer, users, exec, registry, desk, agents, launches, lab };
 }
