@@ -13,7 +13,8 @@ export type Intent = "launch" | "agent" | "strategy" | "order" | "control" | "ex
 export function classify(text: string): Intent {
   const s = text.toLowerCase();
   if (/\b(hide|hidden|secret|stealth|undisclosed|wash[- ]?trad|fake volume|rug)\b/.test(s) && /\b(launch|wallet|buy|volume|token|dev)\b/.test(s)) return "refuse";
-  if (/\b(pause|resume|kill|stop)\b/.test(s) && /\b(agent|bot|sniper|harvest|steady|floor one|it)\b/.test(s)) return "control";
+  const building = /\b(build|make|design|create|draft)\b/.test(s) || /\b(pause|stop)\s+(it\s+)?(at|after|when|if)\b/.test(s) || /drawdown|stop[- ]loss/.test(s);
+  if (!building && /\b(pause|resume|kill|stop)\b/.test(s) && /\b(agent|bot|sniper|harvest|steady|floor one|it)\b/.test(s)) return "control";
   if (/\bwhy did\b|\bexplain\b.*\b(agent|buy|sell)\b/.test(s)) return "explain";
   if (/\b(launch|deploy|create|mint)\b.*\b(token|coin|\$[a-z0-9]+|on pump)/.test(s)) return "launch";
   if (/\b(agent|bot|autopilot|trade for me|manage my|snipe|sniper)\b/.test(s)) return "agent";
@@ -131,7 +132,17 @@ export function parseAgent(t: string) {
     limits: { maxPerTradeUsd: sizeUsd, maxPerDayUsd: sizeUsd * (careful ? 3 : 5), maxOpenPositions: careful ? 3 : 5, maxDrawdownPct: careful ? 15 : 40 },
   };
   if (snipe) {
-    return { ...base, markets: ["memes"], kind: "sniper", universe: { minHolders: holders, maxTopWalletPct: careful ? 10 : 20, requireMintRevoked: true } };
+    const universe: Record<string, unknown> = { minHolders: holders, maxTopWalletPct: careful ? 10 : 20, requireMintRevoked: true };
+    const age = s.match(/(?:no older than|younger than|under|less than|max(?:imum)?)\s*(\d+)?\s*(second|sec|s\b|minute|min|hour|h\b)/);
+    if (age && /old|young|age|launch|live/.test(s)) {
+      const n = num(age[1], 1);
+      universe.maxAgeSeconds = Math.round(n * (/^h/.test(age[2]!) ? 3600 : /^m/.test(age[2]!) ? 60 : 1));
+    }
+    const top10 = s.match(/top\s*10[^%]*?(\d+(?:\.\d+)?)\s*%/);
+    if (top10) universe.maxTop10Pct = Number(top10[1]);
+    const dd = s.match(/(?:pause|stop)[^%]*?-?\s*(\d+(?:\.\d+)?)\s*%\s*drawdown|drawdown[^%\d]*-?\s*(\d+(?:\.\d+)?)\s*%/);
+    if (dd) base.limits.maxDrawdownPct = Number(dd[1] ?? dd[2]);
+    return { ...base, markets: ["memes"], kind: "sniper", universe };
   }
   const strat = parseStrategy(t).program;
   return { ...base, markets: [/nvda|spy|stock/.test(s) ? "stocks" : "swaps"], kind: "rules", program: { ...strat, name: `${name} rules` } };

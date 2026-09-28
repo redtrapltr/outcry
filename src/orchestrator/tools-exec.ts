@@ -60,7 +60,9 @@ export function blueprint(a: Agent): BlueprintNode[] {
   const signals: string[] = [];
   if (s.kind === "sniper" && s.universe) {
     signals.push(`New pump.fun tokens, ${s.universe.minHolders}+ holders (disclosed creator wallets count as one)`);
-    signals.push(`Top wallet under ${s.universe.maxTopWalletPct}%${s.universe.requireMintRevoked ? ", mint authority revoked" : ""}`);
+    const age = s.universe.maxAgeSeconds ?? 3600;
+    signals.push(`Only launches younger than ${age < 120 ? `${age} seconds` : age < 7200 ? `${Math.round(age / 60)} minutes` : `${Math.round(age / 3600)} hours`}`);
+    signals.push(`Top wallet under ${s.universe.maxTopWalletPct}%${s.universe.maxTop10Pct !== undefined ? ` · top 10 wallets under ${s.universe.maxTop10Pct}%` : ""}${s.universe.requireMintRevoked ? " · mint authority revoked" : ""}`);
   } else if (s.program) {
     signals.push(`${s.program.asset} on ${s.program.timeframe}`);
     signals.push(`Entry and exit rules compiled from your description`);
@@ -187,6 +189,19 @@ export class ToolExecutor {
           return {
             ok: true,
             result: { summary: `${res.agent.spec.name} is assembled. ${res.agent.lastBacktest?.summary ?? ""} Tune it below, then deploy in paper mode first.`, agentId: res.agent.id },
+            card: { type: "agent", agent: res.agent, blueprint: blueprint(res.agent), backtest: bt, replay: res.replay },
+          };
+        }
+        case "update_agent": {
+          const a = this.findAgent(userId, String(i.agent ?? ""));
+          if (!a) return { ok: false, result: { error: "No matching agent to update. Name it, or use propose_agent to build a new one." } };
+          const { agent: _n, ...patch } = i as Record<string, unknown>;
+          if (patch.universe && a.spec.kind === "sniper") patch.universe = { venue: "pumpfun", ...(patch.universe as object) };
+          const res = app.agents.revise(userId, a.id, patch as never);
+          const bt = res.backtest ? summarizeReport(res.backtest, res.agent.lastBacktest!.summary) : undefined;
+          return {
+            ok: true,
+            result: { summary: `${res.agent.spec.name} updated to v${res.agent.version} (${res.agent.state}). ${res.agent.lastBacktest?.summary ?? ""}`, agentId: res.agent.id },
             card: { type: "agent", agent: res.agent, blueprint: blueprint(res.agent), backtest: bt, replay: res.replay },
           };
         }

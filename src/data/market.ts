@@ -23,10 +23,15 @@ export interface TokenRisk {
   mint: string;
   symbol: string;
   ageMinutes: number;
+  /** Seconds since the create transaction; computed live from createdAtMs. */
+  ageSeconds?: number;
+  createdAtMs?: number;
   holders: number;
   /** Holders after collapsing disclosed creator wallets into one. */
   holdersCollapsed: number;
   topWalletPct: number;
+  /** Share of supply held by the 10 largest holders (creator wallets included). */
+  top10Pct?: number;
   mintRevoked: boolean;
   freezeRevoked: boolean;
   liquidityUsd: number;
@@ -129,6 +134,7 @@ export class SimulatedMarket implements MarketData {
         holders,
         holdersCollapsed: holders,
         topWalletPct: Number(top.toFixed(1)),
+        top10Pct: Number(Math.min(100, top + 6 + r() * 30).toFixed(1)),
         mintRevoked: i % 5 !== 3,
         freezeRevoked: true,
         liquidityUsd: Math.floor(5_000 + r() * 90_000),
@@ -225,7 +231,12 @@ export class SimulatedMarket implements MarketData {
   tokenRisk(mintOrSymbol: string): TokenRisk | undefined {
     const s = normalizeSymbol(mintOrSymbol);
     const m = [...this.memes.values()].find((x) => x.risk.symbol === s || x.risk.mint === mintOrSymbol);
-    return m?.risk;
+    if (!m) return undefined;
+    // Age is live: derived from the creation time on every read.
+    const r = m.risk;
+    const created = r.createdAtMs ?? Date.now() - r.ageMinutes * 60_000;
+    const ageSeconds = Math.max(0, (Date.now() - created) / 1000);
+    return { ...r, createdAtMs: created, ageSeconds, ageMinutes: ageSeconds / 60, top10Pct: r.top10Pct ?? Math.min(100, r.topWalletPct * 2.5) };
   }
 
   recentLaunches(limit: number): NewTokenEvent[] {
@@ -234,8 +245,9 @@ export class SimulatedMarket implements MarketData {
 
   /** Called by the launch module and by the simulated new-token stream. */
   registerMeme(risk: TokenRisk, priceUsd: number) {
-    this.memes.set(risk.mint, { risk, price: priceUsd });
-    this.launches.push({ mint: risk.mint, symbol: risk.symbol, at: Date.now() - risk.ageMinutes * 60_000 });
+    const createdAtMs = risk.createdAtMs ?? Date.now() - risk.ageMinutes * 60_000;
+    this.memes.set(risk.mint, { risk: { ...risk, createdAtMs }, price: priceUsd });
+    this.launches.push({ mint: risk.mint, symbol: risk.symbol, at: createdAtMs });
   }
 
   /** Test/demo hook: emit a brand-new token. */
@@ -247,6 +259,7 @@ export class SimulatedMarket implements MarketData {
       holders: 250,
       holdersCollapsed: 250,
       topWalletPct: 8,
+      top10Pct: 18,
       mintRevoked: true,
       freezeRevoked: true,
       liquidityUsd: 12_000,

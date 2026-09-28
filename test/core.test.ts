@@ -268,3 +268,38 @@ describe("strategy engine", () => {
     expect(unknown.ok).toBe(false);
   });
 });
+
+describe("sniper age and top-10 filters, live edits, delete", () => {
+  it("skips launches older than maxAgeSeconds and top-10 above the cap; edits apply in place; delete removes", async () => {
+    const { createOutcry } = await import("../src/app.js");
+    const app = createOutcry({ mode: "paper" } as never);
+    const u = app.users.create({ badge: "T", jacket: "memes", residence: "CH" });
+    const { agent } = app.agents.propose(u.id, {
+      name: "MEME_SNIPER", goal: "snipe", markets: ["memes"], kind: "sniper",
+      universe: { venue: "pumpfun", minHolders: 100, maxTopWalletPct: 20, maxTop10Pct: 20, maxAgeSeconds: 60, requireMintRevoked: true },
+      sizeUsd: 10, exit: { stopLossPct: 22, takeProfitPct: 100 },
+      limits: { maxPerTradeUsd: 10, maxPerDayUsd: 100, maxOpenPositions: 5, maxDrawdownPct: 25 }, mode: "paper",
+    });
+    app.agents.deploy(u.id, agent.id, { mode: "paper" });
+    await app.agents.tick(); // old seeded launches are ignored silently
+    app.market.spawnMeme("OLDY", { createdAtMs: Date.now() - 5 * 60_000, holders: 400, holdersCollapsed: 400, top10Pct: 10 });
+    app.market.spawnMeme("CONC", { holders: 400, holdersCollapsed: 400, top10Pct: 35 });
+    app.market.spawnMeme("GOOD", { holders: 400, holdersCollapsed: 400, top10Pct: 15 });
+    await app.agents.tick();
+    const log = app.agents.explain(agent.id, 20).map((e) => ({ action: e.action, ...(e.data as Record<string, unknown>) }) as Record<string, any>);
+    expect(log.find((e) => e.symbol === "OLDY")?.reason).toMatch(/launched \d+s ago/);
+    expect(log.find((e) => e.symbol === "CONC")?.reason).toMatch(/top 10 wallets/);
+    expect(log.find((e) => e.symbol === "GOOD")?.action).toContain("entry");
+
+    const before = app.agents.get(agent.id)!;
+    const res = app.agents.revise(u.id, agent.id, { limits: { maxDrawdownPct: 50 } } as never);
+    expect(res.agent.id).toBe(agent.id);
+    expect(res.agent.state).toBe("paper");
+    expect(res.agent.spec.limits.maxDrawdownPct).toBe(50);
+    expect(res.agent.spec.exit.stopLossPct).toBe(22);
+    expect(res.agent.subWalletId).toBe(before.subWalletId);
+
+    app.agents.remove(u.id, agent.id);
+    expect(app.agents.get(agent.id)).toBeUndefined();
+  });
+});

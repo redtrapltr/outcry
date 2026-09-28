@@ -43,6 +43,12 @@ button,input{font:inherit;color:inherit}
 .item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:14px}
 .sq{width:10px;height:10px;border-radius:3px;flex-shrink:0;display:inline-block}
 .status{font:10.5px var(--mono);letter-spacing:.08em}
+.agent-row{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:8px}
+.agent-row .item{padding:0}
+.a-ctl{display:flex;gap:6px;flex-wrap:wrap}
+.a-ctl button{font:11px var(--mono);letter-spacing:.04em;padding:4px 8px;border-radius:6px;border:1px solid var(--line,rgba(127,127,127,.3));background:transparent;color:inherit;cursor:pointer}
+.a-ctl button:hover{border-color:currentColor}
+.a-ctl button.del{color:var(--down)}
 .st-live{color:var(--up)} .st-paper{color:var(--voice-text)} .st-paused{color:var(--muted)} .st-backtested{color:var(--soft)}
 .empty{font-size:13px;color:var(--muted);padding:4px 10px}
 .tiers{display:flex;flex-direction:column;gap:4px;font:11px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:10px}
@@ -250,7 +256,8 @@ async function api(path, opts = {}) {
     if (r.status >= 400) throw new Error(r.json?.error || 'Request failed');
     return r.json;
   }
-  const res = await fetch(path, { method, headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) }, body: opts.body ? JSON.stringify(opts.body) : undefined });
+  const hasBody = opts.body !== undefined;
+  const res = await fetch(path, { method, headers: { ...(hasBody ? { 'content-type': 'application/json' } : {}), ...(token ? { authorization: 'Bearer ' + token } : {}) }, body: hasBody ? JSON.stringify(opts.body) : undefined });
   const j = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(j.error || res.statusText);
   return j;
@@ -283,7 +290,17 @@ async function refresh() {
   } catch (e) { /* ignore transient */ }
   try {
     const list = await api('/api/agents');
-    $('agents').innerHTML = list.filter(x => x.agent.state !== 'killed').map(({ agent: a }) => `<div class="item"><span style="display:flex;gap:8px;align-items:center;min-width:0"><span class="sq" style="background:${(J[a.spec.markets[0]] || J.strategies)[1]}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.spec.name)}</span></span><span class="status st-${a.state}">${a.state.toUpperCase()}${a.state === 'live' ? ' · ' + a.spec.mode.toUpperCase() : ''}</span></div>`).join('') || '<div class="empty">No agents yet.</div>';
+    const rows = list.filter(x => x.agent.state !== 'killed');
+    $('agents').innerHTML = rows.map(({ agent: a }) => {
+      const running = a.state === 'live' || a.state === 'paper';
+      const btns = [
+        running ? `<button type="button" data-act="pause" data-id="${a.id}">Pause</button>` : '',
+        a.state === 'paused' ? `<button type="button" data-act="resume" data-id="${a.id}">Resume</button>` : '',
+        running || a.state === 'paused' ? `<button type="button" data-act="kill" data-id="${a.id}" title="Stop for good; unspent funds return to your main wallet">Kill</button>` : '',
+        `<button type="button" class="del" data-act="delete" data-id="${a.id}" data-name="${esc(a.spec.name)}">Delete</button>`,
+      ].join('');
+      return `<div class="agent-row"><div class="item"><span style="display:flex;gap:8px;align-items:center;min-width:0"><span class="sq" style="background:${(J[a.spec.markets[0]] || J.strategies)[1]}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.spec.name)}</span></span><span class="status st-${a.state}">${a.state.toUpperCase()}${a.state === 'live' ? ' · ' + a.spec.mode.toUpperCase() : ''}</span></div><div class="a-ctl">${btns}</div></div>`;
+    }).join('') || '<div class="empty">No agents yet.</div>';
   } catch (e) { /* ignore */ }
 }
 
@@ -412,8 +429,10 @@ async function agentCard(card) {
       q('.bp').textContent = `Assembling · ${i + 1}/5`; scrollDown();
     }
     await wait(300);
-    q('.bp').textContent = 'Ready · adjust below'; q('.hand').classList.remove('hand');
+    const deployed = ['paper', 'live', 'paused'].includes(a.state);
+    q('.bp').textContent = deployed ? `Updated · v${a.version} · ${a.state}` : 'Ready · adjust below'; q('.hand').classList.remove('hand');
     drawAdjust();
+    if (deployed) drawRunning();
   });
   const flash = k => { const n = q(`.node[data-k="${k}"]`); if (!n) return; n.classList.add('flash'); clearTimeout(n._t); n._t = setTimeout(() => n.classList.remove('flash'), 500); };
   let timer = null;
@@ -434,13 +453,15 @@ async function agentCard(card) {
     q('.adj-host').innerHTML = `<div class="adjust">
       <div class="ctl"><div class="ctl-top"><label for="sz-${a.id}">Size per trade</label><output class="o-sz">$${s.sizeUsd}</output></div><input type="range" id="sz-${a.id}" class="r-sz" min="5" max="500" step="5" value="${s.sizeUsd}"></div>
       <div class="ctl"><div class="ctl-top"><label for="cp-${a.id}">Max spend per day</label><output class="o-cp">$${s.limits.maxPerDayUsd}</output></div><input type="range" id="cp-${a.id}" class="r-cp" min="10" max="5000" step="10" value="${s.limits.maxPerDayUsd}"></div>
-      <div class="ctl"><div class="ctl-top"><label for="sl-${a.id}">Stop-loss</label><output class="o-sl">−${s.exit.stopLossPct}%</output></div><input type="range" id="sl-${a.id}" class="r-sl" min="3" max="60" step="1" value="${s.exit.stopLossPct}"></div>
+      <div class="ctl"><div class="ctl-top"><label for="sl-${a.id}">Stop-loss</label><output class="o-sl">−${s.exit.stopLossPct}%</output></div><input type="range" id="sl-${a.id}" class="r-sl" min="3" max="90" step="1" value="${s.exit.stopLossPct}"></div>
+      <div class="ctl"><div class="ctl-top"><label for="dd-${a.id}">Pause at drawdown</label><output class="o-dd">−${s.limits.maxDrawdownPct}%</output></div><input type="range" id="dd-${a.id}" class="r-dd" min="5" max="90" step="1" value="${s.limits.maxDrawdownPct}"></div>
       <div class="ctl"><div class="ctl-top"><label for="tp-${a.id}">Take profit</label><output class="o-tp">+${s.exit.takeProfitPct}%</output></div><input type="range" id="tp-${a.id}" class="r-tp" min="5" max="400" step="5" value="${s.exit.takeProfitPct}"></div>
       <div class="summary wide sumtxt">${summaryHtml()}</div>
       <label class="check wide"><input type="checkbox" class="ack"> I understand auto mode trades without asking me, inside these limits.</label>
       <div class="actions wide"><button class="btn btn-primary" type="button" data-mode="paper">Deploy · paper</button><button class="btn" type="button" data-mode="ask">Deploy · ask me</button><button class="btn" type="button" data-mode="auto">Deploy · auto</button></div>
     </div>`;
-    const sz = q('.r-sz'), cp = q('.r-cp'), sl = q('.r-sl'), tp = q('.r-tp');
+    const sz = q('.r-sz'), cp = q('.r-cp'), sl = q('.r-sl'), tp = q('.r-tp'), dd = q('.r-dd');
+    dd.oninput = () => { q('.o-dd').textContent = '−' + dd.value + '%'; patch({ limits: { maxDrawdownPct: +dd.value } }, 'risk'); };
     sz.oninput = () => { q('.o-sz').textContent = '$' + sz.value; patch({ sizeUsd: +sz.value, limits: { maxPerTradeUsd: +sz.value } }, 'risk'); };
     cp.oninput = () => { q('.o-cp').textContent = '$' + cp.value; patch({ limits: { maxPerDayUsd: +cp.value } }, 'risk'); };
     sl.oninput = () => { q('.o-sl').textContent = '−' + sl.value + '%'; patch({ exit: { stopLossPct: +sl.value } }, 'risk'); };
@@ -451,11 +472,27 @@ async function agentCard(card) {
         const r = await api(`/api/agents/${a.id}/deploy`, { method: 'POST', body: { mode, passkeyAssertion: mode === 'paper' ? undefined : passkey(), riskAcknowledged: q('.ack').checked } });
         a = r.agent; setNodes(r.blueprint); flash('execution');
         q('.bp').textContent = `Deployed · ${mode}`;
-        wrap.querySelectorAll('.adjust input, .adjust button').forEach(x => x.disabled = true);
+        drawRunning();
         feed(`${a.spec.name} deployed (${mode})`); refresh();
       } catch (e) { toast(e.message); }
     });
   };
+  // A deployed agent stays editable: slider changes apply in place (new version, same wallet).
+  function drawRunning() {
+    const acts = q('.adjust .actions'); const ack = q('.adjust .check'); if (ack) ack.remove();
+    if (!acts) return;
+    const running = a.state === 'live' || a.state === 'paper';
+    acts.innerHTML = `${running ? '<button class="btn" type="button" data-c="pause">Pause</button>' : ''}${a.state === 'paused' ? '<button class="btn" type="button" data-c="resume">Resume</button>' : ''}<button class="btn" type="button" data-c="kill">Kill</button><button class="btn btn-danger" type="button" data-c="delete">Delete</button><span class="meta">Changes above apply live.</span>`;
+    acts.querySelectorAll('[data-c]').forEach(b => b.onclick = async () => {
+      try {
+        await agentAction(a.id, b.dataset.c, a.spec.name);
+        if (b.dataset.c === 'delete' || b.dataset.c === 'kill') { wrap.querySelectorAll('.adjust input, .adjust button').forEach(x => x.disabled = true); q('.bp').textContent = b.dataset.c === 'delete' ? 'Deleted' : 'Killed'; return; }
+        a = { ...a, state: b.dataset.c === 'pause' ? 'paused' : 'paper' === a.spec.mode ? 'paper' : 'live' };
+        q('.bp').textContent = a.state === 'paused' ? 'Paused' : `Deployed · ${a.spec.mode}`;
+        drawRunning();
+      } catch (e) { toast(e.message); }
+    });
+  }
   let replayBox = null;
   function drawReplay(rep) {
     if (!rep || !rep.skipped?.length) return;
@@ -536,6 +573,22 @@ $('sugs').innerHTML = SUGS.map((s, i) => `<button type="button" class="sug" data
 $('sugs').addEventListener('click', e => { const b = e.target.closest('.sug'); if (b) send(SUGS[+b.dataset.i][1]); });
 $('form').addEventListener('submit', e => { e.preventDefault(); send($('cmd').value); });
 $('newSession').onclick = () => { sessionId = 'main-' + Date.now().toString(36); log.innerHTML = ''; welcome(); $('cmd').focus(); };
+async function agentAction(id, act, name) {
+  if (act === 'delete') {
+    if (!confirm(`Delete ${name}? It stops trading, open positions stay in your wallet and unspent funds go back to your main wallet.`)) return;
+    await api(`/api/agents/${id}`, { method: 'DELETE' });
+    feed(`${name} deleted`);
+  } else {
+    const a = await api(`/api/agents/${id}/control`, { method: 'POST', body: { action: act } });
+    feed(`${a.spec?.name || 'Agent'} ${act === 'kill' ? 'killed' : act === 'pause' ? 'paused' : 'resumed'}`);
+  }
+  refresh();
+}
+$('agents').addEventListener('click', async (e) => {
+  const b = e.target.closest('button[data-act]'); if (!b) return;
+  b.disabled = true;
+  try { await agentAction(b.dataset.id, b.dataset.act, b.dataset.name || 'Agent'); } catch (err) { toast(err.message); b.disabled = false; }
+});
 $('panic').onclick = async () => { try { await api('/api/panic', { method: 'POST' }); feed('All agents paused'); refresh(); } catch (e) { toast(e.message); } };
 
 function welcome() {
