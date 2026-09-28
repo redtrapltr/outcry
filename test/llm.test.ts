@@ -91,7 +91,7 @@ describe("Claude integration (mocked API)", () => {
   });
 
   it("runs every tier on Claude when only an Anthropic key is set", () => {
-    const router = ModelRouter.fromEnv({ ANTHROPIC_API_KEY: "k" } as NodeJS.ProcessEnv);
+    const router = ModelRouter.fromEnv({ ANTHROPIC_API_KEY: "sk-ant-test-key-123" } as NodeJS.ProcessEnv);
     expect(router.providerFor("T1").model).toBe("claude-haiku-4-5-20251001");
     expect(router.providerFor("T2").model).toBe("claude-opus-5-5");
     expect(router.budgets.perUserDailyUsd).toBe(0.5);
