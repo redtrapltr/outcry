@@ -148,21 +148,23 @@ export function bollinger(closes: ArrayLike<number>, p: number, k: number): { up
   return { upper, lower, mid };
 }
 
+/** Highest value of the PREVIOUS p bars (excludes the current bar, so "close crosses above highest(20)" is a real breakout). */
 export function highest(xs: ArrayLike<number>, p: number): Series {
   const out = nanSeries(xs.length);
-  for (let i = p - 1; i < xs.length; i++) {
+  for (let i = p; i < xs.length; i++) {
     let m = -Infinity;
-    for (let j = i - p + 1; j <= i; j++) m = Math.max(m, xs[j]!);
+    for (let j = i - p; j < i; j++) m = Math.max(m, xs[j]!);
     out[i] = m;
   }
   return out;
 }
 
+/** Lowest value of the PREVIOUS p bars (excludes the current bar). */
 export function lowest(xs: ArrayLike<number>, p: number): Series {
   const out = nanSeries(xs.length);
-  for (let i = p - 1; i < xs.length; i++) {
+  for (let i = p; i < xs.length; i++) {
     let m = Infinity;
-    for (let j = i - p + 1; j <= i; j++) m = Math.min(m, xs[j]!);
+    for (let j = i - p; j < i; j++) m = Math.min(m, xs[j]!);
     out[i] = m;
   }
   return out;

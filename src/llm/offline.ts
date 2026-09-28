@@ -185,7 +185,14 @@ export class OfflineProvider implements ModelProvider {
         };
       case "launch": return call("propose_launch", parseLaunch(text));
       case "agent": return call("propose_agent", parseAgent(text));
-      case "strategy": return call("compile_strategy", parseStrategy(text));
+      case "strategy": {
+        const l = text.toLowerCase();
+        // Period words only: "1 year", "6 months", "over the last 90 days" (not "20 day high").
+        const m = l.match(/(\d+|one|a|two|three)\s*(year|yr|month)s?\b/) ?? l.match(/(?:over|past|last|for)\s+(?:the\s+)?(?:last\s+)?(\d+)\s*(week|day)s?\b/);
+        const n = m ? ({ one: 1, a: 1, two: 2, three: 3 } as Record<string, number>)[m[1]!] ?? Number(m[1]) : 0;
+        const days = m ? Math.round(n * (m[2]!.startsWith("y") ? 365 : m[2] === "month" ? 30 : m[2] === "week" ? 7 : 1)) : undefined;
+        return call("compile_strategy", { ...parseStrategy(text), ...(days ? { lookback_days: days } : {}) });
+      }
       case "order": return call("propose_order", parseOrder(text));
       case "control": return call("control_agent", parseControl(text));
       case "explain": return call("explain_agent", { agent: parseControl(text).agent });

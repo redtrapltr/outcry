@@ -538,7 +538,11 @@ function strategyCard(card) {
   const pts = r.equityCurve; const min = Math.min(...pts.map(p => p.equity)), max = Math.max(...pts.map(p => p.equity));
   const X = i => (i / Math.max(1, pts.length - 1)) * 600, Y = v => 110 - ((v - min) / Math.max(1e-9, max - min)) * 100;
   const path = pts.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(p.equity).toFixed(1)}`).join(' ');
-  wrap.innerHTML = `<div class="summary"><b>${esc(s.program.name)}</b> · v${s.version}<br>${esc(s.description)}</div>
+  const d = t => new Date(t).toISOString().slice(0, 10);
+  const src = r.realData
+    ? `<div class="meta">REAL PRICES · ${esc(r.dataSource || '')} · ${d(r.from)} → ${d(r.to)} · ${r.bars} candles · returns on $${fmt(r.startEquity, 0)}</div>`
+    : `<div class="t-warn">Simulated prices, not real ${esc(s.program.asset)} history (${d(r.from)} → ${d(r.to)}, ${r.bars} candles). Use it to check the logic, not to judge the strategy.</div>`;
+  wrap.innerHTML = `<div class="summary"><b>${esc(s.program.name)}</b> · v${s.version}<br>${esc(s.description)}</div>${src}
     <div class="metrics">
       <div class="metric"><b style="color:${f.totalReturnPct >= 0 ? 'var(--up)' : 'var(--down)'}">${pct(f.totalReturnPct)}</b><span>STRATEGY</span></div>
       <div class="metric"><b>${pct(f.buyHoldReturnPct)}</b><span>HOLD</span></div>

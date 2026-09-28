@@ -28,6 +28,12 @@ export interface BlueprintNode {
 
 export interface BacktestSummary {
   summary: string;
+  dataSource?: string;
+  realData: boolean;
+  startEquity: number;
+  from: number;
+  to: number;
+  bars: number;
   full: BacktestReport["full"];
   outOfSample: BacktestReport["outOfSample"];
   monteCarloDrawdownPct: BacktestReport["monteCarloDrawdownPct"];
@@ -47,6 +53,12 @@ export interface ToolOutcome {
 
 const summarizeReport = (r: BacktestReport, summary: string): BacktestSummary => ({
   summary,
+  dataSource: r.dataSource,
+  realData: r.realData ?? false,
+  startEquity: r.startEquity ?? 10_000,
+  from: r.from,
+  to: r.to,
+  bars: r.bars,
   full: r.full,
   outOfSample: r.outOfSample,
   monteCarloDrawdownPct: r.monteCarloDrawdownPct,
@@ -206,7 +218,8 @@ export class ToolExecutor {
           };
         }
         case "compile_strategy": {
-          const res = app.lab.compileAndTest(userId, i.program ?? i);
+          const days = Number(i.lookback_days ?? i.days ?? 0) || undefined;
+          const res = await app.lab.compileAndTest(userId, i.program ?? i, undefined, { days });
           if (!res.ok) return { ok: false, validationError: true, result: { error: res.error } };
           const { report, ...rest } = res.strategy;
           return {
