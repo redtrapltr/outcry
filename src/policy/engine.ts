@@ -22,9 +22,11 @@ export interface PolicyConfig {
   rejectImpactBps: number;
   medianMultipleForSecondConfirm: number;
   launch: {
-    maxDevSharePct: number;
+    /** Optional hard cap on the dev buy's share of supply; null = no cap (default). */
+    maxDevSharePct: number | null;
     feeReserveSol: number;
-    blockedTickers: string[];
+    /** Tickers that trigger an informational note when a launch looks similar. Never blocks. */
+    notableTickers: string[];
     maxImageBytes: number;
   };
 }
@@ -37,9 +39,9 @@ export const DEFAULT_POLICY: PolicyConfig = {
   rejectImpactBps: 2_000,
   medianMultipleForSecondConfirm: 5,
   launch: {
-    maxDevSharePct: 25,
+    maxDevSharePct: null,
     feeReserveSol: 0.05,
-    blockedTickers: [
+    notableTickers: [
       "BTC", "ETH", "SOL", "USDC", "USDT", "BNB", "XRP", "DOGE", "PEPE", "BONK", "WIF", "JUP", "TRUMP",
       "NVDA", "TSLA", "AAPL", "SPY", "COIN", "OUTCRY", "WOODENG", "BINANCE", "COINBASE", "PUMP",
     ],
@@ -159,28 +161,25 @@ function levenshtein(a: string, b: string): number {
 
 export function evaluateLaunch(req: LaunchRequest, solBalance: number, cfg = DEFAULT_POLICY): Verdict {
   const ticker = req.ticker.toUpperCase();
-  const clash = cfg.launch.blockedTickers.find((b) => b === ticker || (b.length >= 4 && levenshtein(b, ticker) <= 1));
-  if (clash) {
-    return { decision: "reject", reason: `$${ticker} is too close to an existing token or brand ($${clash}). Pick another ticker.` };
-  }
-  if (req.imageDataUrl && req.imageDataUrl.length * 0.75 > cfg.launch.maxImageBytes) {
-    return { decision: "reject", reason: "Logo is larger than 2 MB" };
-  }
+  const notes: string[] = [];
+  const similar = cfg.launch.notableTickers.find((b) => b === ticker || (b.length >= 4 && levenshtein(b, ticker) <= 1));
+  if (similar) notes.push(`$${ticker} is similar to an existing ticker ($${similar})`);
   const total = req.wallets * req.solPerWallet;
   if (total + cfg.launch.feeReserveSol > solBalance + 1e-9) {
     return { decision: "reject", reason: `Not enough SOL: dev buy ${total.toFixed(2)} SOL plus ~${cfg.launch.feeReserveSol} SOL fees, you have ${solBalance.toFixed(2)} SOL` };
   }
   const share = estimateDevShare(total);
-  if (share.pct > cfg.launch.maxDevSharePct) {
+  if (cfg.launch.maxDevSharePct !== null && share.pct > cfg.launch.maxDevSharePct) {
     return {
       decision: "reject",
-      reason: `A ${total.toFixed(2)} SOL dev buy would take about ${share.pct.toFixed(1)}% of supply; the limit is ${cfg.launch.maxDevSharePct}%. Lower the SOL per wallet.`,
+      reason: `A ${total.toFixed(2)} SOL dev buy would take about ${share.pct.toFixed(1)}% of supply; the configured limit is ${cfg.launch.maxDevSharePct}%.`,
     };
   }
   return {
     decision: "allow",
-    warnings: share.pct > 15 ? [`Dev buy takes about ${share.pct.toFixed(1)}% of supply; buyers will see this on the token page`] : [],
+    warnings: [],
     notes: [
+      ...notes,
       `Estimated dev share: ${share.pct.toFixed(1)}% of supply across ${req.wallets} disclosed wallet${req.wallets > 1 ? "s" : ""}`,
       "Create instruction and all dev buys land in one Jito bundle",
       "Mint authority is revoked at launch (pump.fun standard)",

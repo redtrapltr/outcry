@@ -92,10 +92,15 @@ export class Orchestrator {
           model = c.model;
         } catch (e) {
           // Provider down, bad model id, rate limit: try the next candidate.
-          this.app.audit.append("system", "llm.error", { model: c.model, error: String((e as Error).message).slice(0, 300) });
+          const msg = String((e as Error).message).slice(0, 300);
+          this.app.audit.append("system", "llm.error", { model: c.model, error: msg });
+          this.router.noteError(c.model, msg);
+          console.error(`[outcry] ${c.model} failed: ${msg}`);
           if (ci >= candidates.length - 1) throw e;
           ci++;
-          if (candidates[ci]!.offline) notice = "The AI model is unavailable right now: answering with the offline engine.";
+          notice = candidates[ci]!.offline
+            ? "The AI model is unavailable right now: answering with the offline engine."
+            : `${c.model} unavailable, answered by ${candidates[ci]!.model}`;
         }
       }
       totalCost += this.router.record(userId, route.tier, res.usage);

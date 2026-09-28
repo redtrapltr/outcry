@@ -34,11 +34,26 @@ export class AnthropicProvider implements ModelProvider {
     };
     if (req.thinkingBudget > 0) body.thinking = { type: "enabled", budget_tokens: req.thinkingBudget };
 
-    const res = await this.fetchImpl(`${this.baseUrl}/v1/messages`, {
-      method: "POST",
-      headers: { "content-type": "application/json", "x-api-key": this.apiKey, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify(body),
-    });
+    const send = (b: Record<string, unknown>) =>
+      this.fetchImpl(`${this.baseUrl}/v1/messages`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-api-key": this.apiKey, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify(b),
+      });
+    let res = await send(body);
+    if (!res.ok && res.status === 400 && body.thinking) {
+      // Some models or accounts reject the thinking parameter: retry once without it,
+      // stripping thinking blocks from earlier assistant turns of this tool loop.
+      const text = await res.text();
+      if (/thinking/i.test(text)) {
+        console.warn(`[outcry] ${req.model} rejected extended thinking, retrying without it: ${text.slice(0, 200)}`);
+        const { thinking: _t, ...rest } = body;
+        const messages = req.messages.map((m) => (Array.isArray(m.content) ? { ...m, content: m.content.filter((c) => c.type !== "thinking" && c.type !== "redacted_thinking") } : m));
+        res = await send({ ...rest, messages });
+      } else {
+        throw new Error(`Anthropic 400: ${text.slice(0, 300)}`);
+      }
+    }
     if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const j = (await res.json()) as {
       content: ({ type: string; text?: string; id?: string; name?: string; input?: unknown; thinking?: string; signature?: string; data?: string })[];

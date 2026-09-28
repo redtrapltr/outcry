@@ -63,6 +63,20 @@ describe("Claude integration (mocked API)", () => {
     expect(r.meta.costUsd).toBeGreaterThan(0);
   });
 
+  it("retries without extended thinking when a model rejects it", async () => {
+    let calls = 0;
+    const fetchImpl = (async (_u: string, init: { body: string }) => {
+      calls++;
+      const b = JSON.parse(init.body);
+      if (b.thinking) return new Response(JSON.stringify({ error: { message: "thinking is not supported for this model" } }), { status: 400 });
+      return Response.json({ content: [{ type: "text", text: "ok" }], stop_reason: "end_turn", usage: { input_tokens: 10, output_tokens: 2 }, model: b.model });
+    }) as unknown as typeof fetch;
+    const p = new AnthropicProvider("k", "https://x", fetchImpl);
+    const r = await p.chat({ model: "claude-opus-5-5", system: "s", messages: [{ role: "user", content: "hi" }], tools: [], maxTokens: 100, thinkingBudget: 50 });
+    expect(r.content[0]).toEqual({ type: "text", text: "ok" });
+    expect(calls).toBe(2);
+  });
+
   it("falls back to the offline engine when the model API fails", async () => {
     const app = createOutcry();
     const user = app.users.create({ badge: "A", jacket: "memes", residence: "CH" });

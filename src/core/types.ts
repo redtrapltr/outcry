@@ -38,8 +38,10 @@ export const OrderLeg = z.object({
   asset: z.string().min(1),
   /** What the user pays with on a buy, or receives on a sell. */
   quoteAsset: z.string().min(1).default("USDC"),
-  /** Amount of quoteAsset to spend (buy) or of asset to sell (sell). */
-  amount: z.number().positive().finite(),
+  /** Amount of quoteAsset to spend (buy) or of asset to sell (sell). For exact-output buys this is filled in by the quote. */
+  amount: z.number().nonnegative().finite(),
+  /** Buy exactly this quantity of `asset` ("buy 4 SOL"); the quote works out how much quoteAsset it costs. */
+  receiveExact: z.number().positive().finite().optional(),
   maxSlippageBps: z.number().int().min(1).max(5_000).default(50),
   venue: Venue.optional(),
 });

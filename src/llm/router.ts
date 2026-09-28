@@ -65,6 +65,13 @@ export class ModelRouter {
     return (this.daily.get(`${d}:${userId}`) ?? 0) >= this.budgets.perUserDailyUsd || (this.daily.get(`${d}:*`) ?? 0) >= this.budgets.globalDailyUsd;
   }
 
+  /** Last few model errors, for /api/health (no keys or prompts, just the provider's message). */
+  readonly recentErrors: { at: string; model: string; error: string }[] = [];
+  noteError(model: string, error: string) {
+    this.recentErrors.unshift({ at: new Date().toISOString(), model, error: error.replace(/sk-[A-Za-z0-9_-]+/g, "sk-***") });
+    this.recentErrors.length = Math.min(this.recentErrors.length, 5);
+  }
+
   get offlineProvider(): ModelProvider {
     return this.opts.providers.offline ?? new OfflineProvider();
   }
