@@ -1,0 +1,250 @@
+import { describe, expect, it } from "vitest";
+import { createOutcry } from "../src/app.js";
+import { AuditLog } from "../src/core/infra.js";
+import { estimateDevShare } from "../src/policy/engine.js";
+import { buildLaunchPlan, MAX_LAUNCH_WALLETS } from "../src/launch/pumpfun.js";
+import { StrategyProgram } from "../src/core/types.js";
+import { backtest } from "../src/strategy/backtest.js";
+import * as ind from "../src/strategy/indicators.js";
+import { PolicyDenied } from "../src/wallet/signer.js";
+
+const setup = (residence = "CH") => {
+  const app = createOutcry();
+  const user = app.users.create({ badge: "LOUD", jacket: "memes", residence });
+  return { app, user };
+};
+const approval = "passkey-assertion-test";
+
+describe("audit log", () => {
+  it("detects tampering through the hash chain", () => {
+    const log = new AuditLog();
+    log.append("user:a", "x", { n: 1 });
+    log.append("user:a", "y", { n: 2 });
+    expect(log.verify()).toBe(true);
+    log._tamper(0, { n: 999 });
+    expect(log.verify()).toBe(false);
+  });
+});
+
+describe("orders", () => {
+  it("quotes, checks policy, and fills only after a passkey approval", async () => {
+    const { app, user } = setup();
+    const t = await app.desk.proposeOrder({ userId: user.id, legs: [{ side: "buy", asset: "SOL", quoteAsset: "USDC", amount: 100, maxSlippageBps: 50 }] });
+    expect(t.status).toBe("needs_confirmation");
+    expect(t.legs[0]!.venue).toBe("jupiter");
+    expect(t.legs[0]!.platformFeeUsd).toBeCloseTo(0.5, 5); // 50 bps of $100
+    await expect(app.desk.approve(t.id, {})).rejects.toThrow(/passkey/);
+    const done = await app.desk.approve(t.id, { userApproval: approval });
+    expect(done.status).toBe("filled");
+    expect(user.balances.USDC).toBeCloseTo(2380, 6);
+    expect(user.balances.SOL).toBeGreaterThan(24);
+  });
+
+  it("routes tokenized stocks to Ondo or xStocks and geofences US residents", async () => {
+    const ch = setup("CH");
+    const t = await ch.app.desk.proposeOrder({ userId: ch.user.id, legs: [{ side: "buy", asset: "NVDA", quoteAsset: "USDC", amount: 200, maxSlippageBps: 50 }] });
+    expect(t.status).toBe("needs_confirmation");
+    expect(t.legs[0]!.venue).toBe("ondo");
+    expect(t.jacket).toBe("stocks");
+    const us = setup("US");
+    const t2 = await us.app.desk.proposeOrder({ userId: us.user.id, legs: [{ side: "buy", asset: "TSLA", quoteAsset: "USDC", amount: 50, maxSlippageBps: 50 }] });
+    expect(t2.status).toBe("rejected");
+    expect(t2.rejection).toMatch(/not available in your country/);
+  });
+
+  it("asks for a second confirmation on a large order", async () => {
+    const { app, user } = setup();
+    const t = await app.desk.proposeOrder({ userId: user.id, legs: [{ side: "buy", asset: "SOL", quoteAsset: "USDC", amount: 2000, maxSlippageBps: 50 }] });
+    expect(t.status).toBe("needs_second_confirmation");
+    await expect(app.desk.approve(t.id, { userApproval: approval })).rejects.toThrow(/second confirmation/);
+    const done = await app.desk.approve(t.id, { userApproval: approval, secondConfirmation: true });
+    expect(done.status).toBe("filled");
+  });
+
+  it("rejects orders the wallet can't pay for", async () => {
+    const { app, user } = setup();
+    const t = await app.desk.proposeOrder({ userId: user.id, legs: [{ side: "buy", asset: "SOL", quoteAsset: "USDC", amount: 999_999, maxSlippageBps: 50 }] });
+    expect(t.status).toBe("rejected");
+    expect(t.rejection).toMatch(/Insufficient USDC/);
+  });
+
+  it("rejects excessive slippage", async () => {
+    const { app, user } = setup();
+    const t = await app.desk.proposeOrder({ userId: user.id, legs: [{ side: "buy", asset: "SOL", quoteAsset: "USDC", amount: 10, maxSlippageBps: 900 }] });
+    expect(t.status).toBe("rejected");
+  });
+});
+
+describe("signer policy", () => {
+  it("refuses main-wallet signatures without a user approval", () => {
+    const { app, user } = setup();
+    const id = app.users.mainWalletId(user.id);
+    expect(() => app.signer.sign({ walletId: id, venue: "jupiter", usd: 5, kind: "trade", payload: {} })).toThrow(PolicyDenied);
+  });
+
+  it("enforces sub-wallet venue, per-tx, daily and withdrawal rules", () => {
+    const { app, user } = setup();
+    const w = app.signer.createSubWallet(user.id, "agent", "t", { allowedVenues: ["jupiter"], maxPerTxUsd: 10, maxPerDayUsd: 15, withdrawTo: user.mainWallet.solana });
+    const base = { walletId: w.id, agentId: "agt_x", kind: "trade" as const, payload: {} };
+    expect(() => app.signer.sign({ ...base, venue: "pumpfun", usd: 5 })).toThrow(/venue/);
+    expect(() => app.signer.sign({ ...base, venue: "jupiter", usd: 11 })).toThrow(/per-transaction/);
+    app.signer.sign({ ...base, venue: "jupiter", usd: 10 });
+    expect(() => app.signer.sign({ ...base, venue: "jupiter", usd: 6 })).toThrow(/daily/);
+    expect(() => app.signer.sign({ ...base, venue: "x", usd: 0, kind: "transfer", transferTo: "attacker" })).toThrow(/main wallet/);
+  });
+});
+
+describe("launches", () => {
+  it("estimates the dev share on the bonding curve", () => {
+    expect(estimateDevShare(5).pct).toBeCloseTo(15.3, 0);
+    expect(estimateDevShare(0).pct).toBe(0);
+  });
+
+  it("launches with a disclosed multi-wallet dev buy", async () => {
+    const { app, user } = setup();
+    const t = app.launches.propose(user.id, { name: "Work", ticker: "$work", wallets: 10, solPerWallet: 0.5 });
+    expect(t.status).toBe("needs_confirmation");
+    expect(t.disclosure).toMatch(/10 disclosed wallets via Outcry/);
+    await expect(app.launches.approve(t.id, { userApproval: approval })).rejects.toThrow(/disclosure/);
+    const done = await app.launches.approve(t.id, { userApproval: approval, disclosureAccepted: true });
+    expect(done.status).toBe("filled");
+    expect(done.launchWallets).toHaveLength(10);
+    const entry = app.registry.get(done.mint!)!;
+    expect(entry.wallets).toHaveLength(10);
+    const risk = app.market.tokenRisk(done.mint!)!;
+    expect(risk.holdersCollapsed).toBe(1); // bundle counted as one holder
+    expect(user.balances.SOL).toBeCloseTo(24 - 5 - 0.02, 6);
+    const plan = app.launches.plans.get(t.id)!;
+    expect(plan.transactions.length).toBeLessThanOrEqual(5);
+    expect(plan.bundle.filter((s) => s.op === "buy")).toHaveLength(10);
+  });
+
+  it("blocks look-alike tickers and oversized dev buys", () => {
+    const { app, user } = setup();
+    expect(app.launches.propose(user.id, { name: "x", ticker: "BONKK", wallets: 1, solPerWallet: 0.1 }).rejection).toMatch(/too close/);
+    const big = app.launches.propose(user.id, { name: "x", ticker: "HUGE", wallets: 10, solPerWallet: 2 });
+    expect(big.status).toBe("rejected");
+    expect(big.rejection).toMatch(/of supply|Not enough SOL/);
+  });
+
+  it("refuses to build a plan without the disclosure, or beyond one Jito bundle", () => {
+    const base = { mint: "m", creator: "c", buys: [{ wallet: "w", sol: 1 }] };
+    expect(() => buildLaunchPlan({ ...base, metadata: { name: "a", symbol: "A", description: "no disclosure" } })).toThrow(/disclosure/);
+    const many = Array.from({ length: MAX_LAUNCH_WALLETS + 1 }, (_, i) => ({ wallet: `w${i}`, sol: 0.1 }));
+    expect(() => buildLaunchPlan({ ...base, buys: many, metadata: { name: "a", symbol: "A", description: "1 disclosed wallet" } })).toThrow(/Jito bundle/);
+  });
+});
+
+describe("agents", () => {
+  const sniper = {
+    name: "SNIPER", goal: "snipe new memes", markets: ["memes"], kind: "sniper",
+    universe: { venue: "pumpfun", minHolders: 200, maxTopWalletPct: 20, requireMintRevoked: true },
+    sizeUsd: 20, exit: { stopLossPct: 30, takeProfitPct: 120 },
+    limits: { maxPerTradeUsd: 20, maxPerDayUsd: 50, maxOpenPositions: 5, maxDrawdownPct: 40 }, mode: "paper",
+  };
+
+  it("paper-trades a sniper within its limits and skips bundled launches", async () => {
+    const { app, user } = setup();
+    const { agent, replay } = app.agents.propose(user.id, sniper);
+    expect(agent.state).toBe("backtested");
+    expect(replay!.scanned).toBeGreaterThan(0);
+    app.agents.deploy(user.id, agent.id, { mode: "paper" });
+    const usdcBefore = user.balances.USDC;
+
+    // Another user launches a token with 10 disclosed wallets: looks like 10 holders, is 1.
+    const other = app.users.create({ badge: "DEV", jacket: "launch", residence: "CH" });
+    const lt = app.launches.propose(other.id, { name: "Bundle", ticker: "BNDL", wallets: 10, solPerWallet: 0.2 });
+    await app.launches.approve(lt.id, { userApproval: approval, disclosureAccepted: true });
+    // Three good launches and one bad one
+    app.market.spawnMeme("GOOD1");
+    app.market.spawnMeme("GOOD2");
+    app.market.spawnMeme("GOOD3");
+    app.market.spawnMeme("RUG", { mintRevoked: false });
+
+    await app.agents.tick();
+    const a = app.agents.get(agent.id)!;
+    const pos = app.agents.positionsOf(agent.id).map((p) => p.symbol).sort();
+    // Daily cap $50 at $20 per trade allows two buys
+    expect(pos.length).toBe(2);
+    expect(pos.every((s) => s.startsWith("GOOD"))).toBe(true);
+    expect(a.stats.spentTodayUsd).toBeLessThanOrEqual(50 + 1e-6);
+    expect(user.balances.USDC).toBe(usdcBefore); // paper: main wallet untouched
+    const decisions = app.agents.explain(agent.id, 50).map((e) => e.data as { symbol?: string; reason?: string });
+    expect(decisions.some((d) => d.symbol === "BNDL" && /holders/.test(d.reason ?? ""))).toBe(true);
+    expect(decisions.some((d) => d.symbol === "RUG")).toBe(true);
+    expect(app.audit.verify()).toBe(true);
+  });
+
+  it("requires a passkey for live and a paper period for auto", () => {
+    const { app, user } = setup();
+    const { agent } = app.agents.propose(user.id, sniper);
+    expect(() => app.agents.deploy(user.id, agent.id, { mode: "ask" })).toThrow(/passkey/);
+    expect(() => app.agents.deploy(user.id, agent.id, { mode: "auto", userApproval: approval })).toThrow(/Auto mode unlocks/);
+    const now = Date.now();
+    app.agents.deploy(user.id, agent.id, { mode: "paper", now });
+    app.agents.control(user.id, agent.id, "pause");
+    const live = app.agents.deploy(user.id, agent.id, { mode: "auto", userApproval: approval, now: now + 8 * 86_400_000 });
+    expect(live.state).toBe("live");
+    expect(live.balances.SOL).toBeGreaterThan(0);
+  });
+
+  it("kill sweeps a live agent's funds back to the main wallet", () => {
+    const { app, user } = setup();
+    const { agent } = app.agents.propose(user.id, sniper);
+    const before = user.balances.SOL!;
+    app.agents.deploy(user.id, agent.id, { mode: "ask", userApproval: approval });
+    expect(user.balances.SOL!).toBeLessThan(before);
+    app.agents.control(user.id, agent.id, "kill");
+    expect(user.balances.SOL!).toBeCloseTo(before, 9);
+    expect(app.agents.get(agent.id)!.state).toBe("killed");
+  });
+
+  it("ask mode waits for the user's tap", async () => {
+    const { app, user } = setup();
+    const { agent } = app.agents.propose(user.id, sniper);
+    app.agents.deploy(user.id, agent.id, { mode: "ask", userApproval: approval });
+    app.market.spawnMeme("ASKME");
+    await app.agents.tick();
+    expect(app.agents.positionsOf(agent.id)).toHaveLength(0);
+    const pending = app.desk.listForUser(user.id).find((t) => t.status === "needs_confirmation" && t.source.type === "agent" && t.kind === "order" && t.legs[0]!.asset === "ASKME")!;
+    expect(pending).toBeDefined();
+    await app.desk.approve(pending.id, { userApproval: approval, secondConfirmation: true });
+    await app.agents.tick();
+    expect(app.agents.positionsOf(agent.id).map((p) => p.symbol)).toContain("ASKME");
+  });
+});
+
+describe("strategy engine", () => {
+  it("computes RSI and EMA without look-ahead", () => {
+    const xs = Array.from({ length: 50 }, (_, i) => 100 + Math.sin(i / 3) * 5);
+    const r1 = ind.rsi(xs, 14);
+    const r2 = ind.rsi(xs.slice(0, 30), 14);
+    for (let i = 0; i < 30; i++) expect(Number.isNaN(r1[i]!) ? NaN : r1[i]).toEqual(Number.isNaN(r2[i]!) ? NaN : r2[i]);
+    const e = ind.ema([1, 2, 3, 4, 5], 3);
+    expect(e[2]).toBeCloseTo(2);
+    expect(e[4]).toBeCloseTo(4);
+  });
+
+  it("backtests with walk-forward, benchmark and overfitting flags", () => {
+    const { app } = setup();
+    const p = StrategyProgram.parse({
+      timeframe: "4h", asset: "SOL",
+      entry: { all: [{ crosses_above: [{ rsi: 14 }, 30] }, { gt: ["close", { ema: 200 }] }] },
+      exit: { any: [{ crosses_below: [{ macd: [12, 26, 9] }, { macd_signal: [12, 26, 9] }] }, { stop_loss_pct: 8 }] },
+      size: { risk_pct_of_equity: 1 },
+    });
+    const r = backtest(p, app.market.candles("SOL", "4h", 2000));
+    expect(r.full.startEquity).toBe(10_000);
+    expect(r.outOfSample).toBeDefined();
+    expect(r.monteCarloDrawdownPct.p95).toBeGreaterThanOrEqual(r.monteCarloDrawdownPct.p5);
+    expect(r.paramCount).toBe(7);
+  });
+
+  it("rejects stops in entry conditions and unknown indicators", () => {
+    const { app, user } = setup();
+    const bad = app.lab.compileAndTest(user.id, { timeframe: "1h", asset: "SOL", entry: { stop_loss_pct: 5 }, exit: { take_profit_pct: 5 }, size: { fixed_quote: 100 } });
+    expect(bad.ok).toBe(false);
+    const unknown = app.lab.compileAndTest(user.id, { timeframe: "1h", asset: "SOL", entry: { gt: [{ supertrend: 10 }, 1] }, exit: { take_profit_pct: 5 }, size: { fixed_quote: 100 } });
+    expect(unknown.ok).toBe(false);
+  });
+});
