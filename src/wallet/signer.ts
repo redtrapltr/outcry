@@ -10,7 +10,7 @@
  * enforces the same policy rules, so the rest of the stack behaves exactly as
  * it will against Turnkey. The simulated signer never touches real keys.
  */
-import { createHash } from "node:crypto";
+import { sha256, sha256Hex } from "../core/hash.js";
 import { dayKey, newId } from "../core/infra.js";
 
 export interface WalletPolicy {
@@ -66,8 +66,8 @@ export interface Signer {
 }
 
 const fakeAddress = (seed: string, chain: "solana" | "evm") => {
-  const h = createHash("sha256").update(seed).digest();
-  if (chain === "evm") return "0x" + h.subarray(0, 20).toString("hex");
+  const h = sha256(seed);
+  if (chain === "evm") return "0x" + sha256Hex(seed).slice(0, 40);
   const alphabet = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
   let out = "";
   for (let i = 0; i < 44; i++) out += alphabet[h[i % 32]! % alphabet.length];
@@ -147,9 +147,7 @@ export class SimulatedTurnkeySigner implements Signer {
         w.spentToday.usd += req.usd;
       }
     }
-    const signature = createHash("sha256")
-      .update(JSON.stringify({ w: w.id, p: req.payload, t: Date.now(), n: Math.random() }))
-      .digest("base64url");
+    const signature = sha256Hex(JSON.stringify({ w: w.id, p: req.payload, t: Date.now(), n: Math.random() }));
     return { walletId: w.id, signature };
   }
 }

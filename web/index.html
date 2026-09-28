@@ -3,555 +3,474 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<title>Outcry Terminal</title>
+<title>Outcry Floor</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
 <style>
 :root{
-  color-scheme:dark;
-  --bg:#0E1030; --side:#0A0C26; --card:#161A40; --card2:#1C2150; --line:#262B57; --line2:#3A407A;
-  --text:#F3EFE4; --soft:#C9CBE0; --muted:#9EA2C9; --voice:#2F3CFF; --voice-text:#8E95FF;
-  --up:#3DDC97; --down:#FF6B6B; --paper:#F3EFE4; --ink:#121426; --dash:#B9B2A2;
-  --memes:#F76FB0; --stocks:#8E2C48; --swaps:#2FA6E8; --launch:#B5D93A; --strategies:#8B6CF6; --research:#C9A46C;
+  --bg:#F3EFE4; --card:#FBF8F1; --text:#121426; --soft:#3A3C4E; --muted:#5E6072;
+  --line:#121426; --dash:#B9B2A2; --voice:#2F3CFF; --voice-text:#2F3CFF; --on-voice:#F3EFE4;
+  --shadow:#121426; --band:#121426; --on-band:#F3EFE4; --band-muted:#C9CBE0; --band-line:#3A3E66;
+  --paper:#F3EFE4; --paper-ink:#121426; --up:#0B7A45;
   --display:'Big Shoulders Display','Oswald','Arial Narrow',sans-serif;
   --sans:'Geist',system-ui,-apple-system,'Segoe UI',sans-serif;
   --mono:'JetBrains Mono',ui-monospace,Menlo,monospace;
 }
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    color-scheme:dark;
+    --bg:#0E1030; --card:#161A40; --text:#F3EFE4; --soft:#C9CBE0; --muted:#9EA2C9;
+    --line:#3A407A; --voice-text:#8E95FF; --shadow:#2F3CFF; --band:#070920; --band-line:#262B57; --up:#3DDC97;
+  }
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#0E1030; --card:#161A40; --text:#F3EFE4; --soft:#C9CBE0; --muted:#9EA2C9;
+  --line:#3A407A; --voice-text:#8E95FF; --shadow:#2F3CFF; --band:#070920; --band-line:#262B57; --up:#3DDC97;
+}
 *{box-sizing:border-box}
-html,body{height:100%}
-body{margin:0;background:var(--bg);color:var(--text);font:15px/1.5 var(--sans)}
-button,input{font:inherit;color:inherit}
-:focus-visible{outline:2px solid var(--voice-text);outline-offset:2px}
-[hidden]{display:none!important}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);font-size:16px;line-height:1.55;margin:0}
+a{color:var(--voice-text)}
+:focus-visible{outline:3px solid var(--voice);outline-offset:3px}
+.wrap{max-width:1360px;margin:0 auto;padding-inline:clamp(16px,4vw,56px)}
 .mono{font-family:var(--mono)}
-.eyebrow{font:11px var(--mono);letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
-.app{height:100vh;height:100dvh;display:grid;grid-template-columns:260px minmax(0,1fr) 340px;grid-template-rows:minmax(0,1fr);overflow:hidden}
+.eyebrow{font-family:var(--mono);font-size:12.5px;letter-spacing:.1em;color:var(--muted);text-transform:uppercase}
+.display{font-family:var(--display);font-weight:900;text-transform:uppercase;line-height:.84;margin:0;text-wrap:balance}
+.voice{color:var(--voice-text)}
+.btn{display:inline-flex;align-items:center;justify-content:center;min-height:48px;padding:0 24px;border-radius:999px;font:600 16px var(--sans);text-decoration:none;cursor:pointer;border:1.5px solid var(--line)}
+.btn-primary{background:var(--voice);color:var(--on-voice);border-color:var(--voice)}
+.btn-primary:hover{filter:brightness(1.08)}
+.btn-ghost{background:transparent;color:var(--text)}
 
-.side{background:var(--side);border-right:1px solid var(--line);display:flex;flex-direction:column;gap:18px;padding:18px 14px;overflow-y:auto}
-.brand{display:flex;align-items:center;gap:10px}
-.mark{width:34px;height:34px;border-radius:9px;background:var(--voice);color:#F3EFE4;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-.word{font:900 28px/1 var(--display)}
-.member{display:flex;gap:10px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:9px}
-.mbadge{min-width:42px;height:52px;padding:0 6px;border-radius:8px;background:var(--memes);color:var(--ink);border:1.5px solid var(--paper);display:flex;align-items:center;justify-content:center;font:900 19px var(--display)}
-.btn{display:inline-flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:0 16px;border-radius:999px;border:1px solid var(--line2);background:transparent;cursor:pointer;font-weight:500;font-size:14px}
-.btn:hover{background:var(--card2)}
-.btn-primary{background:var(--voice);border-color:var(--voice);color:#F3EFE4;font-weight:600}
-.btn-primary:hover{background:#4450FF}
-.btn-danger{border-color:#7A2F3A;color:#FFB3B3}
-.btn[disabled]{opacity:.5;cursor:default}
-.list{display:flex;flex-direction:column;gap:2px}
-.item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:14px}
-.sq{width:10px;height:10px;border-radius:3px;flex-shrink:0;display:inline-block}
-.status{font:10.5px var(--mono);letter-spacing:.08em}
-.st-live{color:var(--up)} .st-paper{color:var(--voice-text)} .st-paused{color:var(--muted)} .st-backtested{color:var(--soft)}
-.empty{font-size:13px;color:var(--muted);padding:4px 10px}
-.tiers{display:flex;flex-direction:column;gap:4px;font:11px var(--mono);color:var(--muted);border:1px solid var(--line);border-radius:10px;padding:10px}
-.tiers b{color:var(--soft);font-weight:500}
+/* tape */
+.tape{background:#121426;color:#F3EFE4;height:40px;overflow:hidden;display:flex;align-items:center;font:700 12.5px var(--mono);letter-spacing:.08em;white-space:nowrap}
+.tape-track{display:flex;gap:36px;padding-left:36px;animation:tape 40s linear infinite}
+@keyframes tape{to{transform:translateX(-50%)}}
+.tape .tag{padding:0 6px;border-radius:3px;color:#121426}
 
-.chat{display:flex;flex-direction:column;min-width:0;min-height:0;height:100%}
-.chat-head{min-height:58px;border-bottom:1px solid var(--line);display:flex;align-items:center;justify-content:space-between;gap:12px;padding:0 24px;flex-wrap:wrap}
-.chat-head h1{margin:0;font:800 24px/1 var(--display);text-transform:uppercase}
-.pill{font:10.5px var(--mono);letter-spacing:.08em;border:1px solid var(--line2);border-radius:999px;padding:5px 10px;color:var(--muted)}
-.log{flex:1;min-height:0;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:20px}
-@media (max-width:820px){.log{padding:16px}.chat-head{padding:10px 16px}}
-.msg-user{align-self:flex-end;max-width:min(78%,640px);background:var(--voice);color:#F3EFE4;border-radius:14px 14px 3px 14px;padding:12px 15px;white-space:pre-wrap}
-.msg-ai{display:flex;gap:12px;max-width:min(100%,780px)}
-.ai-mark{width:28px;height:28px;border-radius:8px;background:var(--card2);color:var(--voice-text);display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
-.ai-body{display:flex;flex-direction:column;gap:12px;min-width:0;flex:1}
-.ai-body > p{margin:0;color:var(--soft);white-space:pre-wrap}
-.meta{font:10.5px var(--mono);color:var(--muted);letter-spacing:.04em}
-.thinking{display:flex;gap:5px;padding:10px 0}
-.thinking span{width:7px;height:7px;border-radius:99px;background:var(--voice-text);animation:blink 1s infinite}
-.thinking span:nth-child(2){animation-delay:.15s}.thinking span:nth-child(3){animation-delay:.3s}
-@keyframes blink{0%,100%{opacity:.25}50%{opacity:1}}
+/* nav */
+header.nav{border-bottom:1.5px solid var(--line)}
+.nav-in{display:flex;align-items:center;justify-content:space-between;gap:16px;min-height:76px;flex-wrap:wrap}
+.brand{display:flex;align-items:center;gap:10px;text-decoration:none;color:var(--text)}
+.mark{width:38px;height:38px;border-radius:10px;background:var(--voice);color:#F3EFE4;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+.wordmark{font:900 34px/1 var(--display);color:var(--voice-text);letter-spacing:.01em}
+.by{font:11px var(--mono);letter-spacing:.1em;color:var(--muted)}
+.nav-links{display:flex;gap:28px;font-weight:500}
+.nav-links a{color:var(--text);text-decoration:none}
+.nav-links a:hover{color:var(--voice-text)}
+@media (max-width:960px){.nav-links{display:none}.by{display:none}}
 
-.ticket{background:var(--paper);color:var(--ink);border-radius:10px;overflow:hidden;font:13px var(--mono);position:relative}
-.t-head{display:flex;justify-content:space-between;gap:10px;padding:9px 14px;font-weight:700;font-size:11px;letter-spacing:.1em;color:var(--ink)}
-.t-row{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px dashed var(--dash)}
-.t-row:last-child{border-bottom:0}
-.t-row small{display:block;color:#5E6072;font-size:11.5px}
-.t-muted{color:#5E6072}
-.t-warn{background:#FCE7D7;color:#7A2E0E;padding:9px 14px;font:12.5px/1.45 var(--sans);border-bottom:1px dashed var(--dash)}
-.t-reject{background:#FAD4D4;color:#7A1414;padding:10px 14px;font:13px/1.45 var(--sans)}
-.t-note{padding:8px 14px;font:12px/1.45 var(--sans);color:#3A3C4E;border-bottom:1px dashed var(--dash)}
-.stepper{display:flex;align-items:center;gap:6px}
-.stepper button{width:30px;height:30px;border-radius:6px;border:1.5px solid var(--ink);background:#FBF8F1;color:var(--ink);cursor:pointer;font-weight:700}
-.stepper output{min-width:64px;text-align:center;font-weight:700}
-.wallets{display:grid;grid-template-columns:repeat(auto-fill,minmax(88px,1fr));gap:6px;padding:12px 14px;border-bottom:1px dashed var(--dash)}
-.wal{border:1.5px solid var(--ink);border-radius:6px;padding:6px 8px;display:flex;flex-direction:column;background:#FBF8F1;transition:background .25s}
-.wal small{font-size:10px;color:#5E6072}
-.wal.done{background:var(--launch)}
-.disclose{display:flex;gap:10px;padding:12px 14px;background:#E7E2D5;font:12.5px/1.5 var(--sans);color:var(--ink);align-items:flex-start}
-.disclose input{margin-top:3px;width:16px;height:16px;accent-color:var(--voice)}
-.actions{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
-.stamp{position:absolute;right:18px;top:38%;border:4px solid var(--voice);color:var(--voice);border-radius:8px;padding:4px 14px;font:900 44px/1 var(--display);background:rgba(243,239,228,.9);transform:rotate(-10deg);animation:stamp .38s cubic-bezier(.2,.8,.3,1) both;pointer-events:none}
-.stamp.bad{border-color:#B3261E;color:#B3261E;font-size:34px}
-@keyframes stamp{0%{transform:rotate(-10deg) scale(1.8);opacity:0}60%{transform:rotate(-10deg) scale(.94);opacity:1}100%{transform:rotate(-10deg) scale(1)}}
-.steps{display:flex;flex-direction:column;gap:6px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font:12.5px var(--mono)}
-.step{display:flex;gap:10px;align-items:center;color:var(--muted)}
-.step.on{color:var(--text)}
-.step .ck{width:16px;height:16px;border-radius:99px;border:1.5px solid var(--line2);display:inline-flex;align-items:center;justify-content:center;font-size:10px;flex-shrink:0}
-.step.done .ck{background:var(--up);border-color:var(--up);color:var(--ink)}
-.jtag{font:700 10.5px var(--mono);letter-spacing:.08em;padding:3px 7px;border-radius:4px;color:var(--ink)}
+/* hero */
+.hero{display:grid;grid-template-columns:1.05fr 1fr;gap:clamp(28px,4vw,56px);padding-block:clamp(40px,7vw,88px)}
+.hero h1{font-size:clamp(84px,13.5vw,196px)}
+.hero-copy{display:flex;flex-direction:column;gap:28px}
+.hero-copy p{font-size:clamp(17px,1.6vw,20px);color:var(--soft);max-width:36em;margin:0}
+.row{display:flex;gap:12px;flex-wrap:wrap;align-items:center}
+.facts{display:flex;gap:10px 22px;flex-wrap:wrap;font:12px var(--mono);letter-spacing:.06em;color:var(--muted)}
+@media (max-width:900px){.hero{grid-template-columns:1fr}}
 
-.builder{background:var(--card);border:1px solid var(--line);border-radius:14px;overflow:hidden}
-.b-head{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--line)}
-.b-head strong{font:900 24px/1 var(--display);text-transform:uppercase}
-.b-progress{font:11px var(--mono);color:var(--voice-text);letter-spacing:.08em}
-.blueprint{position:relative;padding:18px 16px 8px 52px;display:flex;flex-direction:column;gap:14px;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:24px 24px;background-position:-1px -1px}
-.spine{position:absolute;left:31px;top:30px;width:2px;background:var(--voice);height:0;transition:height .5s ease}
-.node{position:relative;background:var(--side);border:1.5px solid var(--line2);border-radius:10px;padding:10px 12px;opacity:0;transform:translateX(-8px);transition:opacity .35s,transform .35s,border-color .3s}
-.node.on{opacity:1;transform:none}
-.node::before{content:"";position:absolute;left:-27px;top:14px;width:12px;height:12px;border-radius:99px;background:var(--bg);border:2px solid var(--voice)}
-.node.on::before{background:var(--voice)}
-.node .lbl{font:10.5px var(--mono);letter-spacing:.1em;color:var(--voice-text)}
-.node .val{margin-top:3px;font-size:14px;display:flex;gap:6px;flex-wrap:wrap;align-items:center}
-.node .val span.line{display:block;width:100%}
-.node.flash{border-color:var(--launch)}
-.hand{display:inline-block;animation:wave 1.1s ease-in-out infinite;transform-origin:50% 90%}
-@keyframes wave{0%,100%{transform:rotate(-8deg)}50%{transform:rotate(10deg)}}
-.adjust{border-top:1px solid var(--line);padding:16px;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px 22px}
-@media (max-width:640px){.adjust{grid-template-columns:1fr}}
-.ctl{display:flex;flex-direction:column;gap:6px}
-.ctl-top{display:flex;justify-content:space-between;gap:8px;font-size:13px;color:var(--soft)}
-.ctl-top output{font:700 13px var(--mono);color:var(--text)}
-input[type=range]{width:100%;accent-color:var(--voice)}
-.wide{grid-column:1/-1}
-.toggles{display:flex;gap:6px;flex-wrap:wrap}
-.tg{display:flex;align-items:center;gap:6px;border:1px solid var(--line2);border-radius:999px;padding:6px 12px 6px 8px;cursor:pointer;background:transparent;font-size:13px}
-.tg[aria-pressed="true"]{background:var(--text);color:var(--ink);border-color:var(--text)}
-.summary{background:var(--side);border:1px solid var(--line);border-radius:10px;padding:12px 14px;font-size:14px;color:var(--soft)}
-.summary b{color:var(--text)}
-.check{display:flex;gap:8px;align-items:center;font-size:13px;color:var(--soft)}
-.metrics{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:1px;background:var(--line);border:1px solid var(--line);border-radius:10px;overflow:hidden}
-@media (max-width:640px){.metrics{grid-template-columns:repeat(2,minmax(0,1fr))}}
-.metric{background:var(--card);padding:10px 12px;display:flex;flex-direction:column;gap:2px}
-.metric b{font:700 18px var(--mono);font-variant-numeric:tabular-nums}
-.metric span{font:10.5px var(--mono);color:var(--muted);letter-spacing:.06em}
-.curve{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px}
-.curve svg{width:100%;height:120px;display:block}
-.warns{display:flex;flex-direction:column;gap:4px;font-size:13px;color:#FFC98A}
+/* demo */
+.demo{display:flex;flex-direction:column;gap:14px;min-width:0}
+.chips{display:flex;gap:8px;flex-wrap:wrap}
+.chip{min-height:40px;padding:0 14px 0 10px;border-radius:999px;border:1.5px solid var(--line);background:transparent;color:var(--text);font:600 14px var(--sans);display:flex;align-items:center;gap:8px;cursor:pointer;transition:background .15s,color .15s}
+.chip[aria-pressed="true"]{background:var(--text);color:var(--bg)}
+.sw{width:14px;height:14px;border-radius:4px;border:1px solid rgba(18,20,38,.3);flex-shrink:0}
+.pit{background:var(--card);border:1.5px solid var(--line);border-radius:18px;overflow:hidden;box-shadow:8px 8px 0 var(--shadow)}
+.pit-bar{min-height:44px;padding:0 18px;display:flex;align-items:center;justify-content:space-between;gap:12px;border-bottom:1.5px solid var(--line);font:12px var(--mono);color:var(--muted)}
+.dot{width:7px;height:7px;border-radius:99px;background:var(--up);display:inline-block;margin-right:8px}
+.pit-body{padding:clamp(16px,2vw,22px);display:flex;flex-direction:column;gap:14px}
+.bubble{align-self:flex-end;max-width:88%;background:var(--voice);color:#F3EFE4;border-radius:14px 14px 3px 14px;padding:13px 16px;font-size:15px}
+.reply{font-size:15px;color:var(--soft);margin:0}
+.ticket-wrap{position:relative}
+.ticket{background:var(--paper);color:var(--paper-ink);border:1.5px solid #121426;border-radius:10px;overflow:hidden;font:13px var(--mono)}
+.ticket-head{display:flex;justify-content:space-between;gap:10px;padding:10px 14px;font-weight:700;font-size:11px;letter-spacing:.1em;border-bottom:1.5px solid #121426}
+.leg{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:11px 14px;border-bottom:1px dashed #B9B2A2}
+.leg b{display:block}
+.leg small{color:#5E6072;font-size:12px}
+.leg span:last-child{flex-shrink:0;font-variant-numeric:tabular-nums}
+.ticket-foot{display:flex;justify-content:space-between;gap:10px;padding:10px 14px;color:#5E6072}
+.stamp{position:absolute;right:20px;top:34%;border:4px solid #2F3CFF;color:#2F3CFF;border-radius:8px;padding:6px 16px;font:900 clamp(38px,5vw,52px)/1 var(--display);letter-spacing:.04em;background:rgba(243,239,228,.85);transform:rotate(-12deg);pointer-events:none}
+.stamp.show{animation:stamp .38s cubic-bezier(.2,.8,.3,1) both}
+@keyframes stamp{0%{transform:rotate(-12deg) scale(1.8);opacity:0}60%{transform:rotate(-12deg) scale(.94);opacity:1}100%{transform:rotate(-12deg) scale(1)}}
 
-.composer{border-top:1px solid var(--line);padding:12px 24px 18px;display:flex;flex-direction:column;gap:10px}
-@media (max-width:820px){.composer{padding:10px 16px calc(14px + env(safe-area-inset-bottom,0px))}}
-.sugs{display:flex;gap:8px;overflow-x:auto;padding-bottom:2px;scrollbar-width:none}
-.sug{flex-shrink:0;border:1px solid var(--line2);background:transparent;border-radius:999px;padding:8px 13px 8px 10px;cursor:pointer;font-size:13px;color:var(--soft);display:flex;gap:7px;align-items:center;white-space:nowrap}
-.sug:hover{background:var(--card2);color:var(--text)}
-.input-row{display:flex;align-items:center;gap:8px;border:1px solid var(--line2);border-radius:14px;background:var(--card);padding:6px 6px 6px 16px}
-.input-row:focus-within{border-color:var(--voice-text)}
-#cmd{flex:1;min-width:0;background:transparent;border:0;outline:none;font-size:15px;min-height:42px}
-.send{width:44px;height:44px;border:0;border-radius:10px;background:var(--voice);color:#F3EFE4;display:flex;align-items:center;justify-content:center;cursor:pointer;flex-shrink:0}
+/* venues */
+.venues{border-block:1.5px solid var(--line)}
+.venues-in{display:flex;align-items:center;gap:20px 40px;padding-block:26px;flex-wrap:wrap;font-family:var(--mono)}
+.venues-list{display:flex;flex-wrap:wrap;gap:10px 30px;font-size:16px;font-weight:500;flex:1;justify-content:space-between}
 
-.panel{background:var(--side);border-left:1px solid var(--line);display:flex;flex-direction:column;overflow-y:auto}
-.p-sec{padding:18px 20px;border-bottom:1px solid var(--line);display:flex;flex-direction:column;gap:8px}
-.big{font:900 50px/.95 var(--display);font-variant-numeric:tabular-nums}
-.pos{display:flex;justify-content:space-between;align-items:center;padding:9px 0;border-bottom:1px solid #1C2150;gap:10px}
-.pos:last-child{border-bottom:0}
-.pos-l{display:flex;gap:10px;align-items:center;min-width:0}
-.pos-l i{width:5px;height:30px;border-radius:3px;flex-shrink:0;background:var(--paper)}
-.pos-r{font:12.5px var(--mono);text-align:right;font-variant-numeric:tabular-nums}
-.feed{display:flex;flex-direction:column;gap:8px;font:12px/1.45 var(--mono)}
-.ev{display:flex;gap:8px;color:var(--soft);animation:rise .3s ease both}
-.ev time{color:var(--muted);flex-shrink:0}
-@keyframes rise{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
-.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:var(--card2);border:1px solid var(--line2);border-radius:10px;padding:10px 16px;font-size:14px;z-index:10}
-@media (max-width:1180px){.app{grid-template-columns:240px minmax(0,1fr)}.panel{display:none}}
-@media (max-width:820px){.app{grid-template-columns:minmax(0,1fr)}.side{display:none}.chat-head h1{font-size:20px}}
-@media (prefers-reduced-motion: reduce){.hand,.thinking span{animation:none}.node,.spine{transition:none}.stamp,.ev{animation:none}}
+/* sections */
+section.block{padding-block:clamp(72px,10vw,140px)}
+.sec-head{display:flex;justify-content:space-between;align-items:flex-end;gap:24px 48px;flex-wrap:wrap;margin-bottom:clamp(36px,5vw,64px)}
+.sec-head h2{font-size:clamp(64px,9vw,132px)}
+.sec-head p{max-width:30em;color:var(--soft);font-size:18px;margin:0}
+
+.lanes{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+@media (max-width:980px){.lanes{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:620px){.lanes{grid-template-columns:1fr}}
+.lane{all:unset;box-sizing:border-box;cursor:pointer;background:var(--card);border:1.5px solid var(--line);border-radius:16px;overflow:hidden;display:flex;flex-direction:column;transition:transform .18s,box-shadow .18s}
+.lane:hover{transform:translateY(-6px);box-shadow:0 18px 40px rgba(18,20,38,.14)}
+.lane:focus-visible{outline:3px solid var(--voice);outline-offset:3px}
+.lane-top{height:92px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 22px 14px;border-bottom:1.5px solid #121426}
+.lane-top strong{font:900 42px/1 var(--display);text-transform:uppercase}
+.lane-top em{font:700 12px var(--mono);letter-spacing:.1em;font-style:normal}
+.lane-body{padding:22px;display:flex;flex-direction:column;gap:14px;flex:1;color:var(--text)}
+.lane-desc{color:var(--soft)}
+.lane-q{margin-top:auto;font:13px var(--mono);padding-left:12px;border-left:3px solid}
+.lane-cta{font-weight:600;color:var(--voice-text);font-size:14px}
+
+/* signals */
+.signals{background:var(--voice);color:#F3EFE4}
+.signals .display span{color:#121426}
+.sig-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
+@media (max-width:980px){.sig-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.sig{border:1.5px solid #F3EFE4;border-radius:16px;padding:26px;display:flex;flex-direction:column;gap:20px}
+.sig svg{transition:transform .2s}
+.sig:hover svg{transform:rotate(-8deg) scale(1.06)}
+.sig b{font:700 12px var(--mono);letter-spacing:.1em}
+.sig p{margin:0;font-size:17px}
+.steps{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:32px;border-top:1.5px solid #F3EFE4;padding-top:36px;margin-top:40px}
+@media (max-width:820px){.steps{grid-template-columns:1fr}}
+.steps h3{font:900 44px/1 var(--display);margin:0 0 10px}
+.steps p{margin:0;color:#DCDDFF;font-size:17px}
+
+/* night floor */
+.split{display:grid;grid-template-columns:1fr 1.1fr;gap:clamp(32px,5vw,72px);align-items:center}
+@media (max-width:900px){.split{grid-template-columns:1fr}}
+.split h2{font-size:clamp(60px,8vw,112px)}
+.night{background:#0E1030;color:#F3EFE4;border:1.5px solid #121426;border-radius:18px;padding:clamp(18px,2.4vw,26px);display:flex;flex-direction:column;gap:16px;box-shadow:10px 10px 0 #2F3CFF}
+.night .quote{font:800 clamp(24px,2.6vw,32px)/1.05 var(--display);text-transform:uppercase}
+.rules .leg{display:grid;grid-template-columns:80px 1fr}
+.night-meta{display:flex;justify-content:space-between;gap:12px;font:12px var(--mono);color:#9EA2C9}
+
+/* security */
+.cards3{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:20px}
+@media (max-width:900px){.cards3{grid-template-columns:1fr}}
+.sec-card{background:var(--card);border:1.5px solid var(--line);border-radius:16px;padding:30px;display:flex;flex-direction:column;gap:12px}
+.sec-card h3{font:800 32px/1 var(--display);text-transform:uppercase;margin:0}
+.sec-card p{margin:0;color:var(--soft)}
+
+/* badge */
+.badge-sec{background:var(--band);color:var(--on-band)}
+.badge-sec .display span{color:#8E95FF}
+.badge-sec p{color:var(--band-muted);font-size:18px;max-width:32em;margin:0}
+.field{display:flex;flex-direction:column;gap:8px}
+.field label,.field .lbl{font:12px var(--mono);letter-spacing:.1em;color:#9EA2C9}
+#letters{width:min(320px,100%);height:64px;border:1.5px solid #F3EFE4;border-radius:12px;background:transparent;color:#F3EFE4;padding:0 20px;font:900 40px var(--display);letter-spacing:.12em;text-transform:uppercase}
+.swatches{display:flex;gap:10px;flex-wrap:wrap}
+.swatch{width:48px;height:48px;border-radius:12px;border:3px solid transparent;cursor:pointer}
+.swatch[aria-pressed="true"]{border-color:#F3EFE4;box-shadow:0 0 0 2px #121426 inset}
+.join{display:flex;gap:10px;flex-wrap:wrap;border:1.5px solid var(--band-line);border-radius:28px;padding:7px;max-width:560px}
+.join input{flex:1;min-width:180px;background:transparent;border:0;color:#F3EFE4;font:16px var(--sans);padding:0 16px;min-height:48px}
+.join input:focus{outline:none}
+.join:focus-within{border-color:#8E95FF}
+.note{font-size:14px;color:#9EA2C9;min-height:1.5em}
+.badge-stage{display:flex;flex-direction:column;align-items:center}
+.lanyard{width:36px;height:56px;border:3px solid #5A5F8C;border-bottom:0;border-radius:18px 18px 0 0}
+.badge{width:min(360px,100%);aspect-ratio:380/500;border:2px solid #F3EFE4;border-radius:22px;padding:26px;display:flex;flex-direction:column;justify-content:space-between;transform:rotate(3deg);box-shadow:0 30px 80px rgba(0,0,0,.45);transition:background .25s,color .25s;max-width:100%}
+.badge-top{display:flex;justify-content:space-between;align-items:center}
+.badge-top b{font:900 28px/1 var(--display)}
+.badge-top span,.badge-foot{font:700 11px var(--mono);letter-spacing:.1em}
+.badge-face{background:#F3EFE4;color:#121426;border:2px solid #121426;border-radius:14px;flex:0 0 50%;display:flex;align-items:center;justify-content:center;font:900 clamp(80px,11vw,140px)/1 var(--display);letter-spacing:.04em}
+.badge-foot{display:flex;justify-content:space-between;align-items:flex-end}
+
+/* story */
+.story .big{font:900 clamp(140px,20vw,250px)/.8 var(--display);color:var(--voice-text)}
+.story p.lead{font:800 clamp(34px,4.4vw,60px)/1 var(--display);text-transform:uppercase;margin:0;text-wrap:balance}
+.story p.body{color:var(--soft);font-size:18px;max-width:34em;margin:0}
+
+footer.foot{background:#2F3CFF;color:#F3EFE4;padding-block:72px 44px}
+.foot-word{font:900 clamp(96px,21vw,300px)/.78 var(--display)}
+.foot-grid{display:flex;flex-wrap:wrap;gap:28px 60px;justify-content:space-between;border-top:1.5px solid #F3EFE4;padding-top:28px;margin-top:40px}
+.foot-grid a{color:#F3EFE4;text-decoration:none;display:block;margin-top:6px}
+.foot-grid a:hover{text-decoration:underline}
+.foot small{display:block;color:#DCDDFF;margin-top:36px;max-width:70em;line-height:1.7}
+@media (prefers-reduced-motion: reduce){.tape-track,.stamp.show{animation:none}.lane,.sig svg{transition:none}}
 </style>
 </head>
 <body>
-<div class="app">
-  <aside class="side" aria-label="Account">
-    <div class="brand">
-      <span class="mark"><svg width="18" height="22" viewBox="0 0 40 48" fill="currentColor" aria-hidden="true"><rect x="7" y="6" width="6" height="24" rx="3"/><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="28" y="8" width="6" height="22" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/></svg></span>
-      <span class="word">OUTCRY</span>
-    </div>
-    <div class="member"><span class="mbadge" id="badge">…</span><div><div style="font-weight:600;font-size:14px">Floor member</div><div class="mono" style="font-size:11px;color:var(--muted)" id="memberSub">connecting…</div></div></div>
-    <button class="btn btn-primary" type="button" id="newSession">+ New session</button>
-    <div class="list">
-      <span class="eyebrow" style="padding:0 10px 6px">Agents</span>
-      <div id="agents"><div class="empty">No agents yet.</div></div>
-    </div>
-    <button class="btn btn-danger" type="button" id="panic">Pause all agents</button>
-    <div class="tiers" id="tiers"><span class="eyebrow">Model tiers</span></div>
-  </aside>
 
-  <main class="chat">
-    <div class="chat-head">
-      <h1>The pit</h1>
-      <span class="pill" id="modePill">PAPER MODE · NO REAL TRANSACTIONS</span>
-    </div>
-    <div class="log" id="log" aria-live="polite"></div>
-    <div class="composer">
-      <div class="sugs" id="sugs"></div>
-      <form class="input-row" id="form">
-        <label for="cmd" style="position:absolute;left:-9999px">Your order</label>
-        <input id="cmd" type="text" autocomplete="off" placeholder="Shout your order… e.g. launch $WORK on pump.fun, 10 wallets, 0.5 SOL each">
-        <button class="send" type="submit" aria-label="Send"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"/></svg></button>
-      </form>
-    </div>
-  </main>
 
-  <aside class="panel" aria-label="Portfolio">
-    <div class="p-sec">
-      <span class="eyebrow">Wallet value</span>
-      <span class="big" id="walletUsd">$0</span>
-      <span class="mono" style="font-size:12px;color:var(--muted)" id="balances"></span>
-    </div>
-    <div class="p-sec">
-      <span class="eyebrow">Positions by jacket</span>
-      <div id="positions"><div class="empty" style="padding:0">No positions yet.</div></div>
-    </div>
-    <div class="p-sec">
-      <span class="eyebrow">AI spend this session</span>
-      <span class="mono" style="font-size:13px" id="spend">$0.0000 · 0 turns</span>
-    </div>
-    <div class="p-sec" style="border-bottom:0;flex:1">
-      <span class="eyebrow">Activity</span>
-      <div class="feed" id="feed"></div>
-    </div>
-  </aside>
+<div class="tape" aria-hidden="true">
+  <div class="tape-track" id="tape"></div>
 </div>
 
-<script>
-const J = { memes:['Memes','#F76FB0','#121426'], stocks:['Stocks','#8E2C48','#F3EFE4'], swaps:['Swaps','#2FA6E8','#121426'], launch:['Launch','#B5D93A','#121426'], strategies:['Strategies','#8B6CF6','#121426'], research:['Research','#C9A46C','#121426'] };
-const HAND = '<svg width="14" height="17" viewBox="0 0 40 48" fill="currentColor" aria-hidden="true"><rect x="7" y="6" width="6" height="24" rx="3"/><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="28" y="8" width="6" height="22" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/></svg>';
-const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
-const wait = ms => new Promise(r => setTimeout(r, RM ? 0 : ms));
-const $ = id => document.getElementById(id);
-const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const fmt = (n, d = 2) => Number(n).toLocaleString('en-US', { minimumFractionDigits: d, maximumFractionDigits: d });
-const amt = n => Math.abs(n) >= 1000 ? fmt(n, 2) : Math.abs(n) >= 1 ? fmt(n, 4) : Number(n).toPrecision(4);
-const jtag = k => { const j = J[k] || J.swaps; return `<span class="jtag" style="background:${j[1]};color:${j[2]}">${j[0].toUpperCase()}</span>`; };
-// v0: the client sends a placeholder assertion. Production: navigator.credentials.get() over the ticket hash.
-const passkey = () => 'demo-passkey-' + Date.now();
+<header class="nav">
+  <div class="wrap nav-in">
+    <a class="brand" href="#top">
+      <span class="mark"><svg width="21" height="25" viewBox="0 0 40 48" fill="currentColor" aria-hidden="true"><rect x="7" y="6" width="6" height="24" rx="3"/><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="28" y="8" width="6" height="22" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/></svg></span>
+      <span class="wordmark">OUTCRY</span><span class="by">BY WOODENG</span>
+    </a>
+    <nav class="nav-links" aria-label="Main">
+      <a href="#jackets">Markets</a><a href="#signals">How it works</a><a href="terminal.html">Terminal</a><a href="#security">Security</a><a href="#badge">Get a badge</a>
+    </nav>
+    <a class="btn btn-primary" href="terminal.html">Enter the pit</a>
+  </div>
+</header>
 
-const shown = new Set();
-let token = null, sessionId = 'main-' + Date.now().toString(36), busy = false;
-const log = $('log');
-
-async function api(path, opts = {}) {
-  const res = await fetch(path, { ...opts, headers: { 'content-type': 'application/json', ...(token ? { authorization: 'Bearer ' + token } : {}) }, body: opts.body ? JSON.stringify(opts.body) : undefined });
-  const j = await res.json().catch(() => ({}));
-  if (!res.ok) throw new Error(j.error || res.statusText);
-  return j;
-}
-function toast(msg) { const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t); setTimeout(() => t.remove(), 3200); }
-const scrollDown = () => { log.scrollTop = log.scrollHeight; };
-
-function addUser(text) { const d = document.createElement('div'); d.className = 'msg-user'; d.textContent = text; log.appendChild(d); scrollDown(); }
-function addAI(html) {
-  const w = document.createElement('div'); w.className = 'msg-ai';
-  w.innerHTML = `<span class="ai-mark">${HAND}</span><div class="ai-body">${html}</div>`;
-  log.appendChild(w); scrollDown(); return w.querySelector('.ai-body');
-}
-function feed(text) {
-  const f = $('feed'); const t = new Date();
-  const e = document.createElement('div'); e.className = 'ev';
-  e.innerHTML = `<time>${t.toTimeString().slice(0, 8)}</time><span>${esc(text)}</span>`;
-  f.prepend(e); while (f.children.length > 30) f.lastChild.remove();
-}
-
-// ---------------- portfolio & agents ----------------
-async function refresh() {
-  try {
-    const me = await api('/api/me');
-    const p = me.portfolio;
-    $('walletUsd').textContent = '$' + fmt(p.walletUsd);
-    $('balances').textContent = Object.entries(p.balances).filter(([, v]) => v > 1e-9).map(([k, v]) => `${k} ${amt(v)}`).join(' · ');
-    $('positions').innerHTML = p.positions.length ? p.positions.map(x => `<div class="pos"><div class="pos-l"><i style="background:${(J[x.jacket] || J.swaps)[1]}"></i><div style="min-width:0"><div style="font-weight:500">${esc(x.symbol)}</div><div class="mono" style="font-size:11px;color:var(--muted)">${esc((J[x.jacket] || J.swaps)[0])}${x.note ? ' · ' + esc(x.note) : ''}</div></div></div><div class="pos-r"><div>$${fmt(x.valueUsd)}</div><div style="color:${x.pnlUsd >= 0 ? 'var(--up)' : 'var(--down)'}">${x.pnlUsd >= 0 ? '+' : ''}${fmt(x.pnlUsd)}</div></div></div>`).join('') : '<div class="empty" style="padding:0">No positions yet.</div>';
-    $('spend').textContent = `$${me.usage.usd.toFixed(4)} · ${me.usage.turns} model call${me.usage.turns === 1 ? '' : 's'}`;
-  } catch (e) { /* ignore transient */ }
-  try {
-    const list = await api('/api/agents');
-    $('agents').innerHTML = list.filter(x => x.agent.state !== 'killed').map(({ agent: a }) => `<div class="item"><span style="display:flex;gap:8px;align-items:center;min-width:0"><span class="sq" style="background:${(J[a.spec.markets[0]] || J.strategies)[1]}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.spec.name)}</span></span><span class="status st-${a.state}">${a.state.toUpperCase()}${a.state === 'live' ? ' · ' + a.spec.mode.toUpperCase() : ''}</span></div>`).join('') || '<div class="empty">No agents yet.</div>';
-  } catch (e) { /* ignore */ }
-}
-
-// ---------------- cards ----------------
-function stamp(host, text, bad) { const s = document.createElement('div'); s.className = 'stamp' + (bad ? ' bad' : ''); s.textContent = text; host.appendChild(s); }
-
-function orderCard(t) {
-  const j = J[t.jacket] || J.swaps;
-  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px';
-  const legs = t.legs.map(l => `<div class="t-row"><span><b>${l.side.toUpperCase()} · ${esc(l.asset)}</b><small>${esc(l.venue)} · ${esc(l.chain)} · impact ${(l.priceImpactBps / 100).toFixed(2)}% · max slip ${(l.maxSlippageBps / 100).toFixed(1)}%</small></span><span style="text-align:right">${amt(l.amount)} ${esc(l.side === 'buy' ? l.quoteAsset : l.asset)}<small>≈ ${amt(l.expectedOut)} ${esc(l.side === 'buy' ? l.asset : l.quoteAsset)}</small></span></div>`).join('');
-  const fees = t.legs.reduce((s, l) => s + l.venueFeeUsd + l.platformFeeUsd, 0);
-  wrap.innerHTML = `<div class="ticket"><div class="t-head" style="background:${j[1]};color:${j[2]}"><span>ORDER TICKET · ${j[0].toUpperCase()}</span><span>${t.source.type === 'agent' ? 'AGENT' : 'YOU'}</span></div>
-    ${t.rejection ? `<div class="t-reject"><b>Rejected.</b> ${esc(t.rejection)}</div>` : ''}
-    ${(t.warnings || []).map(w => `<div class="t-warn">${esc(w)}</div>`).join('')}
-    ${legs}
-    ${t.legs.length ? `<div class="t-row"><span class="t-muted">Total · fees (venue + Outcry)</span><b>$${fmt(t.totalUsd)} · $${fmt(fees)}</b></div>` : ''}
-  </div><div class="actions"></div>`;
-  const acts = wrap.querySelector('.actions'); const tk = wrap.querySelector('.ticket');
-  const draw = (t) => {
-    acts.innerHTML = '';
-    if (t.status === 'needs_confirmation' || t.status === 'needs_second_confirmation') {
-      const second = t.status === 'needs_second_confirmation';
-      const b = document.createElement('button'); b.className = 'btn btn-primary'; b.type = 'button'; b.textContent = second ? 'Confirm twice & sign' : 'Sign & fill';
-      const c = document.createElement('button'); c.className = 'btn'; c.type = 'button'; c.textContent = 'Cancel';
-      b.onclick = async () => {
-        if (second && !b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to sign'; return; }
-        b.disabled = c.disabled = true;
-        try { const r = await api(`/api/tickets/${t.id}/approve`, { method: 'POST', body: { passkeyAssertion: passkey(), secondConfirmation: second } }); draw(r); refresh(); }
-        catch (e) { toast(e.message); b.disabled = c.disabled = false; }
-      };
-      c.onclick = async () => { try { draw(await api(`/api/tickets/${t.id}/cancel`, { method: 'POST' })); } catch (e) { toast(e.message); } };
-      acts.append(b, c);
-      const n = document.createElement('span'); n.className = 'meta'; n.textContent = 'Signed with your passkey (demo)'; acts.append(n);
-    } else if (t.status === 'filled') { stamp(tk, 'FILLED'); acts.innerHTML = `<span class="meta">${t.fills.length} fill${t.fills.length > 1 ? 's' : ''} · ${esc(t.fills.map(f => f.txId).join(', '))}</span>`; }
-    else if (t.status === 'failed') { stamp(tk, 'FAILED', true); acts.innerHTML = `<span class="meta" style="color:var(--down)">${esc(t.rejection || '')}</span>`; }
-    else if (t.status === 'cancelled') acts.innerHTML = '<span class="meta">Cancelled. Nothing was sent.</span>';
-  };
-  draw(t);
-  return wrap;
-}
-
-function launchCard(t0, devShare0) {
-  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px';
-  let t = t0, devShare = devShare0;
-  const render = () => {
-    const r = t.request || {};
-    wrap.innerHTML = `<div class="ticket"><div class="t-head" style="background:var(--launch)"><span>LAUNCH TICKET · PUMP.FUN</span><span>SOLANA</span></div>
-      ${t.rejection ? `<div class="t-reject"><b>Can't launch yet.</b> ${esc(t.rejection)}</div>` : ''}
-      ${(t.warnings || []).map(w => `<div class="t-warn">${esc(w)}</div>`).join('')}
-      <div class="t-row"><span><b style="font:900 28px/1 var(--display)">$${esc(r.ticker)}</b><small>${esc(r.name)}</small></span><span class="t-muted">1,000,000,000 supply</span></div>
-      <div class="t-row"><span class="t-muted">Launch wallets</span><span class="stepper"><button type="button" data-k="w" data-d="-1" aria-label="Fewer wallets">−</button><output>${r.wallets}</output><button type="button" data-k="w" data-d="1" aria-label="More wallets">+</button></span></div>
-      <div class="t-row"><span class="t-muted">SOL per wallet</span><span class="stepper"><button type="button" data-k="s" data-d="-1" aria-label="Less SOL per wallet">−</button><output>${r.solPerWallet} SOL</output><button type="button" data-k="s" data-d="1" aria-label="More SOL per wallet">+</button></span></div>
-      <div class="wallets">${Array.from({ length: r.wallets || 0 }, (_, i) => `<div class="wal"><small>W${String(i + 1).padStart(2, '0')}</small><b>${r.solPerWallet}</b></div>`).join('')}</div>
-      <div class="t-row"><span class="t-muted">Total dev buy · est. share of supply</span><b>${fmt(t.totalSol || 0)} SOL · ${devShare.toFixed(1)}%</b></div>
-      ${(t.notes || []).map(n => `<div class="t-note">${esc(n)}</div>`).join('')}
-      <label class="disclose"><input type="checkbox" class="acc"><span><b>Disclosed dev bundle.</b> ${esc(t.disclosure)} This line is added to the token description and every wallet is listed in the public creator registry.</span></label>
-    </div><div class="actions"></div>`;
-    const acts = wrap.querySelector('.actions');
-    if (t.status === 'needs_confirmation') {
-      const b = document.createElement('button'); b.className = 'btn btn-primary'; b.type = 'button'; b.textContent = 'Sign & launch'; b.disabled = true;
-      wrap.querySelector('.acc').onchange = e => { b.disabled = !e.target.checked; };
-      b.onclick = () => go(b);
-      acts.append(b);
-    }
-    const steps = [0.05, 0.1, 0.2, 0.25, 0.5, 0.75, 1, 1.5, 2];
-    wrap.querySelectorAll('.stepper button').forEach(btn => btn.onclick = async () => {
-      if (!['needs_confirmation', 'rejected'].includes(t.status)) return;
-      const d = +btn.dataset.d; const r = t.request;
-      const patch = btn.dataset.k === 'w' ? { wallets: Math.min(16, Math.max(1, r.wallets + d)) } : { solPerWallet: d > 0 ? (steps.find(v => v > r.solPerWallet) ?? r.solPerWallet) : ([...steps].reverse().find(v => v < r.solPerWallet) ?? r.solPerWallet) };
-      try { t = await api(`/api/launch/${t.id}`, { method: 'PATCH', body: patch }); devShare = shareOf(t.totalSol); render(); } catch (e) { toast(e.message); }
-    });
-  };
-  const go = async (b) => {
-    b.disabled = true;
-    wrap.querySelectorAll('.stepper button, .acc').forEach(x => x.disabled = true);
-    const n = t.request.wallets;
-    const st = document.createElement('div'); st.className = 'steps';
-    const labels = ['Uploading metadata with disclosure', `Creating ${n} launch wallets`, 'Funding from your main wallet', 'Bundling create + dev buys (Jito)'];
-    st.innerHTML = labels.map((l, i) => `<div class="step" data-i="${i}"><span class="ck"></span><span>${esc(l)}</span></div>`).join('');
-    wrap.appendChild(st); scrollDown();
-    const req = api(`/api/tickets/${t.id}/approve`, { method: 'POST', body: { passkeyAssertion: passkey(), disclosureAccepted: true } });
-    for (let i = 0; i < labels.length; i++) { const s = st.querySelector(`[data-i="${i}"]`); s.classList.add('on'); await wait(450); s.classList.add('done'); s.querySelector('.ck').textContent = '✓'; }
-    try {
-      const done = await req;
-      const wals = wrap.querySelectorAll('.wal');
-      for (let i = 0; i < wals.length; i++) { await wait(120); wals[i].classList.add('done'); }
-      t = done;
-      if (done.status === 'filled') {
-        stamp(wrap.querySelector('.ticket'), 'LIVE');
-        const p = document.createElement('p'); p.style.cssText = 'margin:0;color:var(--soft)';
-        p.innerHTML = `<b style="color:var(--text)">$${esc(done.request.ticker)} is live (paper).</b> Mint <span class="mono">${esc(done.mint)}</span>. ${done.launchWallets.length} creator wallets are in the public registry. Ask me to build an agent that takes profit in steps.`;
-        wrap.appendChild(p);
-      } else { stamp(wrap.querySelector('.ticket'), 'FAILED', true); toast(done.rejection || 'Launch failed'); }
-      refresh();
-    } catch (e) { toast(e.message); }
-    scrollDown();
-  };
-  render();
-  return wrap;
-}
-const shareOf = sol => { const k = 30 * 1.073e9; return (1.073e9 - k / (30 + sol)) / 1e9 * 100; };
-
-async function agentCard(card) {
-  let a = card.agent;
-  const wrap = document.createElement('div');
-  wrap.className = 'builder';
-  wrap.innerHTML = `<div class="b-head"><strong class="aname">${esc(a.spec.name)}</strong><span class="b-progress"><span class="hand">${HAND}</span> <span class="bp">Assembling · 0/5</span></span></div>
-    <div class="blueprint"><div class="spine"></div>${card.blueprint.map(n => `<div class="node" data-k="${n.key}"><div class="lbl">${esc(n.label)}</div><div class="val"></div></div>`).join('')}</div>
-    <div class="adj-host"></div>`;
-  const q = s => wrap.querySelector(s);
-  const setNodes = (bp) => {
-    for (const n of bp) {
-      const el = q(`.node[data-k="${n.key}"] .val`);
-      el.innerHTML = n.key === 'markets' ? n.lines.map(jtag).join('') : n.lines.map(l => `<span class="line">${esc(l)}</span>`).join('');
-    }
-  };
-  setNodes(card.blueprint);
-  queueMicrotask(async () => {
-    const nodes = [...wrap.querySelectorAll('.node')];
-    for (let i = 0; i < nodes.length; i++) {
-      await wait(i === 0 ? 200 : 550);
-      nodes[i].classList.add('on');
-      q('.spine').style.height = (nodes[i].offsetTop + 14 - 30) + 'px';
-      q('.bp').textContent = `Assembling · ${i + 1}/5`; scrollDown();
-    }
-    await wait(300);
-    q('.bp').textContent = 'Ready · adjust below'; q('.hand').classList.remove('hand');
-    drawAdjust();
-  });
-  const flash = k => { const n = q(`.node[data-k="${k}"]`); if (!n) return; n.classList.add('flash'); clearTimeout(n._t); n._t = setTimeout(() => n.classList.remove('flash'), 500); };
-  let timer = null;
-  const patch = (body, nodeKey) => {
-    flash(nodeKey);
-    clearTimeout(timer);
-    timer = setTimeout(async () => {
-      try { const r = await api(`/api/agents/${a.id}`, { method: 'PATCH', body }); a = r.agent; setNodes(r.blueprint); q('.sumtxt').innerHTML = summaryHtml(); if (r.replay) drawReplay(r.replay); }
-      catch (e) { toast(e.message); }
-    }, 250);
-  };
-  const summaryHtml = () => {
-    const s = a.spec; const trades = Math.max(1, Math.floor(s.limits.maxPerDayUsd / s.sizeUsd));
-    return `<b>${esc(s.name)}</b> risks <b>$${s.sizeUsd}</b> per trade and stops for the day after <b>$${s.limits.maxPerDayUsd}</b> (about ${trades} trade${trades > 1 ? 's' : ''}). Exits at <b>−${s.exit.stopLossPct}%</b> or <b>+${s.exit.takeProfitPct}%</b>; pauses itself at −${s.limits.maxDrawdownPct}% drawdown.<br><span class="meta">${esc(a.lastBacktest?.summary || '')}</span>`;
-  };
-  const drawAdjust = () => {
-    const s = a.spec;
-    q('.adj-host').innerHTML = `<div class="adjust">
-      <div class="ctl"><div class="ctl-top"><label for="sz-${a.id}">Size per trade</label><output class="o-sz">$${s.sizeUsd}</output></div><input type="range" id="sz-${a.id}" class="r-sz" min="5" max="500" step="5" value="${s.sizeUsd}"></div>
-      <div class="ctl"><div class="ctl-top"><label for="cp-${a.id}">Max spend per day</label><output class="o-cp">$${s.limits.maxPerDayUsd}</output></div><input type="range" id="cp-${a.id}" class="r-cp" min="10" max="5000" step="10" value="${s.limits.maxPerDayUsd}"></div>
-      <div class="ctl"><div class="ctl-top"><label for="sl-${a.id}">Stop-loss</label><output class="o-sl">−${s.exit.stopLossPct}%</output></div><input type="range" id="sl-${a.id}" class="r-sl" min="3" max="60" step="1" value="${s.exit.stopLossPct}"></div>
-      <div class="ctl"><div class="ctl-top"><label for="tp-${a.id}">Take profit</label><output class="o-tp">+${s.exit.takeProfitPct}%</output></div><input type="range" id="tp-${a.id}" class="r-tp" min="5" max="400" step="5" value="${s.exit.takeProfitPct}"></div>
-      <div class="summary wide sumtxt">${summaryHtml()}</div>
-      <label class="check wide"><input type="checkbox" class="ack"> I understand auto mode trades without asking me, inside these limits.</label>
-      <div class="actions wide"><button class="btn btn-primary" type="button" data-mode="paper">Deploy · paper</button><button class="btn" type="button" data-mode="ask">Deploy · ask me</button><button class="btn" type="button" data-mode="auto">Deploy · auto</button></div>
-    </div>`;
-    const sz = q('.r-sz'), cp = q('.r-cp'), sl = q('.r-sl'), tp = q('.r-tp');
-    sz.oninput = () => { q('.o-sz').textContent = '$' + sz.value; patch({ sizeUsd: +sz.value, limits: { maxPerTradeUsd: +sz.value } }, 'risk'); };
-    cp.oninput = () => { q('.o-cp').textContent = '$' + cp.value; patch({ limits: { maxPerDayUsd: +cp.value } }, 'risk'); };
-    sl.oninput = () => { q('.o-sl').textContent = '−' + sl.value + '%'; patch({ exit: { stopLossPct: +sl.value } }, 'risk'); };
-    tp.oninput = () => { q('.o-tp').textContent = '+' + tp.value + '%'; patch({ exit: { takeProfitPct: +tp.value } }, 'risk'); };
-    wrap.querySelectorAll('[data-mode]').forEach(b => b.onclick = async () => {
-      const mode = b.dataset.mode;
-      try {
-        const r = await api(`/api/agents/${a.id}/deploy`, { method: 'POST', body: { mode, passkeyAssertion: mode === 'paper' ? undefined : passkey(), riskAcknowledged: q('.ack').checked } });
-        a = r.agent; setNodes(r.blueprint); flash('execution');
-        q('.bp').textContent = `Deployed · ${mode}`;
-        wrap.querySelectorAll('.adjust input, .adjust button').forEach(x => x.disabled = true);
-        feed(`${a.spec.name} deployed (${mode})`); refresh();
-      } catch (e) { toast(e.message); }
-    });
-  };
-  let replayBox = null;
-  function drawReplay(rep) {
-    if (!rep || !rep.skipped?.length) return;
-    if (!replayBox) { replayBox = document.createElement('div'); replayBox.className = 'summary'; wrap.after(replayBox); }
-    replayBox.innerHTML = `<b>Replay of recent launches:</b> ${rep.matched}/${rep.scanned} passed. Skipped: ${rep.skipped.slice(0, 4).map(s => `$${esc(s.symbol)} (${esc(s.reason)})`).join(', ')}.`;
-  }
-  setTimeout(() => drawReplay(card.replay), 10);
-  return wrap;
-}
-
-function strategyCard(card) {
-  const s = card.strategy, r = card.report, f = r.full;
-  const pct = n => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
-  const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px';
-  const pts = r.equityCurve; const min = Math.min(...pts.map(p => p.equity)), max = Math.max(...pts.map(p => p.equity));
-  const X = i => (i / Math.max(1, pts.length - 1)) * 600, Y = v => 110 - ((v - min) / Math.max(1e-9, max - min)) * 100;
-  const path = pts.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(p.equity).toFixed(1)}`).join(' ');
-  wrap.innerHTML = `<div class="summary"><b>${esc(s.program.name)}</b> · v${s.version}<br>${esc(s.description)}</div>
-    <div class="metrics">
-      <div class="metric"><b style="color:${f.totalReturnPct >= 0 ? 'var(--up)' : 'var(--down)'}">${pct(f.totalReturnPct)}</b><span>STRATEGY</span></div>
-      <div class="metric"><b>${pct(f.buyHoldReturnPct)}</b><span>HOLD</span></div>
-      <div class="metric"><b>${f.maxDrawdownPct.toFixed(1)}%</b><span>MAX DRAWDOWN</span></div>
-      <div class="metric"><b>${f.trades}</b><span>TRADES · ${f.winRatePct.toFixed(0)}% WIN</span></div>
-      <div class="metric"><b>${pct(r.outOfSample.totalReturnPct)}</b><span>OUT-OF-SAMPLE</span></div>
-      <div class="metric"><b>${r.monteCarloDrawdownPct.p5.toFixed(1)}–${r.monteCarloDrawdownPct.p95.toFixed(1)}%</b><span>MC DRAWDOWN</span></div>
-      <div class="metric"><b>${f.sharpe.toFixed(2)}</b><span>SHARPE</span></div>
-      <div class="metric"><b>${f.exposurePct.toFixed(0)}%</b><span>TIME IN MARKET</span></div>
+<main id="top">
+  <div class="wrap hero">
+    <div class="hero-copy">
+      <span class="eyebrow">The AI trading pit · crypto · tokenized stocks</span>
+      <h1 class="display">Say it.<br><span class="voice">It’s filled.</span></h1>
+      <p>Traders used to shout orders across the pit. Now you just type them. Outcry buys on pump.fun, routes swaps through Uniswap and Jupiter, trades tokenized stocks around the clock and launches your tokens, all from one chat.</p>
+      <div class="row">
+        <a class="btn btn-primary" href="terminal.html">Enter the pit</a>
+        <a class="btn btn-ghost" href="#badge">Claim your badge</a>
+      </div>
+      <div class="facts"><span>NON-CUSTODIAL</span><span>CRYPTO &amp; FIAT</span><span>EVERY ORDER SIGNED BY YOU</span></div>
     </div>
-    <div class="curve"><div class="ctl-top"><span>Equity curve · past, simulated</span><span class="mono" style="font-size:11px">$${fmt(min, 0)}–$${fmt(max, 0)}</span></div><svg viewBox="0 0 600 115" preserveAspectRatio="none" role="img" aria-label="Backtest equity curve"><path d="${path}" fill="none" stroke="#8E95FF" stroke-width="2"/></svg></div>
-    ${r.warnings.length ? `<div class="warns">${r.warnings.map(w => `<span>⚠ ${esc(w)}</span>`).join('')}</div>` : ''}
-    <div class="actions"><button class="btn btn-primary" type="button">Turn into an agent (paper)</button></div>`;
-  wrap.querySelector('button').onclick = async (e) => {
-    e.target.disabled = true;
-    try { const res = await api('/api/agents', { method: 'POST', body: { fromStrategyId: s.id, sizeUsd: 50 } }); const body = addAI('<p>Here is the agent built from that strategy.</p>'); body.appendChild(await agentCard(res)); refresh(); }
-    catch (err) { toast(err.message); e.target.disabled = false; }
-  };
-  return wrap;
-}
 
-async function renderCards(body, cards) {
-  for (const c of cards) {
-    if (c.type === 'order') body.appendChild(orderCard(c.ticket));
-    else if (c.type === 'launch') body.appendChild(launchCard(c.ticket, c.devSharePct));
-    else if (c.type === 'agent') body.appendChild(await agentCard(c));
-    else if (c.type === 'strategy') body.appendChild(strategyCard(c));
-  }
-}
+    <div class="demo" aria-label="Live pit demo">
+      <span class="eyebrow">Live pit · pick a jacket, try an order</span>
+      <div class="chips" id="chips" role="group" aria-label="Markets"></div>
+      <div class="pit">
+        <div class="pit-bar"><span>PIT / SESSION 042 · DEMO</span><span><span class="dot"></span>2,480.00 USDC</span></div>
+        <div class="pit-body">
+          <div class="bubble" id="prompt"></div>
+          <p class="reply" id="reply"></p>
+          <div class="ticket-wrap">
+            <div class="ticket">
+              <div class="ticket-head" id="thead"><span id="tname"></span><span id="tvenue"></span></div>
+              <div id="legs"></div>
+              <div class="ticket-foot"><span>est. fees [FEES]</span><span id="guard"></span></div>
+            </div>
+            <div class="stamp" id="stamp" hidden>FILLED</div>
+          </div>
+          <div class="row">
+            <button class="btn btn-primary" id="sign" type="button" style="flex:1">Sign &amp; fill</button>
+            <button class="btn btn-ghost" id="next" type="button">Next market</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
 
-// ---------------- chat ----------------
-async function send(text) {
-  text = text.trim(); if (!text || busy) return;
-  busy = true; addUser(text); $('cmd').value = '';
-  const th = addAI('<div class="thinking" aria-label="Thinking"><span></span><span></span><span></span></div>');
-  try {
-    const r = await api('/api/chat', { method: 'POST', body: { sessionId, text } });
-    th.parentElement.remove();
-    const body = addAI(`<p>${esc(r.reply)}</p>`);
-    await renderCards(body, r.cards);
-    const m = document.createElement('span'); m.className = 'meta';
-    m.textContent = `${r.meta.tier} · ${r.meta.model}${r.meta.escalated ? ' · escalated' : ''} · $${r.meta.costUsd.toFixed(4)}`;
-    body.appendChild(m);
-    refresh();
-  } catch (e) { th.parentElement.remove(); addAI(`<p>${esc(e.message)}</p>`); }
-  finally { busy = false; scrollDown(); }
-}
+  <div class="venues">
+    <div class="wrap venues-in">
+      <span class="eyebrow">Fills on</span>
+      <div class="venues-list"><span>pump.fun</span><span>Uniswap</span><span>Jupiter</span><span>Raydium</span><span>Hyperliquid</span><span>Ondo Stocks</span><span>xStocks</span><span>Base</span><span>Solana</span></div>
+    </div>
+  </div>
 
-const SUGS = [
-  ['launch', 'Launch $WORK on pump.fun, buy with 10 wallets at 0.5 SOL each'],
-  ['memes', 'Build me an agent that snipes new pump.fun memes with 200+ holders, $20 per trade'],
-  ['strategies', 'Backtest: buy SOL on 4h when RSI crosses above 30 and price above the 200 EMA, exit on MACD cross down or -8%'],
-  ['stocks', 'Put 150 USDC into tokenized NVIDIA'],
-  ['swaps', 'Build me a careful agent that trades SOL with an RSI strategy'],
-  ['research', 'Show me the newest tokens'],
-  ['memes', 'Why did the sniper agent buy?']
+  <section class="block" id="jackets">
+    <div class="wrap">
+      <div class="sec-head">
+        <h2 class="display">Six jackets.<br><span class="voice">One pit.</span></h2>
+        <p>On the floor, you knew who traded what by the color of their jacket. Outcry keeps the code: every market wears its own color, so you always know where your order is going. Tap one to load it into the pit above.</p>
+      </div>
+      <div class="lanes" id="lanes"></div>
+    </div>
+  </section>
+
+  <section class="block signals" id="signals">
+    <div class="wrap">
+      <div class="sec-head"><h2 class="display">The pit had signals.<br><span>You have a sentence.</span></h2></div>
+      <div class="sig-grid">
+        <div class="sig"><svg width="80" height="96" viewBox="0 0 40 48" fill="#F3EFE4" aria-hidden="true"><rect x="7" y="6" width="6" height="24" rx="3"/><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="28" y="8" width="6" height="22" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/></svg><div><b>PALM IN · BUY</b><p>“Buy 200 USDC of SOL.”</p></div></div>
+        <div class="sig"><svg width="80" height="96" viewBox="0 0 40 48" fill="#F3EFE4" aria-hidden="true"><rect x="7" y="6" width="6" height="24" rx="3"/><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="28" y="8" width="6" height="22" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/><path d="M13 30c4 2.2 10 2.2 15 0M14 36c3.5 1.6 9 1.6 12.5 0" stroke="#2F3CFF" stroke-width="2" fill="none" stroke-linecap="round"/></svg><div><b>PALM OUT · SELL</b><p>“Sell half my NVDA.”</p></div></div>
+        <div class="sig"><svg width="80" height="96" viewBox="0 0 40 48" fill="#F3EFE4" aria-hidden="true"><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="7" y="18" width="6" height="12" rx="3"/><rect x="28" y="20" width="6" height="11" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/></svg><div><b>FINGERS · SIZE</b><p>“Make it 2 SOL, not 1.”</p></div></div>
+        <div class="sig"><svg width="80" height="96" viewBox="0 0 40 48" fill="#F3EFE4" aria-hidden="true"><rect x="7" y="16" width="6" height="12" rx="3"/><rect x="14" y="14" width="6" height="14" rx="3"/><rect x="21" y="14" width="6" height="14" rx="3"/><rect x="28" y="17" width="6" height="12" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="2" y="24" width="12" height="6" rx="3"/></svg><div><b>FIST · CANCEL</b><p>“Kill the SOL dip strategy.”</p></div></div>
+      </div>
+      <div class="steps">
+        <div><h3>1 · FUND</h3><p>Deposit SOL, ETH or USDC, or pay by card or bank transfer via [FIAT PARTNER]. Your wallet is ready in seconds, secured by a passkey.</p></div>
+        <div><h3>2 · SHOUT</h3><p>An order, a strategy, a question. Outcry turns it into a ticket showing venue, route, size, fees and risks.</p></div>
+        <div><h3>3 · FILLED</h3><p>You sign and it settles on-chain. Standing orders run inside the limits you set and never past them.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="night">
+    <div class="wrap split">
+      <div style="display:flex;flex-direction:column;gap:24px">
+        <span class="eyebrow voice">Day floor · night floor</span>
+        <h2 class="display">Paper to read.<br><span class="voice">Ink to trade.</span></h2>
+        <p style="margin:0;color:var(--soft);font-size:18px;max-width:32em">The site is printed on paper. The terminal switches to the night floor: deep ink, the same cobalt, the same tickets. Switch your device to dark mode and this page follows.</p>
+        <a class="btn btn-primary" href="terminal.html" style="align-self:flex-start">Open the terminal</a>
+      </div>
+      <div class="night">
+        <div class="night-meta"><span>STANDING ORDER #0217</span><span><span class="sw" style="display:inline-block;vertical-align:-2px;background:#8B6CF6;margin-right:6px"></span>STRATEGIES</span></div>
+        <div class="quote">“If SOL drops 8% in 24h, buy 200 USDC. Sell half at +15%, the rest at +30%. Max 1,000 USDC a week.”</div>
+        <div class="ticket rules">
+          <div class="ticket-head" style="background:#8B6CF6"><span>COMPILED RULES</span><span>3 RULES + LIMIT</span></div>
+          <div class="leg"><b>WHEN</b><span>SOL/USD · 24h ≤ −8%</span></div>
+          <div class="leg"><b>BUY</b><span>200 USDC · Jupiter · slip 0.5%</span></div>
+          <div class="leg"><b>EXIT</b><span>50% at +15% · 50% at +30%</span></div>
+          <div class="leg" style="border-bottom:0"><b>LIMIT</b><span>1,000 USDC / rolling 7 days</span></div>
+        </div>
+        <div class="night-meta"><span>BACKTEST · ILLUSTRATIVE SHAPE, NOT REAL RESULTS</span><span>[PERIOD]</span></div>
+        <svg viewBox="0 0 600 90" width="100%" height="90" preserveAspectRatio="none" role="img" aria-label="Illustrative backtest curve">
+          <path d="M0 70 L40 66 L80 72 L120 58 L160 62 L200 48 L240 54 L280 38 L320 44 L360 30 L400 36 L440 22 L480 28 L520 14 L560 18 L600 8" stroke="#8E95FF" stroke-width="2.5" fill="none"/>
+          <path d="M0 70 L60 74 L120 68 L180 76 L240 64 L300 70 L360 60 L420 66 L480 56 L540 62 L600 54" stroke="#4A4E78" stroke-width="1.5" stroke-dasharray="4 4" fill="none"/>
+        </svg>
+      </div>
+    </div>
+  </section>
+
+  <section class="block" id="security" style="border-top:1.5px solid var(--line)">
+    <div class="wrap">
+      <div class="sec-head"><h2 class="display">Loud execution.<br><span class="voice">Quiet custody.</span></h2></div>
+      <div class="cards3">
+        <div class="sec-card"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="voice" aria-hidden="true"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/></svg><h3>Non-custodial</h3><p>Wallet secured by passkey and [MPC / SMART ACCOUNT]. Woodeng never holds your funds, and you can export your keys any time.</p></div>
+        <div class="sec-card"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="voice" aria-hidden="true"><path d="M12 3l8 3v6c0 4.5-3.4 8.2-8 9-4.6-.8-8-4.5-8-9V6l8-3z"/><path d="M9 12l2 2 4-4"/></svg><h3>Guardrails</h3><p>Daily caps, venue allowlists, a simulation of every transaction and honeypot detection before you buy.</p></div>
+        <div class="sec-card"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" class="voice" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12z"/></svg><h3>Full ticket</h3><p>Route, fees, slippage and price impact are shown before you sign. Every agent decision is logged and explained.</p></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block badge-sec" id="badge">
+    <div class="wrap split">
+      <div style="display:flex;flex-direction:column;gap:26px">
+        <span class="eyebrow" style="color:#8E95FF">Early access</span>
+        <h2 class="display" style="font-size:clamp(64px,9vw,132px)">Claim your<br><span>badge.</span></h2>
+        <p>Every trader on the floor wore a badge with their letters. Pick up to four and choose a jacket. Your letters are reserved when you join the waitlist.</p>
+        <div class="field">
+          <label for="letters">Your letters</label>
+          <input id="letters" type="text" maxlength="4" value="LOUD" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="field">
+          <span class="lbl" id="jacket-lbl">Your jacket</span>
+          <div class="swatches" id="swatches" role="group" aria-labelledby="jacket-lbl"></div>
+        </div>
+        <form class="join" id="join">
+          <label for="email" style="position:absolute;left:-9999px">Email address</label>
+          <input id="email" type="email" placeholder="you@email.com" required>
+          <button class="btn btn-primary" type="submit">Reserve my letters</button>
+        </form>
+        <div class="note" id="note" aria-live="polite">Preview only: nothing is sent or saved yet.</div>
+      </div>
+      <div class="badge-stage">
+        <div class="lanyard"></div>
+        <div class="badge" id="badgeCard">
+          <div class="badge-top"><b>OUTCRY</b><span id="badgeLane">MEMES JACKET</span></div>
+          <div class="badge-face" id="badgeFace">LOUD</div>
+          <div class="badge-foot"><span>FLOOR MEMBER<br>No. [#####]</span><span>BY WOODENG</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block story">
+    <div class="wrap split">
+      <div><div class="big">1848</div><span class="eyebrow">Chicago · the first trading pits</span></div>
+      <div style="display:flex;flex-direction:column;gap:24px">
+        <p class="lead">For generations, prices were made by voices. <span class="voice">Then screens went silent.</span></p>
+        <p class="body">In the pit, you shouted your order and the market answered. There were no menus and no forms, only intent and execution. Outcry brings that back for crypto and tokenized markets: you say it, an AI hears it, and the whole chain answers. Built by Woodeng.</p>
+      </div>
+    </div>
+  </section>
+</main>
+
+<footer class="foot">
+  <div class="wrap">
+    <div class="foot-word">OUTCRY</div>
+    <div class="foot-grid">
+      <div>A <b>WOODENG</b> product</div>
+      <div><span class="eyebrow" style="color:#DCDDFF">Product</span><a href="terminal.html">Terminal</a><a href="#jackets">Markets</a><a href="#badge">Early access</a></div>
+      <div><span class="eyebrow" style="color:#DCDDFF">Woodeng</span><a href="#top">About</a><a href="#top">Careers</a><a href="#top">Press</a></div>
+      <div><span class="eyebrow" style="color:#DCDDFF">Legal</span><a href="#top">Terms</a><a href="#top">Privacy</a><a href="#top">Risk disclosure</a></div>
+    </div>
+    <small>Trading digital assets carries a high level of risk, including the total loss of your capital. Tokenized stocks are not available in all jurisdictions ([EXCLUDED JURISDICTIONS]). Outcry is an execution tool and does not provide investment advice. Figures in the demo are examples. © 2026 Woodeng [LEGAL ENTITY].</small>
+  </div>
+</footer>
+
+<script>
+const LANES = [
+  { name:'Memes', code:'MEM', jacket:'#F76FB0', ink:'#121426', venue:'SOLANA',
+    desc:'Buy on pump.fun, Raydium and Base launchpads. Filter by holders, liquidity, token age and wallet concentration.',
+    prompt:'Split 0.5 SOL across the 3 newest pump.fun tokens with 200+ holders. Stop at −30%.',
+    reply:'Heard. Three tokens passed my checks. I skipped two for concentrated supply.',
+    guard:'stop −30% armed',
+    legs:[['BUY · $[TICKER A]','pump.fun · 412 holders','0.166 SOL'],['BUY · $[TICKER B]','pump.fun · 238 holders','0.166 SOL'],['BUY · $[TICKER C]','pump.fun · 207 holders','0.166 SOL']] },
+  { name:'Stocks', code:'STK', jacket:'#8E2C48', ink:'#F3EFE4', venue:'ETH · SOL',
+    desc:'1:1-backed US stocks and ETFs via Ondo Stocks and xStocks, such as NVDA, TSLA, SPY and QQQ, bought with stablecoins at any hour.',
+    prompt:'Put 500 USDC into tokenized NVIDIA and 300 into SPY.',
+    reply:'Heard. Both are 1:1 backed. Routing each to its deepest pool.',
+    guard:'max slip 0.3%',
+    legs:[['BUY · NVDA','Ondo Stocks · Ethereum','500 USDC'],['BUY · SPY','xStocks · Solana','300 USDC']] },
+  { name:'Swaps', code:'SWP', jacket:'#2FA6E8', ink:'#121426', venue:'MULTI-CHAIN',
+    desc:'Swaps routed across Uniswap, Jupiter and major aggregators on Ethereum, Solana, Base, Arbitrum and BNB Chain.',
+    prompt:'Swap 2 ETH for SOL at the best rate.',
+    reply:'Heard. I compared 6 routes and picked the best one, bridge included.',
+    guard:'max slip 0.5%',
+    legs:[['BRIDGE · ETH → Solana','fastest verified bridge','2 ETH'],['SWAP · ETH → SOL','Jupiter · best route','[SOL OUT]']] },
+  { name:'Launch', code:'LCH', jacket:'#B5D93A', ink:'#121426', venue:'PUMP.FUN',
+    desc:'Name, ticker, artwork, supply and initial buy. Describe it, and Outcry deploys it and hands you the contract address.',
+    prompt:'Launch $LOUD on pump.fun, 1B supply, 1 SOL initial buy.',
+    reply:'Heard. Upload your logo and I deploy as soon as you sign.',
+    guard:'mint revoked on launch',
+    legs:[['DEPLOY · $LOUD','pump.fun · Solana','1B supply'],['BUY · $LOUD','initial buy','1 SOL']] },
+  { name:'Strategies', code:'STR', jacket:'#8B6CF6', ink:'#121426', venue:'STANDING',
+    desc:'DCA, grids, laddered take-profits, copy-trading and conditional rules. Written in plain English and backtested first.',
+    prompt:'If SOL drops 8% in 24h, buy 200 USDC. Sell half at +15%.',
+    reply:'Heard. Compiled into three rules, with a backtest attached.',
+    guard:'cap 1,000 USDC / wk',
+    legs:[['WHEN · SOL −8% / 24h','watching 24/7','trigger'],['BUY · SOL','Jupiter','200 USDC'],['EXIT · 50% at +15%','rest at +30%','ladder']] },
+  { name:'Research', code:'RSR', jacket:'#C9A46C', ink:'#121426', venue:'ON-CHAIN',
+    desc:'Contract reads, on-chain flows, sentiment and alerts. Ask a question, get a sourced answer, then turn it into an order.',
+    prompt:'Can this contract block sells?',
+    reply:'Checked. I found no sell restrictions. Here is what I looked at:',
+    guard:'sources attached',
+    legs:[['CHECK · sell restrictions','contract read','none'],['CHECK · mint authority','on-chain','revoked'],['CHECK · top 10 holders','supply share','[X]%']] }
 ];
-$('sugs').innerHTML = SUGS.map((s, i) => `<button type="button" class="sug" data-i="${i}"><span class="sq" style="background:${J[s[0]][1]}"></span>${esc(s[1])}</button>`).join('');
-$('sugs').addEventListener('click', e => { const b = e.target.closest('.sug'); if (b) send(SUGS[+b.dataset.i][1]); });
-$('form').addEventListener('submit', e => { e.preventDefault(); send($('cmd').value); });
-$('newSession').onclick = () => { sessionId = 'main-' + Date.now().toString(36); log.innerHTML = ''; welcome(); $('cmd').focus(); };
-$('panic').onclick = async () => { try { await api('/api/panic', { method: 'POST' }); feed('All agents paused'); refresh(); } catch (e) { toast(e.message); } };
+const $ = id => document.getElementById(id);
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+let lane = 0, filled = false, jacket = 0;
 
-function welcome() {
-  addAI(`<p><b style="color:var(--text)">Welcome to the floor.</b> Your paper wallet holds 24 SOL and 2,480 USDC. Launch a token with a disclosed multi-wallet dev buy, place orders, describe an agent and watch it get built, or backtest an indicator strategy. Tap a suggestion or type your own order.</p>`);
+// tape
+const tapeItems = ['BUY · SOL','SELL · ETH','BUY · NVDAon','LAUNCH · $[TICKER]','SWAP · USDC → SOL','DCA · SPYon','BUY · TSLAx'];
+let tapeHTML = '';
+tapeItems.forEach((t,i) => { const l = LANES[i % LANES.length]; tapeHTML += `<span>${t}</span><span class="tag" style="background:${l.jacket};color:${l.ink}">${l.name.toUpperCase()}</span>`; });
+$('tape').innerHTML = tapeHTML + tapeHTML;
+
+// chips + lane cards + swatches
+$('chips').innerHTML = LANES.map((l,i) => `<button type="button" class="chip" data-i="${i}" aria-pressed="false"><span class="sw" style="background:${l.jacket}"></span>${l.name}</button>`).join('');
+$('lanes').innerHTML = LANES.map((l,i) => `
+  <button type="button" class="lane" data-i="${i}">
+    <span class="lane-top" style="background:${l.jacket};color:${l.ink}"><strong>${l.name}</strong><em>${l.code}</em></span>
+    <span class="lane-body"><span class="lane-desc">${esc(l.desc)}</span><span class="lane-q" style="border-color:${l.jacket}">“${esc(l.prompt)}”</span><span class="lane-cta">Try this order ↑</span></span>
+  </button>`).join('');
+$('swatches').innerHTML = LANES.map((l,i) => `<button type="button" class="swatch" data-i="${i}" aria-label="${l.name} jacket" aria-pressed="false" style="background:${l.jacket}"></button>`).join('');
+
+function renderPit(){
+  const l = LANES[lane];
+  $('prompt').textContent = l.prompt;
+  $('reply').textContent = l.reply;
+  $('thead').style.background = l.jacket; $('thead').style.color = l.ink;
+  $('tname').textContent = 'ORDER TICKET · ' + l.name.toUpperCase();
+  $('tvenue').textContent = l.venue;
+  $('guard').textContent = l.guard;
+  $('legs').innerHTML = l.legs.map(g => `<div class="leg"><span><b>${esc(g[0])}</b><small>${esc(g[1])}</small></span><span>${esc(g[2])}</span></div>`).join('');
+  document.querySelectorAll('.chip').forEach(c => c.setAttribute('aria-pressed', String(+c.dataset.i === lane)));
+  const st = $('stamp');
+  st.hidden = !filled; st.classList.remove('show');
+  if (filled) { void st.offsetWidth; st.classList.add('show'); }
+  $('sign').textContent = filled ? 'Filled ✓ Sign another' : 'Sign & fill';
 }
+function setLane(i){ lane = i; filled = false; renderPit(); }
+$('chips').addEventListener('click', e => { const b = e.target.closest('.chip'); if (b) setLane(+b.dataset.i); });
+$('lanes').addEventListener('click', e => { const b = e.target.closest('.lane'); if (!b) return; setLane(+b.dataset.i); document.getElementById('top').scrollIntoView({behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth'}); });
+$('sign').addEventListener('click', () => { filled = !filled; renderPit(); });
+$('next').addEventListener('click', () => setLane((lane + 1) % LANES.length));
 
-function connectEvents() {
-  const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-  const ws = new WebSocket(`${proto}://${location.host}/api/events?token=${encodeURIComponent(token)}`);
-  ws.onmessage = (m) => {
-    const e = JSON.parse(m.data);
-    if (e.type === 'agent.activity') { feed(e.message); refresh(); }
-    else if (e.type === 'agent.proposal' && !shown.has(e.ticketId)) {
-      shown.add(e.ticketId);
-      api('/api/tickets/' + e.ticketId).then(t => {
-        if (t.source?.type !== 'agent' || t.kind !== 'order') return;
-        const body = addAI('<p>Your agent proposes a trade. It waits for your tap.</p>');
-        body.appendChild(orderCard(t));
-      }).catch(() => {});
-    }
-    else if (e.type === 'fill') feed(e.summary);
-    else if (e.type === 'agent.state') refresh();
-    else if (e.type === 'balances') refresh();
-  };
-  ws.onclose = () => setTimeout(connectEvents, 2000);
+function renderBadge(){
+  const l = LANES[jacket];
+  const v = $('letters').value || 'YOU';
+  $('badgeFace').textContent = v;
+  $('badgeCard').style.background = l.jacket; $('badgeCard').style.color = l.ink;
+  $('badgeLane').textContent = l.name.toUpperCase() + ' JACKET';
+  document.querySelectorAll('.swatch').forEach(s => s.setAttribute('aria-pressed', String(+s.dataset.i === jacket)));
 }
+$('letters').addEventListener('input', e => { e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'').slice(0,4); renderBadge(); });
+$('swatches').addEventListener('click', e => { const b = e.target.closest('.swatch'); if (b) { jacket = +b.dataset.i; renderBadge(); } });
+$('join').addEventListener('submit', e => {
+  e.preventDefault();
+  const letters = $('letters').value || 'YOU';
+  $('note').textContent = `Looks good: ${letters} in the ${LANES[jacket].name} jacket. This is a preview, so nothing was sent or saved.`;
+});
 
-(async function boot() {
-  try {
-    const s = await api('/api/session', { method: 'POST', body: { badge: 'LOUD', jacket: 'memes', residence: 'CH' } });
-    token = s.token;
-    $('badge').textContent = s.user.badge;
-    $('memberSub').textContent = 'Memes jacket · paper wallet';
-    $('tiers').innerHTML = '<span class="eyebrow">Model tiers</span>' + s.llm.map(t => `<span><b>${t.tier}</b> ${esc(t.model)}${t.live ? '' : ''}</span>`).join('');
-    welcome(); refresh(); connectEvents();
-  } catch (e) { addAI(`<p>Could not start a session: ${esc(e.message)}</p>`); }
-})();
+renderPit(); renderBadge();
 </script>
+
 </body>
 </html>

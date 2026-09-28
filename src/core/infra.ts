@@ -2,8 +2,7 @@
  * Small infrastructure pieces shared by every module: ids, an event bus,
  * and a hash-chained, append-only audit log.
  */
-import { createHash } from "node:crypto";
-import { EventEmitter } from "node:events";
+import { sha256Hex } from "./hash.js";
 import { customAlphabet } from "nanoid";
 
 const alphabet = customAlphabet("0123456789abcdefghijklmnopqrstuvwxyz", 10);
@@ -20,17 +19,21 @@ export type OutcryEvent =
   | { type: "agent.proposal"; userId: string; agentId: string; ticketId: string }
   | { type: "balances"; userId: string; balances: Record<string, number> };
 
+/** Minimal synchronous pub/sub; runs in Node and in the browser. */
 export class EventBus {
-  private emitter = new EventEmitter();
-  constructor() {
-    this.emitter.setMaxListeners(1000);
-  }
+  private listeners = new Set<(e: OutcryEvent) => void>();
   publish(event: OutcryEvent) {
-    this.emitter.emit("event", event);
+    for (const fn of [...this.listeners]) {
+      try {
+        fn(event);
+      } catch {
+        /* a failing listener must not break the publisher */
+      }
+    }
   }
   subscribe(fn: (e: OutcryEvent) => void): () => void {
-    this.emitter.on("event", fn);
-    return () => this.emitter.off("event", fn);
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
   }
 }
 
@@ -59,9 +62,7 @@ export class AuditLog {
     const prevHash = this.entries.at(-1)?.hash ?? "genesis";
     const seq = this.entries.length;
     const at = nowIso();
-    const hash = createHash("sha256")
-      .update(JSON.stringify({ seq, at, actor, action, data, prevHash }))
-      .digest("hex");
+    const hash = sha256Hex(JSON.stringify({ seq, at, actor, action, data, prevHash }));
     const entry: AuditEntry = { seq, at, actor, action, data, prevHash, hash };
     this.entries.push(entry);
     return entry;
@@ -74,9 +75,7 @@ export class AuditLog {
   verify(): boolean {
     let prev = "genesis";
     for (const e of this.entries) {
-      const expect = createHash("sha256")
-        .update(JSON.stringify({ seq: e.seq, at: e.at, actor: e.actor, action: e.action, data: e.data, prevHash: prev }))
-        .digest("hex");
+      const expect = sha256Hex(JSON.stringify({ seq: e.seq, at: e.at, actor: e.actor, action: e.action, data: e.data, prevHash: prev }));
       if (e.prevHash !== prev || e.hash !== expect) return false;
       prev = e.hash;
     }
