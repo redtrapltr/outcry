@@ -13,7 +13,7 @@ export const dayKey = (d = new Date()) => d.toISOString().slice(0, 10);
 /** Typed events pushed to clients over the websocket. */
 export type OutcryEvent =
   | { type: "ticket.updated"; userId: string; ticketId: string; status: string }
-  | { type: "fill"; userId: string; ticketId: string; summary: string }
+  | { type: "fill"; userId: string; ticketId: string; summary: string; agentId?: string }
   | { type: "agent.activity"; userId: string; agentId: string; message: string }
   | { type: "agent.state"; userId: string; agentId: string; state: string }
   | { type: "agent.proposal"; userId: string; agentId: string; ticketId: string }

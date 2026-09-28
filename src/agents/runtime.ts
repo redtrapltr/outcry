@@ -68,6 +68,59 @@ export class AgentRuntime {
     return this.positions.get(agentId) ?? [];
   }
 
+  private history = new Map<string, { t: number; v: number }[]>();
+  private trades = new Map<string, { t: number; side: "buy" | "sell"; symbol: string; usd: number; pnlUsd?: number }[]>();
+  private startUsd = new Map<string, number>();
+
+  private sample(a: Agent, now = Date.now()) {
+    const h = this.history.get(a.id) ?? [];
+    const v = this.equityUsd(a);
+    a.stats.equityUsd = v;
+    const last = h.at(-1);
+    if (last && now - last.t < 1_000) last.v = v;
+    else h.push({ t: now, v });
+    // Keep the chart light: thin out older points once there are many.
+    if (h.length > 600) {
+      const thinned = h.filter((_, i) => i % 2 === 0 || i >= h.length - 200);
+      h.splice(0, h.length, ...thinned);
+    }
+    this.history.set(a.id, h);
+  }
+
+  /** Live performance for the terminal: equity curve, P&L, trades and open positions. */
+  perf(agentId: string) {
+    const a = this.agents.get(agentId);
+    if (!a) return undefined;
+    if (a.state === "paper" || a.state === "live" || a.state === "paused") this.sample(a);
+    const start = this.startUsd.get(agentId) ?? 0;
+    const equity = a.stats.equityUsd;
+    const trades = this.trades.get(agentId) ?? [];
+    const sells = trades.filter((x) => x.side === "sell");
+    const positions = this.positionsOf(agentId).map((p) => {
+      let price = p.entryPrice;
+      try { price = this.d.market.priceUsd(p.symbol); } catch { /* delisted */ }
+      const valueUsd = p.qty * price;
+      const costUsd = p.qty * p.entryPrice;
+      return { symbol: p.symbol, valueUsd, costUsd, pnlUsd: valueUsd - costUsd, pnlPct: costUsd > 0 ? ((valueUsd - costUsd) / costUsd) * 100 : 0, openedAt: p.openedAt };
+    });
+    return {
+      startUsd: start,
+      equityUsd: equity,
+      pnlUsd: start > 0 ? equity - start : 0,
+      pnlPct: start > 0 ? ((equity - start) / start) * 100 : 0,
+      realizedPnlUsd: a.stats.realizedPnlUsd,
+      unrealizedPnlUsd: positions.reduce((x, p) => x + p.pnlUsd, 0),
+      drawdownPct: a.stats.peakEquityUsd > 0 ? Math.max(0, ((a.stats.peakEquityUsd - equity) / a.stats.peakEquityUsd) * 100) : 0,
+      cashUsd: equity - positions.reduce((x, p) => x + p.valueUsd, 0),
+      virtual: a.spec.mode === "paper",
+      history: this.history.get(agentId) ?? [],
+      trades: trades.slice(-100),
+      closedTrades: sells.length,
+      wins: sells.filter((x) => (x.pnlUsd ?? 0) > 0).length,
+      positions,
+    };
+  }
+
   // -------------------------------------------------------------------------
   // Design time
   // -------------------------------------------------------------------------
@@ -256,6 +309,8 @@ export class AgentRuntime {
     a.spec.mode = opts.mode;
     a.stats.equityUsd = this.equityUsd(a);
     a.stats.peakEquityUsd = a.stats.equityUsd;
+    if (!this.startUsd.has(agentId)) this.startUsd.set(agentId, a.stats.equityUsd);
+    this.sample(a);
     this.d.audit.append(`user:${userId}`, "agent.deployed", { agentId, mode: opts.mode, subWallet: a.subWalletAddress, funded: a.balances });
     this.activity(a, `${a.spec.name} deployed in ${opts.mode} mode with ${fmtUsd(a.stats.equityUsd)} ${opts.mode === "paper" ? "(virtual)" : ""}`.trim());
     this.publishState(a);
@@ -317,6 +372,7 @@ export class AgentRuntime {
         if (a.spec.kind === "rules") await this.tickRules(a, now);
         else await this.tickSniper(a);
         this.checkDrawdown(a);
+        this.sample(a, now);
       } catch (e) {
         this.activity(a, `Error: ${(e as Error).message}`);
       }
@@ -485,6 +541,13 @@ export class AgentRuntime {
     return false;
   }
 
+  private pushTrade(id: string, x: { t: number; side: "buy" | "sell"; symbol: string; usd: number; pnlUsd?: number }) {
+    const l = this.trades.get(id) ?? [];
+    l.push(x);
+    if (l.length > 300) l.shift();
+    this.trades.set(id, l);
+  }
+
   /** Fold filled or failed agent tickets into positions and stats. */
   private reconcile(a: Agent) {
     for (const [id, p] of [...this.pendingTickets]) {
@@ -499,6 +562,7 @@ export class AgentRuntime {
           list.push({ symbol: p.symbol, qty: fill.amountOut, entryPrice: price, peakPrice: price, openedAt: fill.at, ticketId: id });
           this.positions.set(a.id, list);
           a.stats.spentTodayUsd += t.totalUsd;
+          this.pushTrade(a.id, { t: Date.now(), side: "buy", symbol: p.symbol, usd: t.totalUsd });
           this.activity(a, `${a.spec.mode === "paper" ? "PAPER · " : ""}BUY ${p.symbol} ${fmtUsd(t.totalUsd)} filled`);
         } else {
           const list = this.positions.get(a.id) ?? [];
@@ -509,6 +573,7 @@ export class AgentRuntime {
             const pnl = proceedsUsd - pos.qty * pos.entryPrice;
             a.stats.realizedPnlUsd += pnl;
             list.splice(idx, 1);
+            this.pushTrade(a.id, { t: Date.now(), side: "sell", symbol: p.symbol, usd: proceedsUsd, pnlUsd: pnl });
             this.activity(a, `${a.spec.mode === "paper" ? "PAPER · " : ""}SELL ${p.symbol} filled, P&L ${pnl >= 0 ? "+" : ""}${fmtUsd(pnl)}`);
           }
         }

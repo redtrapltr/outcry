@@ -168,6 +168,7 @@ export class TicketDesk {
           venue: leg.venue,
           usd,
           kind: "trade",
+          side: leg.side,
           userApproval: opts.userApproval,
           agentId: isAgent ? (t.source as { agentId: string }).agentId : undefined,
           payload: { ticketId: t.id, leg: i },
@@ -187,6 +188,7 @@ export class TicketDesk {
           type: "fill",
           userId: t.userId,
           ticketId: t.id,
+          agentId: t.source.type === "agent" ? (t.source as { agentId?: string }).agentId : undefined,
           summary: `${leg.side.toUpperCase()} ${leg.asset}: ${fmt(fill.amountIn)} ${leg.side === "buy" ? leg.quoteAsset : leg.asset} -> ${fmt(fill.amountOut)} ${leg.side === "buy" ? leg.asset : leg.quoteAsset}`,
         });
       }

@@ -82,7 +82,11 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   });
 
   // --- agents ----------------------------------------------------------------------
-  route("GET", "/api/agents", ({ uid }) => app.agents.listForUser(uid).map((a) => ({ agent: a, positions: app.agents.positionsOf(a.id), blueprint: blueprint(a) })));
+  route("GET", "/api/agents", ({ uid }) => app.agents.listForUser(uid).map((a) => ({ agent: a, positions: app.agents.positionsOf(a.id), blueprint: blueprint(a), perf: app.agents.perf(a.id) })));
+  route("GET", "/api/agents/:id/perf", ({ uid, params }) => {
+    own(app.agents.get(params.id!), uid, "Agent");
+    return app.agents.perf(params.id!);
+  });
   route("POST", "/api/agents", ({ uid, body }) => {
     const b = z.object({ fromStrategyId: z.string(), sizeUsd: z.number().positive().default(50), name: z.string().max(18).optional() }).parse(body);
     const s = own(app.lab.get(b.fromStrategyId), uid, "Strategy");

@@ -43,6 +43,24 @@ button,input{font:inherit;color:inherit}
 .item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:14px}
 .sq{width:10px;height:10px;border-radius:3px;flex-shrink:0;display:inline-block}
 .status{font:10.5px var(--mono);letter-spacing:.08em}
+.perf{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line,rgba(127,127,127,.25));border-radius:12px;padding:12px}
+.perf-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
+.perf-eq{font:600 26px var(--mono)}
+.perf-pnl{font:600 14px var(--mono)}
+.perf-chart{position:relative;height:170px}
+.perf-chart svg{display:block;width:100%;height:100%}
+.perf-tip{position:absolute;pointer-events:none;font:11px var(--mono);background:rgba(10,12,40,.92);color:#fff;padding:4px 7px;border-radius:6px;white-space:nowrap;transform:translate(-50%,-120%);display:none}
+.perf-pills{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px}
+.perf-pills div{display:flex;flex-direction:column;gap:2px}
+.perf-pills b{font:600 13px var(--mono)} .perf-pills span{font:10px var(--mono);letter-spacing:.08em;color:var(--muted)}
+.dd-bar{height:6px;border-radius:3px;background:rgba(127,127,127,.2);overflow:hidden}.dd-bar i{display:block;height:100%}
+.perf-pos{display:flex;flex-direction:column;gap:4px;font:12px var(--mono)}
+.perf-pos div{display:flex;justify-content:space-between}
+.ap-row{display:grid;grid-template-columns:1fr auto;gap:2px 8px;padding:6px 0;cursor:pointer}
+.ap-row svg{grid-column:1/-1;width:100%;height:34px;display:block}
+.ap-name{font-size:13px;font-weight:500} .ap-val{font:12px var(--mono);text-align:right}
+.up{color:var(--up)} .down{color:var(--down)}
+@media (max-width:700px){.perf-pills{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .agent-row{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:8px}
 .agent-row .item{padding:0}
 .a-ctl{display:flex;gap:6px;flex-wrap:wrap}
@@ -201,9 +219,14 @@ input[type=range]{width:100%;accent-color:var(--voice)}
 
   <aside class="panel" aria-label="Portfolio">
     <div class="p-sec">
-      <span class="eyebrow">Wallet value</span>
+      <span class="eyebrow">Main wallet</span>
       <span class="big" id="walletUsd">$0</span>
       <span class="mono" style="font-size:12px;color:var(--muted)" id="balances"></span>
+    </div>
+    <div class="p-sec" id="agentPerfSec" hidden>
+      <span class="eyebrow">Agents · live</span>
+      <span class="mono" style="font-size:11px;color:var(--muted)" id="agentPerfNote"></span>
+      <div id="agentPerf"></div>
     </div>
     <div class="p-sec">
       <span class="eyebrow">Positions by jacket</span>
@@ -478,7 +501,9 @@ async function agentCard(card) {
     });
   };
   // A deployed agent stays editable: slider changes apply in place (new version, same wallet).
+  let perfBox = null;
   function drawRunning() {
+    if (!perfBox) { perfBox = perfPanel(a.id); q('.adj-host').before(perfBox.el); pollAgents(); }
     const acts = q('.adjust .actions'); const ack = q('.adjust .check'); if (ack) ack.remove();
     if (!acts) return;
     const running = a.state === 'live' || a.state === 'paper';
@@ -595,6 +620,116 @@ function welcome() {
   addAI(`<p><b style="color:var(--text)">Welcome to the floor.</b> Your paper wallet holds 24 SOL and 2,480 USDC. Launch a token with a disclosed multi-wallet dev buy, place orders, describe an agent and watch it get built, or backtest an indicator strategy. Tap a suggestion or type your own order.</p>`);
 }
 
+// ---------------- agent performance ----------------
+const usd = n => (n < 0 ? '−$' : '$') + fmt(Math.abs(n));
+const sgn = n => (n >= 0 ? '+' : '−');
+const liveCharts = new Map(); // agentId -> update(perf, agent)
+function sparkline(h, start) {
+  if (!h || h.length < 2) return '<svg viewBox="0 0 100 34"></svg>';
+  const vs = h.map(p => p.v), lo = Math.min(start, ...vs), hi = Math.max(start, ...vs), r = Math.max(1e-9, hi - lo);
+  const X = i => (i / (h.length - 1)) * 100, Y = v => 31 - ((v - lo) / r) * 28;
+  const up = vs.at(-1) >= start;
+  return `<svg viewBox="0 0 100 34" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="100" y1="${Y(start)}" y2="${Y(start)}" stroke="rgba(150,150,180,.4)" stroke-dasharray="2 2" vector-effect="non-scaling-stroke"/><path d="${h.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(2)} ${Y(p.v).toFixed(2)}`).join(' ')}" fill="none" stroke="${up ? 'var(--up)' : 'var(--down)'}" stroke-width="1.6" vector-effect="non-scaling-stroke"/></svg>`;
+}
+function drawPerfChart(box, perf) {
+  const h = perf.history; const W = Math.max(240, box.clientWidth || 560), H = 170, P = { l: 6, r: 6, t: 12, b: 18 };
+  if (h.length < 2) { box.innerHTML = '<div class="meta" style="padding:60px 0;text-align:center">Waiting for the first ticks…</div>'; return; }
+  const t0 = h[0].t, t1 = Math.max(h.at(-1).t, t0 + 1);
+  const vs = h.map(p => p.v); let lo = Math.min(perf.startUsd, ...vs), hi = Math.max(perf.startUsd, ...vs); const pad = Math.max((hi - lo) * 0.15, perf.startUsd * 0.01, 0.5); lo -= pad; hi += pad;
+  const X = t => P.l + ((t - t0) / (t1 - t0)) * (W - P.l - P.r), Y = v => P.t + (1 - (v - lo) / (hi - lo)) * (H - P.t - P.b);
+  const up = perf.equityUsd >= perf.startUsd, col = up ? 'var(--up)' : 'var(--down)';
+  const line = h.map((p, i) => `${i ? 'L' : 'M'}${X(p.t).toFixed(1)} ${Y(p.v).toFixed(1)}`).join(' ');
+  const base = Y(perf.startUsd);
+  const area = `${line} L${X(h.at(-1).t).toFixed(1)} ${base} L${X(h[0].t).toFixed(1)} ${base} Z`;
+  const valAt = t => { let best = h[0]; for (const p of h) { if (p.t <= t) best = p; else break; } return best.v; };
+  const marks = perf.trades.filter(x => x.t >= t0).map(x => {
+    const cx = X(x.t), cy = Y(valAt(x.t));
+    if (x.side === 'buy') return `<path d="M${cx} ${cy - 7} l5 8 h-10 z" fill="var(--voice,#6b73ff)"><title>Bought ${esc(x.symbol)} · ${usd(x.usd)}</title></path>`;
+    const good = (x.pnlUsd ?? 0) >= 0;
+    return `<circle cx="${cx}" cy="${cy}" r="4.5" fill="${good ? 'var(--up)' : 'var(--down)'}" stroke="#0b0d2a" stroke-width="1.5"><title>Sold ${esc(x.symbol)} · ${sgn(x.pnlUsd ?? 0)}${usd(Math.abs(x.pnlUsd ?? 0))}</title></circle>`;
+  }).join('');
+  const mins = Math.round((t1 - t0) / 60000);
+  box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Agent equity over time">
+    <defs>
+      <clipPath id="above-${box.dataset.id}"><rect x="0" y="0" width="${W}" height="${base}"/></clipPath>
+      <clipPath id="below-${box.dataset.id}"><rect x="0" y="${base}" width="${W}" height="${H - base}"/></clipPath>
+      <linearGradient id="gu-${box.dataset.id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#3DDC97" stop-opacity=".38"/><stop offset="1" stop-color="#3DDC97" stop-opacity=".04"/></linearGradient>
+      <linearGradient id="gd-${box.dataset.id}" x1="0" x2="0" y1="0" y2="1"><stop offset="0" stop-color="#FF6B6B" stop-opacity=".04"/><stop offset="1" stop-color="#FF6B6B" stop-opacity=".38"/></linearGradient>
+    </defs>
+    <path d="${area}" fill="url(#gu-${box.dataset.id})" clip-path="url(#above-${box.dataset.id})"/>
+    <path d="${area}" fill="url(#gd-${box.dataset.id})" clip-path="url(#below-${box.dataset.id})"/>
+    <line x1="${P.l}" x2="${W - P.r}" y1="${base}" y2="${base}" stroke="rgba(150,150,180,.5)" stroke-dasharray="4 4"/>
+    <text x="${P.l + 2}" y="${base - 4}" font-size="10" font-family="var(--mono)" fill="rgba(170,170,200,.8)">start ${usd(perf.startUsd)}</text>
+    <path d="${line}" fill="none" stroke="var(--up)" stroke-width="2" stroke-linejoin="round" clip-path="url(#above-${box.dataset.id})"/>
+    <path d="${line}" fill="none" stroke="var(--down)" stroke-width="2" stroke-linejoin="round" clip-path="url(#below-${box.dataset.id})"/>
+    ${marks}
+    <circle cx="${X(h.at(-1).t)}" cy="${Y(h.at(-1).v)}" r="4" fill="${col}"><animate attributeName="r" values="3;6;3" dur="1.6s" repeatCount="indefinite"/></circle>
+    <text x="${P.l}" y="${H - 4}" font-size="10" font-family="var(--mono)" fill="rgba(170,170,200,.7)">${mins < 1 ? 'just now' : mins + ' min ago'}</text>
+    <text x="${W - P.r}" y="${H - 4}" text-anchor="end" font-size="10" font-family="var(--mono)" fill="rgba(170,170,200,.7)">now</text>
+    <line class="hair" x1="0" x2="0" y1="${P.t}" y2="${H - P.b}" stroke="rgba(200,200,230,.35)" visibility="hidden"/>
+  </svg><div class="perf-tip"></div>`;
+  const svg = box.querySelector('svg'), tip = box.querySelector('.perf-tip'), hair = svg.querySelector('.hair');
+  svg.onpointermove = ev => {
+    const r = svg.getBoundingClientRect(); const x = ((ev.clientX - r.left) / r.width) * W;
+    const t = t0 + ((x - P.l) / (W - P.l - P.r)) * (t1 - t0); let p = h[0]; for (const q of h) if (Math.abs(q.t - t) < Math.abs(p.t - t)) p = q;
+    hair.setAttribute('x1', X(p.t)); hair.setAttribute('x2', X(p.t)); hair.setAttribute('visibility', 'visible');
+    const d = p.v - perf.startUsd;
+    tip.style.display = 'block'; tip.style.left = (X(p.t) / W * 100) + '%'; tip.style.top = (Y(p.v) / H * 100) + '%';
+    tip.textContent = `${new Date(p.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${usd(p.v)} (${sgn(d)}${usd(Math.abs(d)).replace('−', '')})`;
+  };
+  svg.onpointerleave = () => { tip.style.display = 'none'; hair.setAttribute('visibility', 'hidden'); };
+}
+function perfPanel(agentId) {
+  const el = document.createElement('div'); el.className = 'perf';
+  el.innerHTML = `<div class="perf-top"><div><div class="eyebrow">Live performance · <span class="pv"></span></div><div class="perf-eq">$0</div></div><div class="perf-pnl"></div></div>
+    <div class="perf-chart" data-id="${agentId}"></div>
+    <div class="perf-pills"><div><b class="p-real"></b><span>REALIZED</span></div><div><b class="p-unr"></b><span>OPEN P&amp;L</span></div><div><b class="p-win"></b><span>WIN RATE</span></div><div><b class="p-dd"></b><span>DRAWDOWN</span><div class="dd-bar"><i></i></div></div></div>
+    <div class="perf-pos"></div>`;
+  const q = s => el.querySelector(s);
+  const update = (perf, agent) => {
+    if (!perf) return;
+    q('.pv').textContent = perf.virtual ? 'paper money' : 'real funds';
+    q('.perf-eq').textContent = usd(perf.equityUsd);
+    q('.perf-pnl').innerHTML = `<span class="${perf.pnlUsd >= 0 ? 'up' : 'down'}">${sgn(perf.pnlUsd)}${usd(Math.abs(perf.pnlUsd)).replace('−', '')} · ${sgn(perf.pnlPct)}${Math.abs(perf.pnlPct).toFixed(2)}%</span>`;
+    q('.p-real').innerHTML = `<span class="${perf.realizedPnlUsd >= 0 ? 'up' : 'down'}">${sgn(perf.realizedPnlUsd)}${usd(Math.abs(perf.realizedPnlUsd)).replace('−', '')}</span>`;
+    q('.p-unr').innerHTML = `<span class="${perf.unrealizedPnlUsd >= 0 ? 'up' : 'down'}">${sgn(perf.unrealizedPnlUsd)}${usd(Math.abs(perf.unrealizedPnlUsd)).replace('−', '')}</span>`;
+    q('.p-win').textContent = perf.closedTrades ? `${Math.round(perf.wins / perf.closedTrades * 100)}% · ${perf.wins}/${perf.closedTrades}` : '—';
+    const lim = agent?.spec.limits.maxDrawdownPct ?? 50; const ratio = Math.min(1, perf.drawdownPct / lim);
+    q('.p-dd').textContent = `−${perf.drawdownPct.toFixed(1)}% / −${lim}%`;
+    const bar = q('.dd-bar i'); bar.style.width = (ratio * 100) + '%'; bar.style.background = ratio > .75 ? 'var(--down)' : ratio > .4 ? '#f5b642' : 'var(--up)';
+    q('.perf-pos').innerHTML = perf.positions.length
+      ? `<span class="eyebrow">Holding ${perf.positions.length} · cash ${usd(perf.cashUsd)}</span>` + perf.positions.map(p => `<div><span>$${esc(p.symbol)}</span><span>${usd(p.valueUsd)} <span class="${p.pnlUsd >= 0 ? 'up' : 'down'}">${sgn(p.pnlPct)}${Math.abs(p.pnlPct).toFixed(1)}%</span></span></div>`).join('')
+      : `<span class="meta">No open positions · cash ${usd(perf.cashUsd)}${agent?.state === 'paused' ? ' · paused' : ''}</span>`;
+    drawPerfChart(q('.perf-chart'), perf);
+  };
+  liveCharts.set(agentId, update);
+  return { el, update };
+}
+let polling = false;
+async function pollAgents() {
+  if (polling || !token) return; polling = true;
+  try {
+    const list = await api('/api/agents');
+    const act = list.filter(x => x.perf && x.perf.startUsd > 0 && x.agent.state !== 'killed');
+    $('agentPerfSec').hidden = !act.length;
+    if (act.length) {
+      const tot = act.reduce((s, x) => s + x.perf.equityUsd, 0), start = act.reduce((s, x) => s + x.perf.startUsd, 0);
+      const allPaper = act.every(x => x.perf.virtual);
+      $('agentPerfNote').textContent = `${usd(tot)} ${allPaper ? 'paper money, separate from your wallet' : 'in agent wallets'} · ${sgn(tot - start)}${usd(Math.abs(tot - start)).replace('−', '')}`;
+      $('agentPerf').innerHTML = act.map(({ agent: a, perf }) => `<div class="ap-row" data-id="${a.id}" title="Open live chart"><span class="ap-name">${esc(a.spec.name)} <span class="status st-${a.state}">${a.state.toUpperCase()}</span></span><span class="ap-val">${usd(perf.equityUsd)} <span class="${perf.pnlUsd >= 0 ? 'up' : 'down'}">${sgn(perf.pnlPct)}${Math.abs(perf.pnlPct).toFixed(1)}%</span></span>${sparkline(perf.history, perf.startUsd)}</div>`).join('');
+    }
+    for (const x of list) liveCharts.get(x.agent.id)?.(x.perf, x.agent);
+  } catch { /* transient */ } finally { polling = false; }
+}
+setInterval(() => { if (!document.hidden) pollAgents(); }, 3000);
+$('agentPerf').addEventListener('click', async e => {
+  const row = e.target.closest('.ap-row'); if (!row) return;
+  const id = row.dataset.id;
+  const list = await api('/api/agents'); const x = list.find(y => y.agent.id === id); if (!x) return;
+  const body = addAI(`<p><b>${esc(x.agent.spec.name)}</b>, live. Updates every few seconds.</p>`);
+  const panel = perfPanel(id); body.appendChild(panel.el); panel.update(x.perf, x.agent); scrollDown();
+});
+
 function onEvent(e) {
   if (e.type === 'agent.activity') { feed(e.message); refresh(); }
   else if (e.type === 'agent.proposal' && !shown.has(e.ticketId)) {
@@ -605,7 +740,7 @@ function onEvent(e) {
       body.appendChild(orderCard(t));
     }).catch(() => {});
   }
-  else if (e.type === 'fill') feed(e.summary);
+  else if (e.type === 'fill') { if (!e.agentId) feed(e.summary); else pollAgents(); }
   else if (e.type === 'agent.state' || e.type === 'balances') refresh();
 }
 function connectEvents() {

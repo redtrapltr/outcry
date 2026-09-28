@@ -303,3 +303,34 @@ describe("sniper age and top-10 filters, live edits, delete", () => {
     expect(app.agents.get(agent.id)).toBeUndefined();
   });
 });
+
+describe("agent exits are never blocked by spend caps", () => {
+  it("allows a sell after the daily limit is used up, and perf tracks equity", async () => {
+    const { createOutcry } = await import("../src/app.js");
+    const app = createOutcry({ mode: "paper" } as never);
+    const u = app.users.create({ badge: "T", jacket: "memes", residence: "CH" });
+    const { agent } = app.agents.propose(u.id, {
+      name: "CAPPED", goal: "x", markets: ["memes"], kind: "sniper",
+      universe: { venue: "pumpfun", minHolders: 10, maxTopWalletPct: 50 },
+      sizeUsd: 20, exit: { stopLossPct: 5, takeProfitPct: 5 },
+      limits: { maxPerTradeUsd: 20, maxPerDayUsd: 20, maxOpenPositions: 5, maxDrawdownPct: 90 }, mode: "paper",
+    });
+    app.agents.deploy(u.id, agent.id, { mode: "paper" });
+    await app.agents.tick();
+    app.market.spawnMeme("CAPA", { holders: 400, holdersCollapsed: 400 });
+    await app.agents.tick(); // buys CAPA, uses the whole $20 daily cap
+    await app.agents.tick(); // reconcile
+    expect(app.agents.positionsOf(agent.id).map((p) => p.symbol)).toContain("CAPA");
+    // Move the price hard so the exit triggers.
+    const m = app.market as unknown as { memes: Map<string, { risk: { symbol: string }; price: number }> };
+    for (const x of m.memes.values()) if (x.risk.symbol === "CAPA") x.price *= 0.5;
+    await app.agents.tick(); // sell proposed + filled
+    await app.agents.tick(); // reconcile
+    expect(app.agents.positionsOf(agent.id).map((p) => p.symbol)).not.toContain("CAPA");
+    const perf = app.agents.perf(agent.id)!;
+    expect(perf.startUsd).toBeGreaterThan(0);
+    expect(perf.history.length).toBeGreaterThanOrEqual(1);
+    expect(perf.closedTrades).toBe(1);
+    expect(perf.realizedPnlUsd).toBeLessThan(0);
+  });
+});
