@@ -109,6 +109,11 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     const a = app.agents.deploy(uid, params.id!, { mode: b.mode, userApproval: b.passkeyAssertion, riskAcknowledged: b.riskAcknowledged });
     return { agent: a, blueprint: blueprint(a) };
   });
+  route("DELETE", "/api/agents/:id", ({ uid, params }) => {
+    own(app.agents.get(params.id!), uid, "Agent");
+    app.agents.remove(uid, params.id!);
+    return { ok: true, deleted: params.id };
+  });
   route("POST", "/api/agents/:id/control", ({ uid, params, body }) => {
     const b = z.object({ action: z.enum(["pause", "resume", "kill"]) }).parse(body);
     return app.agents.control(uid, params.id!, b.action);
@@ -178,7 +183,8 @@ export function startLoops(app: Outcry, tickMs: number, simLaunchEveryMs: number
         const bad = i % 4 === 3;
         const sym = `${names[i % names.length]}${Math.floor(i / names.length) || ""}`;
         const holders = 180 + ((i * 53) % 400);
-        app.market.spawnMeme(sym, bad ? { mintRevoked: false, topWalletPct: 38 } : { holders, holdersCollapsed: holders });
+        const top10Pct = 11 + ((i * 37) % 26); // 11–36%: some pass a 20% top-10 rule, some don't
+        app.market.spawnMeme(sym, bad ? { mintRevoked: false, topWalletPct: 38, top10Pct: 61 } : { holders, holdersCollapsed: holders, top10Pct });
         i++;
       }, simLaunchEveryMs),
     );

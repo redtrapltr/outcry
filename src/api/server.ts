@@ -34,6 +34,13 @@ export async function buildServer(opts: ServerOptions = {}) {
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"));
 
   const f = Fastify({ logger: opts.logger ?? false });
+  // Accept an empty body with a JSON content-type (buttons that send no data).
+  f.removeContentTypeParser("application/json");
+  f.addContentTypeParser("application/json", { parseAs: "string" }, (_req, raw, done) => {
+    const text = String(raw ?? "").trim();
+    if (!text) return done(null, undefined);
+    try { done(null, JSON.parse(text)); } catch { const e = new Error("Invalid JSON body") as Error & { statusCode: number }; e.statusCode = 400; done(e, undefined); }
+  });
   await f.register(fastifyWebsocket);
   const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web");
   await f.register(fastifyStatic, { root: webRoot, prefix: "/" });

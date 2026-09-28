@@ -249,6 +249,10 @@ export const TokenUniverse = z.object({
   venue: z.literal("pumpfun"),
   minHolders: z.number().int().min(0).default(200),
   maxTopWalletPct: z.number().min(1).max(100).default(20),
+  /** Skip if the 10 largest holders own more than this share of supply. */
+  maxTop10Pct: z.number().min(1).max(100).optional(),
+  /** Only buy launches younger than this (seconds since the create transaction). */
+  maxAgeSeconds: z.number().int().min(1).max(86_400).default(3_600),
   requireMintRevoked: z.boolean().default(true),
   /** Count disclosed creator wallets as one holder (Outcry launch registry). */
   collapseCreatorWallets: z.boolean().default(true),

@@ -24,6 +24,14 @@ const program = {
   required: ["timeframe", "asset", "entry", "exit", "size"],
 };
 
+const universeProps = {
+  minHolders: { type: "number" },
+  maxTopWalletPct: { type: "number", description: "Max share of supply held by the single largest wallet" },
+  maxTop10Pct: { type: "number", description: "Max share of supply held by the 10 largest wallets combined (\"top 10 wallets under 20%\" -> 20)" },
+  maxAgeSeconds: { type: "number", description: "Only buy launches younger than this many seconds (\"no older than 1 minute\" -> 60). Default 3600." },
+  requireMintRevoked: { type: "boolean" },
+};
+
 export const TOOLS: ToolDef[] = [
   {
     name: "get_portfolio",
@@ -133,7 +141,7 @@ export const TOOLS: ToolDef[] = [
         kind: { type: "string", enum: ["sniper", "rules"] },
         universe: {
           type: "object",
-          properties: { minHolders: { type: "number" }, maxTopWalletPct: { type: "number" }, requireMintRevoked: { type: "boolean" } },
+          properties: universeProps,
         },
         program,
         sizeUsd: { type: "number" },
@@ -145,6 +153,24 @@ export const TOOLS: ToolDef[] = [
         },
       },
       required: ["name", "markets", "kind", "sizeUsd", "exit", "limits"],
+    },
+  },
+  {
+    name: "update_agent",
+    kind: "write",
+    description:
+      "Change settings of an EXISTING agent (by name or id) in place: filters, size, stop loss, take profit, limits, drawdown pause. Only pass the fields that change. Running agents keep their wallet, funds and positions. Use this instead of propose_agent whenever the user edits an agent they already have.",
+    input_schema: {
+      type: "object",
+      properties: {
+        agent: { type: "string" },
+        name: { type: "string" },
+        universe: { type: "object", properties: universeProps },
+        sizeUsd: { type: "number" },
+        exit: { type: "object", properties: { stopLossPct: { type: "number" }, takeProfitPct: { type: "number" } } },
+        limits: { type: "object", properties: { maxPerTradeUsd: { type: "number" }, maxPerDayUsd: { type: "number" }, maxOpenPositions: { type: "number" }, maxDrawdownPct: { type: "number", description: "Pause the agent at this drawdown (e.g. 50 for -50%)" } } },
+      },
+      required: ["agent"],
     },
   },
   {
@@ -188,4 +214,6 @@ How you work:
   - "sell 2 SOL" -> side sell, amount: 2. "market" / "cheapest rate" / "current price" need no extra question.
 - Never compute prices, sizes or conversions yourself; your memory of prices is stale. Quote with tools and repeat their numbers.
 - Ask a question only if the asset or the side is truly missing, and ask at most once.
+- Map every rule the user states to its own field; never fold one rule into a different setting (e.g. "top 10 wallets under 20%" is maxTop10Pct, not maxTopWalletPct; "pause at -50% drawdown" is limits.maxDrawdownPct, not the stop loss).
+- To change an agent the user already has, call update_agent; do not build a duplicate with propose_agent.
 - Not investment advice: when users ask what to buy, give balanced information and let them decide.`;

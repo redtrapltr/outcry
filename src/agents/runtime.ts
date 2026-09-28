@@ -121,8 +121,35 @@ export class AgentRuntime {
   /** Apply edits from the builder panel (sliders, toggles) and re-test. */
   revise(userId: string, agentId: string, patch: Partial<AgentSpec>) {
     const a = this.mustOwn(userId, agentId);
-    if (a.state !== "draft" && a.state !== "backtested" && a.state !== "paused") throw new Error(`Pause ${a.spec.name} before editing it`);
-    const next = AgentSpec.parse({ ...a.spec, ...patch, limits: { ...a.spec.limits, ...(patch.limits ?? {}) }, exit: { ...a.spec.exit, ...(patch.exit ?? {}) } });
+    if (a.state === "killed") throw new Error(`${a.spec.name} was killed; build a new agent instead`);
+    const next = AgentSpec.parse({
+      ...a.spec,
+      ...patch,
+      limits: { ...a.spec.limits, ...(patch.limits ?? {}) },
+      exit: { ...a.spec.exit, ...(patch.exit ?? {}) },
+      universe: a.spec.universe || patch.universe ? { ...(a.spec.universe ?? {}), ...(patch.universe ?? {}) } : undefined,
+      mode: a.spec.mode,
+    });
+    if (next.sizeUsd > next.limits.maxPerTradeUsd) next.limits.maxPerTradeUsd = next.sizeUsd;
+
+    if (a.state === "paper" || a.state === "live" || a.state === "paused") {
+      // Running agent: apply the new version in place, keep its wallet, funds and positions.
+      a.spec = next;
+      a.version += 1;
+      if (next.kind === "sniper") {
+        const replay = this.replayUniverse(a);
+        a.lastBacktest = { at: nowIso(), summary: `Replayed ${replay.scanned} recent launches: ${replay.matched} would have passed the filters.`, passed: true };
+        this.d.audit.append(`user:${userId}`, "agent.revised", { agentId, version: a.version, spec: next });
+        this.activity(a, `${a.spec.name} updated to v${a.version}`);
+        this.publishState(a);
+        return { agent: a, replay, backtest: undefined as BacktestReport | undefined };
+      }
+      this.d.audit.append(`user:${userId}`, "agent.revised", { agentId, version: a.version, spec: next });
+      this.publishState(a);
+      return { agent: a, replay: undefined as SniperReplay | undefined, backtest: undefined as BacktestReport | undefined };
+    }
+
+    // Draft: re-test from scratch under the same id.
     this.agents.delete(agentId);
     const res = this.propose(userId, next);
     res.agent.version = a.version + 1;
@@ -130,6 +157,15 @@ export class AgentRuntime {
     res.agent.id = agentId;
     this.agents.set(agentId, res.agent);
     return res;
+  }
+
+  /** Delete an agent: kills it first if it holds funds, then removes it from the list. */
+  remove(userId: string, agentId: string) {
+    const a = this.mustOwn(userId, agentId);
+    if (a.state !== "killed" && a.state !== "draft" && a.state !== "backtested") this.control(userId, agentId, "kill");
+    this.agents.delete(agentId);
+    this.d.audit.append(`user:${userId}`, "agent.deleted", { agentId });
+    this.d.bus.publish({ type: "agent.state", userId, agentId, state: "deleted" });
   }
 
   private replayUniverse(agent: Agent): SniperReplay {
@@ -154,6 +190,7 @@ export class AgentRuntime {
       return `${holders} holders${note}, needs ${u.minHolders}`;
     }
     if (risk.topWalletPct > u.maxTopWalletPct) return `top wallet holds ${risk.topWalletPct}%`;
+    if (u.maxTop10Pct !== undefined && (risk.top10Pct ?? 0) > u.maxTop10Pct) return `top 10 wallets hold ${(risk.top10Pct ?? 0).toFixed(1)}% (max ${u.maxTop10Pct}%)`;
     if (u.requireMintRevoked && !risk.mintRevoked) return "mint authority still active";
     if (!risk.freezeRevoked) return "freeze authority still active";
     return null;
@@ -309,7 +346,13 @@ export class AgentRuntime {
       seen.add(l.mint);
       const risk = this.d.market.tokenRisk(l.mint);
       if (!risk) continue;
-      if (risk.ageMinutes > 60) continue; // only new launches
+      const age = risk.ageSeconds ?? risk.ageMinutes * 60;
+      const maxAge = a.spec.universe?.maxAgeSeconds ?? 3_600;
+      if (age > maxAge) {
+        // Launches that were already old when the agent started are ignored silently.
+        if (age <= maxAge + 600) this.decision(a, "skip", { symbol: risk.symbol, reason: `launched ${Math.round(age)}s ago (max ${maxAge}s)` });
+        continue;
+      }
       // Never snipe a token the owner launched themselves.
       const reg = this.d.registry.get(risk.mint);
       if (reg && reg.creatorUserId === a.userId) {
