@@ -1,0 +1,499 @@
+/**
+ * Agent runtime.
+ *
+ * An agent is a versioned spec executed by deterministic code. The LLM
+ * designs the spec in chat; at run time no model call is involved, so
+ * decisions are cheap, reproducible and explainable from the audit log.
+ *
+ * Limits are enforced three times: here before a ticket exists, in the
+ * policy engine against running totals, and in the sub-wallet's signer
+ * policy, which only ever holds the daily cap.
+ */
+import { AuditLog, EventBus, dayKey, newId, nowIso } from "../core/infra.js";
+import { AgentSpec, type Agent, type AgentMode, type OrderTicket, type StrategyProgram } from "../core/types.js";
+import type { UserStore } from "../core/users.js";
+import type { MarketData, TokenRisk } from "../data/market.js";
+import type { TicketDesk } from "../tickets/desk.js";
+import type { Signer } from "../wallet/signer.js";
+import type { CreatorRegistry } from "../launch/service.js";
+import { backtest, summarize, type BacktestReport } from "../strategy/backtest.js";
+import { compile } from "../strategy/evaluator.js";
+
+interface AgentPosition {
+  symbol: string;
+  qty: number;
+  entryPrice: number;
+  peakPrice: number;
+  openedAt: string;
+  ticketId: string;
+}
+
+export interface AgentRuntimeDeps {
+  users: UserStore;
+  market: MarketData;
+  desk: TicketDesk;
+  signer: Signer;
+  audit: AuditLog;
+  bus: EventBus;
+  registry: CreatorRegistry;
+  /** Days of paper trading required before auto mode unlocks. */
+  paperDaysBeforeAuto: number;
+}
+
+export interface SniperReplay {
+  scanned: number;
+  matched: number;
+  skipped: { symbol: string; reason: string }[];
+}
+
+export class AgentRuntime {
+  readonly agents = new Map<string, Agent>();
+  private positions = new Map<string, AgentPosition[]>();
+  private seenTokens = new Map<string, Set<string>>();
+  private pendingTickets = new Map<string, { agentId: string; side: "buy" | "sell"; symbol: string }>();
+  private paperSince = new Map<string, number>();
+
+  constructor(private d: AgentRuntimeDeps) {}
+
+  get(id: string) {
+    return this.agents.get(id);
+  }
+
+  listForUser(userId: string) {
+    return [...this.agents.values()].filter((a) => a.userId === userId);
+  }
+
+  positionsOf(agentId: string) {
+    return this.positions.get(agentId) ?? [];
+  }
+
+  // -------------------------------------------------------------------------
+  // Design time
+  // -------------------------------------------------------------------------
+
+  /** Create a draft from a spec (usually written by the LLM) and test it. */
+  propose(userId: string, input: unknown): { agent: Agent; backtest?: BacktestReport; replay?: SniperReplay } {
+    const spec = AgentSpec.parse(input);
+    if (spec.kind === "rules" && !spec.program) throw new Error("A rules agent needs a strategy program");
+    if (spec.kind === "sniper" && !spec.universe) throw new Error("A sniper agent needs token filters");
+    if (spec.sizeUsd > spec.limits.maxPerTradeUsd) spec.limits.maxPerTradeUsd = spec.sizeUsd;
+
+    const agent: Agent = {
+      id: newId("agt"),
+      userId,
+      version: 1,
+      spec,
+      state: "draft",
+      subWalletId: "",
+      subWalletAddress: "",
+      balances: {},
+      createdAt: nowIso(),
+      stats: { spentTodayUsd: 0, dayKey: dayKey(), openPositions: 0, realizedPnlUsd: 0, peakEquityUsd: 0, equityUsd: 0 },
+    };
+    this.agents.set(agent.id, agent);
+    this.d.audit.append(`user:${userId}`, "agent.proposed", { agentId: agent.id, spec });
+
+    let report: BacktestReport | undefined;
+    let replay: SniperReplay | undefined;
+    if (spec.kind === "rules") {
+      const program: StrategyProgram = {
+        ...spec.program!,
+        exit: { any: [spec.program!.exit, { stop_loss_pct: spec.exit.stopLossPct }, { take_profit_pct: spec.exit.takeProfitPct }] },
+        size: { fixed_quote: spec.sizeUsd },
+      };
+      const candles = this.d.market.candles(program.asset, program.timeframe, 2_000);
+      report = backtest(program, candles, Math.max(spec.limits.maxPerDayUsd * 10, 1_000));
+      agent.lastBacktest = { at: nowIso(), summary: summarize(report), passed: report.full.maxDrawdownPct <= spec.limits.maxDrawdownPct };
+    } else {
+      replay = this.replayUniverse(agent);
+      agent.lastBacktest = {
+        at: nowIso(),
+        summary: `Replayed ${replay.scanned} recent launches: ${replay.matched} would have passed the filters.`,
+        passed: true,
+      };
+    }
+    agent.state = "backtested";
+    this.publishState(agent);
+    return { agent, backtest: report, replay };
+  }
+
+  /** Apply edits from the builder panel (sliders, toggles) and re-test. */
+  revise(userId: string, agentId: string, patch: Partial<AgentSpec>) {
+    const a = this.mustOwn(userId, agentId);
+    if (a.state !== "draft" && a.state !== "backtested" && a.state !== "paused") throw new Error(`Pause ${a.spec.name} before editing it`);
+    const next = AgentSpec.parse({ ...a.spec, ...patch, limits: { ...a.spec.limits, ...(patch.limits ?? {}) }, exit: { ...a.spec.exit, ...(patch.exit ?? {}) } });
+    this.agents.delete(agentId);
+    const res = this.propose(userId, next);
+    res.agent.version = a.version + 1;
+    this.agents.delete(res.agent.id);
+    res.agent.id = agentId;
+    this.agents.set(agentId, res.agent);
+    return res;
+  }
+
+  private replayUniverse(agent: Agent): SniperReplay {
+    const launches = this.d.market.recentLaunches(200);
+    const skipped: SniperReplay["skipped"] = [];
+    let matched = 0;
+    for (const l of launches) {
+      const risk = this.d.market.tokenRisk(l.mint);
+      if (!risk) continue;
+      const reason = this.filterReason(agent, risk);
+      if (reason) skipped.push({ symbol: risk.symbol, reason });
+      else matched++;
+    }
+    return { scanned: launches.length, matched, skipped: skipped.slice(0, 10) };
+  }
+
+  private filterReason(agent: Agent, risk: TokenRisk): string | null {
+    const u = agent.spec.universe!;
+    const holders = u.collapseCreatorWallets ? risk.holdersCollapsed : risk.holders;
+    if (holders < u.minHolders) {
+      const note = u.collapseCreatorWallets && risk.holders !== risk.holdersCollapsed ? ` (${risk.holders} before collapsing ${risk.creatorWallets.length} disclosed creator wallets)` : "";
+      return `${holders} holders${note}, needs ${u.minHolders}`;
+    }
+    if (risk.topWalletPct > u.maxTopWalletPct) return `top wallet holds ${risk.topWalletPct}%`;
+    if (u.requireMintRevoked && !risk.mintRevoked) return "mint authority still active";
+    if (!risk.freezeRevoked) return "freeze authority still active";
+    return null;
+  }
+
+  // -------------------------------------------------------------------------
+  // Lifecycle
+  // -------------------------------------------------------------------------
+
+  /**
+   * Deploy to paper or live. Live needs a passkey approval; auto mode needs
+   * a completed paper period or an explicit risk acknowledgement.
+   */
+  deploy(userId: string, agentId: string, opts: { mode: AgentMode; userApproval?: string; riskAcknowledged?: boolean; now?: number }) {
+    const a = this.mustOwn(userId, agentId);
+    if (!["backtested", "paper", "paused"].includes(a.state)) throw new Error(`${a.spec.name} is ${a.state}`);
+    if (a.lastBacktest && !a.lastBacktest.passed && opts.mode !== "paper") {
+      throw new Error(`${a.spec.name}'s backtest drawdown is above its own limit; paper trade it first or loosen the limit`);
+    }
+    const now = opts.now ?? Date.now();
+    if (opts.mode === "auto") {
+      const since = this.paperSince.get(agentId);
+      const paperDays = since ? (now - since) / 86_400_000 : 0;
+      if (paperDays < this.d.paperDaysBeforeAuto && !opts.riskAcknowledged) {
+        throw new Error(`Auto mode unlocks after ${this.d.paperDaysBeforeAuto} days of paper trading, or with an explicit risk acknowledgement`);
+      }
+    }
+    if (opts.mode !== "paper" && !opts.userApproval) throw new Error("Going live needs your passkey");
+
+    const user = this.d.users.get(userId);
+    const fundAsset = a.spec.kind === "sniper" ? "SOL" : "USDC";
+    const fundAmount = a.spec.limits.maxPerDayUsd / this.d.market.priceUsd(fundAsset);
+
+    if (!a.subWalletId) {
+      const venues = new Set<string>(["paper"]);
+      if (a.spec.markets.includes("memes") || a.spec.markets.includes("launch")) venues.add("pumpfun").add("jupiter");
+      if (a.spec.markets.includes("swaps") || a.spec.markets.includes("strategies")) venues.add("jupiter").add("uniswap");
+      if (a.spec.markets.includes("stocks")) venues.add("ondo").add("xstocks");
+      const w = this.d.signer.createSubWallet(userId, "agent", `agent-${a.spec.name}`, {
+        allowedVenues: [...venues],
+        maxPerTxUsd: a.spec.limits.maxPerTradeUsd * 1.02,
+        maxPerDayUsd: a.spec.limits.maxPerDayUsd * 1.02,
+        withdrawTo: user.mainWallet.solana,
+      });
+      a.subWalletId = w.id;
+      a.subWalletAddress = w.address;
+    }
+
+    if (opts.mode === "paper") {
+      // Paper agents trade virtual funds; nothing leaves the main wallet.
+      a.balances = { [fundAsset]: fundAmount };
+      a.state = "paper";
+      if (!this.paperSince.has(agentId)) this.paperSince.set(agentId, now);
+    } else {
+      // Fund the sub-wallet with one day's cap from the main wallet.
+      const have = user.balances[fundAsset] ?? 0;
+      const amt = Math.min(fundAmount, have);
+      if (amt <= 0) throw new Error(`No ${fundAsset} in your wallet to fund ${a.spec.name}`);
+      this.d.users.applyDeltas(userId, { [fundAsset]: -amt });
+      a.balances = { [fundAsset]: (a.balances[fundAsset] ?? 0) + amt };
+      a.state = "live";
+    }
+    a.spec.mode = opts.mode;
+    a.stats.equityUsd = this.equityUsd(a);
+    a.stats.peakEquityUsd = a.stats.equityUsd;
+    this.d.audit.append(`user:${userId}`, "agent.deployed", { agentId, mode: opts.mode, subWallet: a.subWalletAddress, funded: a.balances });
+    this.activity(a, `${a.spec.name} deployed in ${opts.mode} mode with ${fmtUsd(a.stats.equityUsd)} ${opts.mode === "paper" ? "(virtual)" : ""}`.trim());
+    this.publishState(a);
+    return a;
+  }
+
+  control(userId: string, agentId: string, action: "pause" | "resume" | "kill", userApproval?: string) {
+    const a = this.mustOwn(userId, agentId);
+    if (action === "pause") {
+      if (a.state === "killed") throw new Error(`${a.spec.name} is already killed`);
+      a.state = "paused";
+    } else if (action === "resume") {
+      if (a.state !== "paused") throw new Error(`${a.spec.name} is not paused`);
+      a.state = a.spec.mode === "paper" ? "paper" : "live";
+    } else {
+      // Kill: stop everything, keep positions, sweep funds back to the main wallet.
+      const wasLive = a.state === "live" || (a.state === "paused" && a.spec.mode !== "paper");
+      if (wasLive) {
+        const user = this.d.users.get(userId);
+        this.d.signer.sign({ walletId: a.subWalletId, venue: "system", usd: 0, kind: "transfer", transferTo: user.mainWallet.solana, userApproval: userApproval ?? "kill-switch", payload: { sweep: a.balances } });
+        const deltas: Record<string, number> = {};
+        for (const [k, v] of Object.entries(a.balances)) if (v > 0) deltas[k] = v;
+        this.d.users.applyDeltas(userId, deltas);
+        for (const p of this.positionsOf(agentId)) {
+          this.d.users.recordBuy(userId, p.symbol, p.qty, p.qty * p.entryPrice, a.spec.markets[0]!, `from agent ${a.spec.name}`);
+        }
+      }
+      a.balances = {};
+      this.positions.delete(agentId);
+      a.stats.openPositions = 0;
+      a.state = "killed";
+    }
+    this.d.audit.append(`user:${userId}`, `agent.${action}`, { agentId });
+    this.activity(a, `${a.spec.name} ${action === "kill" ? "killed; open positions kept, funds swept to your main wallet" : action + "d"}`);
+    this.publishState(a);
+    return a;
+  }
+
+  /** Pause every agent the user owns. */
+  panic(userId: string) {
+    for (const a of this.listForUser(userId)) if (a.state === "live" || a.state === "paper") this.control(userId, a.id, "pause");
+  }
+
+  // -------------------------------------------------------------------------
+  // Run loop
+  // -------------------------------------------------------------------------
+
+  /** One scheduler tick. Production: Temporal workflows per agent. */
+  async tick(now = Date.now()) {
+    for (const a of this.agents.values()) {
+      if (a.state !== "live" && a.state !== "paper") continue;
+      try {
+        this.reconcile(a);
+        if (a.stats.dayKey !== dayKey(new Date(now))) {
+          a.stats.dayKey = dayKey(new Date(now));
+          a.stats.spentTodayUsd = 0;
+        }
+        await this.manageExits(a);
+        if (a.spec.kind === "rules") await this.tickRules(a, now);
+        else await this.tickSniper(a);
+        this.checkDrawdown(a);
+      } catch (e) {
+        this.activity(a, `Error: ${(e as Error).message}`);
+      }
+    }
+  }
+
+  private async tickRules(a: Agent, now: number) {
+    const p = a.spec.program!;
+    if (this.positionsOf(a.id).length > 0 || this.hasPending(a.id, "buy")) return;
+    const candles = this.d.market.candles(p.asset, p.timeframe, 400, now);
+    // Evaluate on the last CLOSED candle only.
+    const closed = candles.slice(0, -1);
+    const c = compile(p, closed);
+    const i = closed.length - 1;
+    if (i < c.warmup) return;
+    if (c.entry(i)) {
+      this.decision(a, "entry", { asset: p.asset, close: closed[i]!.close });
+      await this.buy(a, p.asset, "USDC");
+    }
+  }
+
+  private async tickSniper(a: Agent) {
+    const seen = this.seenTokens.get(a.id) ?? new Set<string>();
+    this.seenTokens.set(a.id, seen);
+    const fresh = this.d.market.recentLaunches(50).filter((l) => !seen.has(l.mint));
+    for (const l of fresh) {
+      seen.add(l.mint);
+      const risk = this.d.market.tokenRisk(l.mint);
+      if (!risk) continue;
+      if (risk.ageMinutes > 60) continue; // only new launches
+      // Never snipe a token the owner launched themselves.
+      const reg = this.d.registry.get(risk.mint);
+      if (reg && reg.creatorUserId === a.userId) {
+        this.decision(a, "skip", { symbol: risk.symbol, reason: "your own launch" });
+        continue;
+      }
+      const reason = this.filterReason(a, risk);
+      if (reason) {
+        this.decision(a, "skip", { symbol: risk.symbol, reason });
+        this.activity(a, `Skipped $${risk.symbol}: ${reason}`);
+        continue;
+      }
+      this.decision(a, "entry", { symbol: risk.symbol, holders: risk.holdersCollapsed, topWalletPct: risk.topWalletPct });
+      await this.buy(a, risk.symbol, "SOL");
+    }
+  }
+
+  private async manageExits(a: Agent) {
+    const s = a.spec.exit;
+    for (const p of [...this.positionsOf(a.id)]) {
+      if (this.hasPending(a.id, "sell", p.symbol)) continue;
+      const px = this.d.market.priceUsd(p.symbol);
+      p.peakPrice = Math.max(p.peakPrice, px);
+      const chg = (px / p.entryPrice - 1) * 100;
+      let reason: string | null = null;
+      if (chg <= -s.stopLossPct) reason = `stop −${s.stopLossPct}% hit (${chg.toFixed(1)}%)`;
+      else if (chg >= s.takeProfitPct) reason = `take profit +${s.takeProfitPct}% hit (+${chg.toFixed(1)}%)`;
+      else if (a.spec.kind === "rules") {
+        const prog = a.spec.program!;
+        const candles = this.d.market.candles(prog.asset, prog.timeframe, 400).slice(0, -1);
+        const c = compile(prog, candles);
+        const i = candles.length - 1;
+        if (i >= c.warmup && c.exit(i, { entryPrice: p.entryPrice, barsHeld: 1, peakPrice: p.peakPrice })) reason = "exit rule triggered";
+      }
+      if (reason) {
+        this.decision(a, "exit", { symbol: p.symbol, reason, pnlPct: chg });
+        await this.sell(a, p, reason);
+      }
+    }
+  }
+
+  private checkDrawdown(a: Agent) {
+    a.stats.equityUsd = this.equityUsd(a);
+    a.stats.peakEquityUsd = Math.max(a.stats.peakEquityUsd, a.stats.equityUsd);
+    const dd = a.stats.peakEquityUsd > 0 ? ((a.stats.peakEquityUsd - a.stats.equityUsd) / a.stats.peakEquityUsd) * 100 : 0;
+    if (dd > a.spec.limits.maxDrawdownPct) {
+      a.state = "paused";
+      this.d.audit.append(`agent:${a.id}`, "agent.auto_paused", { drawdownPct: dd });
+      this.activity(a, `Paused: drawdown ${dd.toFixed(1)}% is over its ${a.spec.limits.maxDrawdownPct}% limit. Positions kept.`);
+      this.publishState(a);
+    }
+  }
+
+  private equityUsd(a: Agent) {
+    let v = 0;
+    for (const [k, amt] of Object.entries(a.balances)) {
+      try {
+        v += amt * this.d.market.priceUsd(k);
+      } catch {
+        /* ignore */
+      }
+    }
+    return v;
+  }
+
+  // -------------------------------------------------------------------------
+  // Orders
+  // -------------------------------------------------------------------------
+
+  private async buy(a: Agent, symbol: string, quote: "USDC" | "SOL") {
+    const lim = a.spec.limits;
+    // Check 1 of 3: the runtime's own limits, before any ticket exists.
+    if (a.stats.spentTodayUsd + a.spec.sizeUsd > lim.maxPerDayUsd + 1e-9) {
+      this.activity(a, `Skipped ${symbol}: daily limit of ${fmtUsd(lim.maxPerDayUsd)} reached`);
+      return;
+    }
+    if (this.positionsOf(a.id).length >= lim.maxOpenPositions) {
+      this.activity(a, `Skipped ${symbol}: already at ${lim.maxOpenPositions} open positions`);
+      return;
+    }
+    const amount = a.spec.sizeUsd / this.d.market.priceUsd(quote);
+    const t = await this.d.desk.proposeOrder({
+      userId: a.userId,
+      source: { type: "agent", agentId: a.id },
+      jacket: a.spec.markets[0],
+      legs: [{ side: "buy", asset: symbol, quoteAsset: quote, amount, maxSlippageBps: quote === "SOL" ? 1_000 : 100 }],
+    });
+    await this.afterPropose(a, t, "buy", symbol);
+  }
+
+  private async sell(a: Agent, p: AgentPosition, reason: string) {
+    const t = await this.d.desk.proposeOrder({
+      userId: a.userId,
+      source: { type: "agent", agentId: a.id },
+      jacket: a.spec.markets[0],
+      legs: [{ side: "sell", asset: p.symbol, quoteAsset: a.spec.kind === "sniper" ? "SOL" : "USDC", amount: p.qty, maxSlippageBps: a.spec.kind === "sniper" ? 1_500 : 150 }],
+    });
+    t.notes.unshift(`Exit reason: ${reason}`);
+    await this.afterPropose(a, t, "sell", p.symbol);
+  }
+
+  private async afterPropose(a: Agent, t: OrderTicket, side: "buy" | "sell", symbol: string) {
+    if (t.status === "rejected") {
+      this.activity(a, `${side.toUpperCase()} ${symbol} rejected: ${t.rejection}`);
+      return;
+    }
+    this.pendingTickets.set(t.id, { agentId: a.id, side, symbol });
+    if (a.spec.mode === "ask") {
+      this.activity(a, `Proposed ${side.toUpperCase()} ${symbol} for ${fmtUsd(t.totalUsd)}: waiting for your tap (ticket ${t.id})`);
+      return;
+    }
+    await this.d.desk.approve(t.id, { secondConfirmation: true });
+    this.reconcile(a);
+  }
+
+  private hasPending(agentId: string, side: "buy" | "sell", symbol?: string) {
+    for (const [id, p] of this.pendingTickets) {
+      if (p.agentId !== agentId || p.side !== side || (symbol && p.symbol !== symbol)) continue;
+      const t = this.d.desk.get(id);
+      if (["needs_confirmation", "needs_second_confirmation", "approved", "submitted"].includes(t.status)) return true;
+    }
+    return false;
+  }
+
+  /** Fold filled or failed agent tickets into positions and stats. */
+  private reconcile(a: Agent) {
+    for (const [id, p] of [...this.pendingTickets]) {
+      if (p.agentId !== a.id) continue;
+      const t = this.d.desk.get(id) as OrderTicket;
+      if (t.status === "filled") {
+        const fill = t.fills[0]!;
+        const leg = t.legs[0]!;
+        if (p.side === "buy") {
+          const price = this.d.market.priceUsd(leg.quoteAsset) * (fill.amountIn / fill.amountOut);
+          const list = this.positions.get(a.id) ?? [];
+          list.push({ symbol: p.symbol, qty: fill.amountOut, entryPrice: price, peakPrice: price, openedAt: fill.at, ticketId: id });
+          this.positions.set(a.id, list);
+          a.stats.spentTodayUsd += t.totalUsd;
+          this.activity(a, `${a.spec.mode === "paper" ? "PAPER · " : ""}BUY ${p.symbol} ${fmtUsd(t.totalUsd)} filled`);
+        } else {
+          const list = this.positions.get(a.id) ?? [];
+          const idx = list.findIndex((x) => x.symbol === p.symbol);
+          if (idx >= 0) {
+            const pos = list[idx]!;
+            const proceedsUsd = fill.amountOut * this.d.market.priceUsd(leg.quoteAsset);
+            const pnl = proceedsUsd - pos.qty * pos.entryPrice;
+            a.stats.realizedPnlUsd += pnl;
+            list.splice(idx, 1);
+            this.activity(a, `${a.spec.mode === "paper" ? "PAPER · " : ""}SELL ${p.symbol} filled, P&L ${pnl >= 0 ? "+" : ""}${fmtUsd(pnl)}`);
+          }
+        }
+        a.stats.openPositions = this.positionsOf(a.id).length;
+        this.pendingTickets.delete(id);
+        this.d.audit.append(`agent:${a.id}`, "agent.fill", { ticketId: id, side: p.side, symbol: p.symbol });
+      } else if (["failed", "rejected", "cancelled"].includes(t.status)) {
+        this.activity(a, `${p.side.toUpperCase()} ${p.symbol} ${t.status}${t.rejection ? `: ${t.rejection}` : ""}`);
+        this.pendingTickets.delete(id);
+      }
+    }
+  }
+
+  /** Answer "why did X buy Y?" from the audit log, not from memory. */
+  explain(agentId: string, limit = 10) {
+    return this.d.audit.query((e) => e.actor === `agent:${agentId}` && e.action.startsWith("agent.decision"), limit);
+  }
+
+  // -------------------------------------------------------------------------
+
+  private decision(a: Agent, kind: "entry" | "exit" | "skip", data: Record<string, unknown>) {
+    this.d.audit.append(`agent:${a.id}`, `agent.decision.${kind}`, { version: a.version, ...data });
+  }
+
+  private activity(a: Agent, message: string) {
+    this.d.bus.publish({ type: "agent.activity", userId: a.userId, agentId: a.id, message });
+  }
+
+  private publishState(a: Agent) {
+    this.d.bus.publish({ type: "agent.state", userId: a.userId, agentId: a.id, state: a.state });
+  }
+
+  private mustOwn(userId: string, agentId: string) {
+    const a = this.agents.get(agentId);
+    if (!a || a.userId !== userId) throw new Error("Agent not found");
+    return a;
+  }
+}
+
+const fmtUsd = (n: number) => `${n < 0 ? "-" : ""}$${Math.abs(n).toFixed(2)}`;
