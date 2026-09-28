@@ -469,7 +469,7 @@ async function agentCard(card) {
   };
   const summaryHtml = () => {
     const s = a.spec; const trades = Math.max(1, Math.floor(s.limits.maxPerDayUsd / s.sizeUsd));
-    return `<b>${esc(s.name)}</b> risks <b>$${s.sizeUsd}</b> per trade and stops for the day after <b>$${s.limits.maxPerDayUsd}</b> (about ${trades} trade${trades > 1 ? 's' : ''}). Exits at <b>−${s.exit.stopLossPct}%</b> or <b>+${s.exit.takeProfitPct}%</b>; pauses itself at −${s.limits.maxDrawdownPct}% drawdown.<br><span class="meta">${esc(a.lastBacktest?.summary || '')}</span>`;
+    return `<b>${esc(s.name)}</b> risks <b>$${s.sizeUsd}</b> per trade and stops for the day after <b>$${s.limits.maxPerDayUsd}</b> (about ${trades} trade${trades > 1 ? 's' : ''}). Holds up to <b>${s.limits.maxOpenPositions}</b> position${s.limits.maxOpenPositions > 1 ? 's' : ''} at once. Exits at <b>−${s.exit.stopLossPct}%</b> or <b>+${s.exit.takeProfitPct}%</b>; pauses itself at −${s.limits.maxDrawdownPct}% drawdown.<br><span class="meta">${esc(a.lastBacktest?.summary || '')}</span>`;
   };
   const drawAdjust = () => {
     const s = a.spec;
@@ -478,12 +478,15 @@ async function agentCard(card) {
       <div class="ctl"><div class="ctl-top"><label for="cp-${a.id}">Max spend per day</label><output class="o-cp">$${s.limits.maxPerDayUsd}</output></div><input type="range" id="cp-${a.id}" class="r-cp" min="10" max="5000" step="10" value="${s.limits.maxPerDayUsd}"></div>
       <div class="ctl"><div class="ctl-top"><label for="sl-${a.id}">Stop-loss</label><output class="o-sl">−${s.exit.stopLossPct}%</output></div><input type="range" id="sl-${a.id}" class="r-sl" min="3" max="90" step="1" value="${s.exit.stopLossPct}"></div>
       <div class="ctl"><div class="ctl-top"><label for="dd-${a.id}">Pause at drawdown</label><output class="o-dd">−${s.limits.maxDrawdownPct}%</output></div><input type="range" id="dd-${a.id}" class="r-dd" min="5" max="90" step="1" value="${s.limits.maxDrawdownPct}"></div>
+      <div class="ctl"><div class="ctl-top"><label for="mp-${a.id}">Max open positions</label><output class="o-mp">${s.limits.maxOpenPositions}</output></div><input type="range" id="mp-${a.id}" class="r-mp" min="1" max="50" step="1" value="${s.limits.maxOpenPositions}"></div>
       <div class="ctl"><div class="ctl-top"><label for="tp-${a.id}">Take profit</label><output class="o-tp">+${s.exit.takeProfitPct}%</output></div><input type="range" id="tp-${a.id}" class="r-tp" min="5" max="400" step="5" value="${s.exit.takeProfitPct}"></div>
       <div class="summary wide sumtxt">${summaryHtml()}</div>
       <label class="check wide"><input type="checkbox" class="ack"> I understand auto mode trades without asking me, inside these limits.</label>
       <div class="actions wide"><button class="btn btn-primary" type="button" data-mode="paper">Deploy · paper</button><button class="btn" type="button" data-mode="ask">Deploy · ask me</button><button class="btn" type="button" data-mode="auto">Deploy · auto</button></div>
     </div>`;
     const sz = q('.r-sz'), cp = q('.r-cp'), sl = q('.r-sl'), tp = q('.r-tp'), dd = q('.r-dd');
+    const mp = q('.r-mp');
+    mp.oninput = () => { q('.o-mp').textContent = mp.value; patch({ limits: { maxOpenPositions: +mp.value } }, 'risk'); };
     dd.oninput = () => { q('.o-dd').textContent = '−' + dd.value + '%'; patch({ limits: { maxDrawdownPct: +dd.value } }, 'risk'); };
     sz.oninput = () => { q('.o-sz').textContent = '$' + sz.value; patch({ sizeUsd: +sz.value, limits: { maxPerTradeUsd: +sz.value } }, 'risk'); };
     cp.oninput = () => { q('.o-cp').textContent = '$' + cp.value; patch({ limits: { maxPerDayUsd: +cp.value } }, 'risk'); };
