@@ -140,6 +140,8 @@ export function parseAgent(t: string) {
     }
     const top10 = s.match(/top\s*10[^%]*?(\d+(?:\.\d+)?)\s*%/);
     if (top10) universe.maxTop10Pct = Number(top10[1]);
+    const pos = s.match(/(\d{1,2})\s*(?:open\s+)?(?:positions|tokens at once|holdings)/);
+    if (pos) base.limits.maxOpenPositions = Math.min(50, Math.max(1, Number(pos[1])));
     const dd = s.match(/(?:pause|stop)[^%]*?-?\s*(\d+(?:\.\d+)?)\s*%\s*drawdown|drawdown[^%\d]*-?\s*(\d+(?:\.\d+)?)\s*%/);
     if (dd) base.limits.maxDrawdownPct = Number(dd[1] ?? dd[2]);
     return { ...base, markets: ["memes"], kind: "sniper", universe };
