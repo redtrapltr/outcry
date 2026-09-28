@@ -43,8 +43,20 @@ export async function buildServer(opts: ServerOptions = {}) {
     return h.startsWith("Bearer ") ? h.slice(7) : (query as Record<string, string> | undefined)?.token;
   };
 
+  // Basic abuse guard for public deployments: session creation per IP per hour.
+  const sessionsByIp = new Map<string, { hour: number; n: number }>();
+  const maxSessionsPerHour = Number(process.env.OUTCRY_MAX_SESSIONS_PER_IP_HOUR ?? 30);
+
   f.all("/api/*", async (req, reply) => {
     const url = req.url.split("?")[0]!;
+    if (req.method === "POST" && url === "/api/session") {
+      const ip = String(req.headers["x-forwarded-for"] ?? req.ip).split(",")[0]!.trim();
+      const hour = Math.floor(Date.now() / 3_600_000);
+      const e = sessionsByIp.get(ip);
+      const n = e && e.hour === hour ? e.n + 1 : 1;
+      sessionsByIp.set(ip, { hour, n });
+      if (n > maxSessionsPerHour) return reply.code(429).send({ error: "Too many new sessions from this address; try again later" });
+    }
     const res = await api.handle(req.method, url, tokenOf(req.headers, req.query), req.body);
     return reply.code(res.status).send(res.json);
   });

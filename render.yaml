@@ -1,0 +1,31 @@
+# Render Blueprint: one-click deploy of the Outcry server (API + web app).
+# Render dashboard -> New -> Blueprint -> pick redtrapltr/outcry.
+services:
+  - type: web
+    name: outcry
+    runtime: node
+    plan: free            # free instances sleep when idle; in-memory state resets on restart
+    region: frankfurt
+    buildCommand: npm ci && npm run build:web
+    startCommand: npm start
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      - key: PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
+        value: "1"
+      - key: OUTCRY_MODE
+        value: paper
+      - key: OUTCRY_SIM_LAUNCH_MS
+        value: "15000"
+      # AI spend caps (USD per UTC day). Over the cap, chat falls back to the offline engine.
+      - key: OUTCRY_MAX_AI_USD_PER_USER
+        value: "0.50"
+      - key: OUTCRY_MAX_AI_USD_PER_DAY
+        value: "10"
+      # Set in the dashboard. One Anthropic key is enough: Opus 5.5 for T2, Haiku 4.5 for T0/T1.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: OPENROUTER_API_KEY
+        sync: false

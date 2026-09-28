@@ -22,17 +22,51 @@ export interface RouteDecision {
   reason: string;
 }
 
+/** Used for T0/T1 when only an Anthropic key is configured. */
+export const HAIKU: TierConfig = {
+  provider: "anthropic",
+  model: "claude-haiku-4-5-20251001",
+  price: { input: 1, cachedInput: 0.1, cacheWrite: 1.25, output: 5 },
+  maxTokens: 1_500,
+  thinkingBudget: 0,
+};
+
+export interface Budgets {
+  /** Max model spend per user per UTC day before falling back to offline. */
+  perUserDailyUsd: number;
+  /** Max model spend for the whole deployment per UTC day. */
+  globalDailyUsd: number;
+}
+
 export interface RouterOptions {
   providers: Record<string, ModelProvider>;
   tiers?: Record<Tier, TierConfig>;
+  budgets?: Budgets;
 }
 
 export class ModelRouter {
   readonly tiers: Record<Tier, TierConfig>;
   private spend = new Map<string, { usd: number; turns: number; byTier: Record<Tier, number> }>();
+  private daily = new Map<string, number>(); // `${day}:${userId}` and `${day}:*`
+  readonly budgets: Budgets;
 
   constructor(private opts: RouterOptions) {
     this.tiers = opts.tiers ?? DEFAULT_TIERS;
+    this.budgets = opts.budgets ?? { perUserDailyUsd: Infinity, globalDailyUsd: Infinity };
+  }
+
+  private day() {
+    return new Date().toISOString().slice(0, 10);
+  }
+
+  /** True when this user (or the deployment) has used up today's AI budget. */
+  overBudget(userId: string): boolean {
+    const d = this.day();
+    return (this.daily.get(`${d}:${userId}`) ?? 0) >= this.budgets.perUserDailyUsd || (this.daily.get(`${d}:*`) ?? 0) >= this.budgets.globalDailyUsd;
+  }
+
+  get offlineProvider(): ModelProvider {
+    return this.opts.providers.offline ?? new OfflineProvider();
   }
 
   /** Build providers from environment variables; falls back to offline. */
@@ -42,13 +76,23 @@ export class ModelRouter {
     if (env.OPENROUTER_API_KEY) providers.openrouter = new OpenAICompatProvider("openrouter", env.OPENROUTER_API_KEY, env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1");
     if (env.LLM_GATEWAY_URL && env.LLM_GATEWAY_KEY) providers.gateway = new OpenAICompatProvider("gateway", env.LLM_GATEWAY_KEY, env.LLM_GATEWAY_URL);
     const tiers = structuredClone(DEFAULT_TIERS);
+    // One key is enough: with only Anthropic configured, Haiku 4.5 runs T0/T1.
+    if (providers.anthropic && !providers.openrouter && !providers.gateway) {
+      tiers.T0 = { ...HAIKU, maxTokens: 400 };
+      tiers.T1 = { ...HAIKU };
+      tiers.T2 = { ...tiers.T2, fallback: { provider: "anthropic", model: HAIKU.model } };
+    }
     for (const t of ["T0", "T1", "T2"] as Tier[]) {
       const m = env[`OUTCRY_${t}_MODEL`];
       const p = env[`OUTCRY_${t}_PROVIDER`];
       if (m) tiers[t].model = m;
       if (p) tiers[t].provider = p;
     }
-    return new ModelRouter({ providers, tiers });
+    const budgets = {
+      perUserDailyUsd: Number(env.OUTCRY_MAX_AI_USD_PER_USER ?? 0.5),
+      globalDailyUsd: Number(env.OUTCRY_MAX_AI_USD_PER_DAY ?? 10),
+    };
+    return new ModelRouter({ providers, tiers, budgets });
   }
 
   route(text: string, opts: { orderUsdEstimate?: number; escalateAboveUsd: number; previousFailures?: number }): RouteDecision {
@@ -74,6 +118,20 @@ export class ModelRouter {
     }
   }
 
+  /** The fallback chain for a tier: primary, then its fallback, then offline. */
+  chainFor(tier: Tier): { provider: ModelProvider; model: string; tierCfg: TierConfig; offline: boolean }[] {
+    const cfg = this.tiers[tier];
+    const out: { provider: ModelProvider; model: string; tierCfg: TierConfig; offline: boolean }[] = [];
+    const p = this.opts.providers[cfg.provider];
+    if (p) out.push({ provider: p, model: cfg.model, tierCfg: cfg, offline: false });
+    if (cfg.fallback) {
+      const f = this.opts.providers[cfg.fallback.provider];
+      if (f) out.push({ provider: f, model: cfg.fallback.model, tierCfg: cfg, offline: false });
+    }
+    out.push({ provider: this.offlineProvider, model: "offline", tierCfg: cfg, offline: true });
+    return out;
+  }
+
   /** Provider for a tier, falling back to its fallback and then offline. */
   providerFor(tier: Tier): { provider: ModelProvider; model: string; tierCfg: TierConfig; offline: boolean } {
     const cfg = this.tiers[tier];
@@ -93,6 +151,9 @@ export class ModelRouter {
     s.turns += 1;
     s.byTier[tier] += cost;
     this.spend.set(userId, s);
+    const d = this.day();
+    this.daily.set(`${d}:${userId}`, (this.daily.get(`${d}:${userId}`) ?? 0) + cost);
+    this.daily.set(`${d}:*`, (this.daily.get(`${d}:*`) ?? 0) + cost);
     return cost;
   }
 

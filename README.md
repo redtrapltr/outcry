@@ -8,12 +8,28 @@ This repository is the first working build of the architecture doc (*Outcry — 
 
 ```bash
 npm install
-npm test            # 35 tests: policy, signer, tickets, launches, agents, strategy engine, orchestrator, API
+npm test            # 39 tests: policy, signer, tickets, launches, agents, strategy engine, orchestrator, API
 npm run demo        # scripted session in the terminal (launch, order, backtest, agent, refusal)
 npm start           # API + terminal UI on http://localhost:8787
 ```
 
 The UI needs no API key: without one, an offline intent engine stands in for the models. To use real models, copy `.env.example` to `.env` and set the keys.
+
+## Deploy on Render (public link with real AI)
+
+1. Render dashboard → **New → Blueprint** → select `redtrapltr/outcry`. Render reads `render.yaml`.
+2. When asked, paste your **`ANTHROPIC_API_KEY`**. That one key is enough: Opus 5.5 handles agents and strategies, and Haiku 4.5 handles orders and launches. `OPENROUTER_API_KEY` is optional.
+3. Deploy. The site is served at `https://outcry-xxxx.onrender.com`: the landing page at `/`, the terminal at `/terminal.html`.
+
+Safety rails for a public link:
+- **AI spend caps.** `OUTCRY_MAX_AI_USD_PER_USER` ($0.50/day) and `OUTCRY_MAX_AI_USD_PER_DAY` ($10/day). Over a cap, the chat keeps working on the offline engine.
+- **Session limit.** At most 30 new sessions per IP per hour.
+- **Model errors.** If the model API fails (bad key, outage, rate limit), the chat falls back to the next model, then to the offline engine.
+- **Free plan limits.** Free instances sleep when idle, and in-memory state (wallets, agents) resets on restart. Use a paid instance plus Postgres before real users.
+
+## Static demo (no server)
+
+`web/` also runs on its own: `terminal.html` loads `outcry-local.js` (built with `npm run build:web`), which is the whole engine in the browser with the offline intent engine. Any static host works (Netlify, GitHub Pages).
 
 ## What's built
 
