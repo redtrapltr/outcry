@@ -94,6 +94,9 @@ export function evaluateOrder(t: OrderTicket, ctx: OrderContext, market: MarketD
   if (ctx.agent) {
     const a = ctx.agent;
     const lim = a.spec.limits;
+    const exitOnly = t.legs.every((l) => l.side === "sell");
+    // Exits reduce risk: they must go through even when paused, killed-in-progress or over the spend caps.
+    if (exitOnly) return { decision: "allow", warnings, notes };
     if (a.state !== "live" && a.state !== "paper") {
       return { decision: "reject", reason: `Agent ${a.spec.name} is ${a.state}` };
     }

@@ -37,6 +37,8 @@ export interface SignRequest {
   venue: string;
   usd: number;
   kind: "trade" | "transfer" | "create";
+  /** Trades only. Sells close positions inside the same sub-wallet, so spend caps don't apply to them. */
+  side?: "buy" | "sell";
   transferTo?: string;
   /** Proof the user approved: a passkey assertion id in production. */
   userApproval?: string;
@@ -137,7 +139,7 @@ export class SimulatedTurnkeySigner implements Signer {
       } else if (!p.allowedVenues.includes(req.venue)) {
         throw new PolicyDenied(`venue ${req.venue} not allowed for ${w.label}`);
       }
-      if (req.kind !== "transfer") {
+      if (req.kind !== "transfer" && req.side !== "sell") {
         if (req.usd > p.maxPerTxUsd + 1e-9) throw new PolicyDenied(`over per-transaction cap (${p.maxPerTxUsd} USD)`);
         const today = dayKey();
         if (w.spentToday.day !== today) w.spentToday = { day: today, usd: 0 };
