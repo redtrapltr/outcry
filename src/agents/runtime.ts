@@ -52,6 +52,7 @@ export class AgentRuntime {
   private seenTokens = new Map<string, Set<string>>();
   private pendingTickets = new Map<string, { agentId: string; side: "buy" | "sell"; symbol: string }>();
   private paperSince = new Map<string, number>();
+  private limitNotified = new Map<string, string>();
 
   constructor(private d: AgentRuntimeDeps) {}
 
@@ -381,11 +382,18 @@ export class AgentRuntime {
   private async buy(a: Agent, symbol: string, quote: "USDC" | "SOL") {
     const lim = a.spec.limits;
     // Check 1 of 3: the runtime's own limits, before any ticket exists.
-    if (a.stats.spentTodayUsd + a.spec.sizeUsd > lim.maxPerDayUsd + 1e-9) {
-      this.activity(a, `Skipped ${symbol}: daily limit of ${fmtUsd(lim.maxPerDayUsd)} reached`);
+    // Proposals still waiting for the user's tap count against the cap too.
+    const pendingUsd = [...this.pendingTickets].filter(([id, p]) => p.agentId === a.id && p.side === "buy" && ["needs_confirmation", "needs_second_confirmation", "approved", "submitted"].includes(this.d.desk.get(id).status)).reduce((s, [id]) => s + (this.d.desk.get(id) as OrderTicket).totalUsd, 0);
+    if (a.stats.spentTodayUsd + pendingUsd + a.spec.sizeUsd > lim.maxPerDayUsd + 1e-9) {
+      this.decision(a, "skip", { symbol, reason: "daily limit reached" });
+      if (this.limitNotified.get(a.id) !== a.stats.dayKey) {
+        this.limitNotified.set(a.id, a.stats.dayKey);
+        this.activity(a, `${a.spec.name} hit its daily limit of ${fmtUsd(lim.maxPerDayUsd)}; it resumes tomorrow`);
+      }
       return;
     }
-    if (this.positionsOf(a.id).length >= lim.maxOpenPositions) {
+    const pendingBuys = [...this.pendingTickets].filter(([id, p]) => p.agentId === a.id && p.side === "buy" && ["needs_confirmation", "needs_second_confirmation"].includes(this.d.desk.get(id).status)).length;
+    if (this.positionsOf(a.id).length + pendingBuys >= lim.maxOpenPositions) {
       this.activity(a, `Skipped ${symbol}: already at ${lim.maxOpenPositions} open positions`);
       return;
     }
@@ -417,7 +425,8 @@ export class AgentRuntime {
     }
     this.pendingTickets.set(t.id, { agentId: a.id, side, symbol });
     if (a.spec.mode === "ask") {
-      this.activity(a, `Proposed ${side.toUpperCase()} ${symbol} for ${fmtUsd(t.totalUsd)}: waiting for your tap (ticket ${t.id})`);
+      this.activity(a, `Proposed ${side.toUpperCase()} ${symbol} for ${fmtUsd(t.totalUsd)}: waiting for your tap`);
+      this.d.bus.publish({ type: "agent.proposal", userId: a.userId, agentId: a.id, ticketId: t.id });
       return;
     }
     await this.d.desk.approve(t.id, { secondConfirmation: true });

@@ -17,6 +17,7 @@ export type OutcryEvent =
   | { type: "fill"; userId: string; ticketId: string; summary: string }
   | { type: "agent.activity"; userId: string; agentId: string; message: string }
   | { type: "agent.state"; userId: string; agentId: string; state: string }
+  | { type: "agent.proposal"; userId: string; agentId: string; ticketId: string }
   | { type: "balances"; userId: string; balances: Record<string, number> };
 
 export class EventBus {

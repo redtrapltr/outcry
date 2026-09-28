@@ -201,9 +201,14 @@ export class ToolExecutor {
         case "explain_agent": {
           const a = this.findAgent(userId, String(i.agent ?? ""));
           if (!a) return { ok: false, result: { error: "No matching agent" } };
-          const log = app.agents.explain(a.id, 8).map((e) => ({ at: e.at, action: e.action.replace("agent.decision.", ""), ...(e.data as object) }));
-          const lines = log.map((e) => `${e.at.slice(11, 19)} ${e.action}: ${JSON.stringify(e).slice(0, 120)}`);
-          return { ok: true, result: { summary: log.length ? `${a.spec.name}'s last decisions, from the audit log:\n${lines.join("\n")}` : `${a.spec.name} hasn't made any decisions yet.`, decisions: log } };
+          const log = app.agents.explain(a.id, 8).map((e) => ({ at: e.at, action: e.action.replace("agent.decision.", ""), ...(e.data as Record<string, unknown>) }));
+          const line = (e: Record<string, unknown>) => {
+            const t = String(e.at).slice(11, 19);
+            if (e.action === "entry") return `${t} entry signal on ${e.symbol ?? e.asset}${e.holders ? ` (${e.holders} holders, top wallet ${e.topWalletPct}%)` : e.close ? ` at ${Number(e.close).toFixed(2)}` : ""}`;
+            if (e.action === "exit") return `${t} sold ${e.symbol}: ${e.reason}`;
+            return `${t} skipped ${e.symbol}: ${e.reason}`;
+          };
+          return { ok: true, result: { summary: log.length ? `${a.spec.name}'s last decisions, from the audit log:\n${log.map(line).join("\n")}` : `${a.spec.name} hasn't made any decisions yet.`, decisions: log } };
         }
         default:
           return { ok: false, validationError: true, result: { error: `Unknown tool ${name}` } };
