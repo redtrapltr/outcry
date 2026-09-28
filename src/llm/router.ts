@@ -72,6 +72,9 @@ export class ModelRouter {
   /** Build providers from environment variables; falls back to offline. */
   static fromEnv(env: NodeJS.ProcessEnv = process.env): ModelRouter {
     const providers: Record<string, ModelProvider> = { offline: new OfflineProvider() };
+    // Treat blank or placeholder values ("none", "-") as unset.
+    const key = (v: string | undefined) => (v && v.trim().length >= 10 ? v.trim() : undefined);
+    env = { ...env, ANTHROPIC_API_KEY: key(env.ANTHROPIC_API_KEY), OPENROUTER_API_KEY: key(env.OPENROUTER_API_KEY), LLM_GATEWAY_KEY: key(env.LLM_GATEWAY_KEY) };
     if (env.ANTHROPIC_API_KEY) providers.anthropic = new AnthropicProvider(env.ANTHROPIC_API_KEY);
     if (env.OPENROUTER_API_KEY) providers.openrouter = new OpenAICompatProvider("openrouter", env.OPENROUTER_API_KEY, env.OPENROUTER_BASE_URL ?? "https://openrouter.ai/api/v1");
     if (env.LLM_GATEWAY_URL && env.LLM_GATEWAY_KEY) providers.gateway = new OpenAICompatProvider("gateway", env.LLM_GATEWAY_KEY, env.LLM_GATEWAY_URL);

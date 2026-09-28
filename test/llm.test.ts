@@ -95,5 +95,7 @@ describe("Claude integration (mocked API)", () => {
     expect(router.providerFor("T1").model).toBe("claude-haiku-4-5-20251001");
     expect(router.providerFor("T2").model).toBe("claude-opus-5-5");
     expect(router.budgets.perUserDailyUsd).toBe(0.5);
+    const withPlaceholder = ModelRouter.fromEnv({ ANTHROPIC_API_KEY: "sk-ant-xxxxxxxxxxxx", OPENROUTER_API_KEY: "none" } as NodeJS.ProcessEnv);
+    expect(withPlaceholder.providerFor("T1").model).toBe("claude-haiku-4-5-20251001");
   });
 });
