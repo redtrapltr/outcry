@@ -9,7 +9,8 @@
     "start": "tsx src/api/server.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
-    "demo": "tsx scripts/demo.ts"
+    "demo": "tsx scripts/demo.ts",
+    "build:web": "esbuild src/browser/entry.ts --bundle --format=iife --platform=browser --target=es2020 --minify --outfile=web/outcry-local.js"
   },
   "engines": {
     "node": ">=20"
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "esbuild": "^0.28.2",
     "playwright": "^1.63.0",
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
