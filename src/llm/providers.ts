@@ -41,7 +41,7 @@ export class AnthropicProvider implements ModelProvider {
     });
     if (!res.ok) throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
     const j = (await res.json()) as {
-      content: ({ type: string; text?: string; id?: string; name?: string; input?: unknown })[];
+      content: ({ type: string; text?: string; id?: string; name?: string; input?: unknown; thinking?: string; signature?: string; data?: string })[];
       stop_reason: string;
       usage: { input_tokens: number; output_tokens: number; cache_read_input_tokens?: number; cache_creation_input_tokens?: number };
       model: string;
@@ -50,7 +50,10 @@ export class AnthropicProvider implements ModelProvider {
     for (const b of j.content) {
       if (b.type === "text" && b.text) content.push({ type: "text", text: b.text });
       if (b.type === "tool_use") content.push({ type: "tool_use", id: b.id!, name: b.name!, input: b.input });
-      // thinking blocks are dropped from the stored history on purpose
+      // Thinking blocks are kept for the rest of this turn's tool loop (the API
+      // requires them back unchanged); the orchestrator drops them from history.
+      if (b.type === "thinking") content.push({ type: "thinking", thinking: b.thinking ?? "", signature: b.signature ?? "" });
+      if (b.type === "redacted_thinking") content.push({ type: "redacted_thinking", data: b.data ?? "" });
     }
     return {
       content,
@@ -78,7 +81,8 @@ export class OpenAICompatProvider implements ModelProvider {
   async chat(req: ChatRequest): Promise<ChatResponse> {
     // Map Anthropic-style blocks to OpenAI chat messages.
     const messages: Record<string, unknown>[] = [{ role: "system", content: req.system }];
-    for (const m of req.messages) {
+    for (let m of req.messages) {
+      if (Array.isArray(m.content)) m = { ...m, content: m.content.filter((b) => b.type !== "thinking" && b.type !== "redacted_thinking") };
       if (typeof m.content === "string") {
         messages.push({ role: m.role, content: m.content });
         continue;

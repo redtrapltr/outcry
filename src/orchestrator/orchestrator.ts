@@ -8,13 +8,13 @@
 import type { Outcry } from "../app.js";
 import type { ModelRouter } from "../llm/router.js";
 import { SYSTEM_PROMPT, TOOLS } from "../llm/tools.js";
-import type { ChatMessage, ContentBlock, Tier } from "../llm/types.js";
+import type { ChatMessage, ContentBlock, ModelProvider, Tier } from "../llm/types.js";
 import { ToolExecutor, type Card } from "./tools-exec.js";
 
 export interface TurnResult {
   reply: string;
   cards: Card[];
-  meta: { tier: Tier; intent: string; model: string; costUsd: number; toolCalls: string[]; escalated: boolean };
+  meta: { tier: Tier; intent: string; model: string; costUsd: number; toolCalls: string[]; escalated: boolean; notice?: string };
 }
 
 interface Session {
@@ -65,14 +65,39 @@ export class Orchestrator {
     let totalCost = 0;
 
     let route = this.router.route(text, { escalateAboveUsd: user.settings.frontierEscalationUsd, orderUsdEstimate: estimateUsd(text) });
-    let { provider, model, tierCfg, offline } = this.router.providerFor(route.tier);
+    // Candidates for this tier: primary, fallback, then the offline engine.
+    // Over budget, go straight to offline so a public link can't run up costs.
+    let notice: string | undefined;
+    const candidatesFor = (tier: Tier) => {
+      if (this.router.overBudget(userId)) {
+        notice = "Daily AI budget reached: answering with the offline engine.";
+        return this.router.chainFor(tier).filter((c) => c.offline);
+      }
+      return this.router.chainFor(tier);
+    };
+    let candidates = candidatesFor(route.tier);
+    let ci = 0;
+    let model = candidates[0]!.model;
 
     const turnMessages: ChatMessage[] = [{ role: "user", content: `${text}\n\n<context>\n${this.context(userId, s)}\n</context>` }];
     let reply = "";
 
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
-      const messages = offline ? turnMessages : [...s.history, ...turnMessages];
-      const res = await provider.chat({ model, system: SYSTEM_PROMPT, messages, tools: TOOLS, maxTokens: tierCfg.maxTokens, thinkingBudget: tierCfg.thinkingBudget });
+      let res: Awaited<ReturnType<ModelProvider["chat"]>> | undefined;
+      while (!res) {
+        const c = candidates[ci]!;
+        const messages = c.offline ? turnMessages : [...s.history, ...turnMessages];
+        try {
+          res = await c.provider.chat({ model: c.model, system: SYSTEM_PROMPT, messages, tools: TOOLS, maxTokens: c.tierCfg.maxTokens, thinkingBudget: c.tierCfg.thinkingBudget });
+          model = c.model;
+        } catch (e) {
+          // Provider down, bad model id, rate limit: try the next candidate.
+          this.app.audit.append("system", "llm.error", { model: c.model, error: String((e as Error).message).slice(0, 300) });
+          if (ci >= candidates.length - 1) throw e;
+          ci++;
+          if (candidates[ci]!.offline) notice = "The AI model is unavailable right now: answering with the offline engine.";
+        }
+      }
       totalCost += this.router.record(userId, route.tier, res.usage);
       turnMessages.push({ role: "assistant", content: res.content });
 
@@ -95,13 +120,14 @@ export class Orchestrator {
       // Escalate to the frontier tier after two validation failures.
       if (failures >= 2 && route.tier !== "T2" && !escalated) {
         route = { ...route, tier: "T2", reason: "T1 failed validation twice" };
-        ({ provider, model, tierCfg, offline } = this.router.providerFor("T2"));
+        candidates = candidatesFor("T2");
+        ci = 0;
         escalated = true;
       }
     }
     if (!reply) reply = cards.length ? "Here's what I prepared." : "I couldn't complete that. Try rephrasing with the asset and amount.";
 
-    // Store a compact history: user text + final reply (tool chatter dropped).
+    // Store a compact history: user text + final reply (tool chatter and thinking dropped).
     s.history.push({ role: "user", content: text }, { role: "assistant", content: reply });
     if (s.history.length > KEEP_MESSAGES) {
       const dropped = s.history.splice(0, s.history.length - KEEP_MESSAGES);
@@ -111,7 +137,7 @@ export class Orchestrator {
     }
 
     this.app.audit.append(`user:${userId}`, "chat.turn", { sessionId, tier: route.tier, intent: route.intent, model, toolCalls, costUsd: totalCost, escalated });
-    return { reply, cards, meta: { tier: route.tier, intent: route.intent, model, costUsd: totalCost, toolCalls, escalated } };
+    return { reply, cards, meta: { tier: route.tier, intent: route.intent, model, costUsd: totalCost, toolCalls, escalated, notice } };
   }
 }
 

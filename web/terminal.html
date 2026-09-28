@@ -513,7 +513,7 @@ async function send(text) {
     const body = addAI(`<p>${esc(r.reply)}</p>`);
     await renderCards(body, r.cards);
     const m = document.createElement('span'); m.className = 'meta';
-    m.textContent = `${r.meta.tier} · ${r.meta.model}${r.meta.escalated ? ' · escalated' : ''} · $${r.meta.costUsd.toFixed(4)}`;
+    m.textContent = `${r.meta.tier} · ${r.meta.model}${r.meta.escalated ? ' · escalated' : ''} · $${r.meta.costUsd.toFixed(4)}${r.meta.notice ? ' · ' + r.meta.notice : ''}`;
     body.appendChild(m);
     refresh();
   } catch (e) { th.parentElement.remove(); addAI(`<p>${esc(e.message)}</p>`); }
@@ -569,7 +569,8 @@ function connectEvents() {
     token = s.token;
     $('badge').textContent = s.user.badge;
     $('memberSub').textContent = 'Memes jacket · paper wallet';
-    $('tiers').innerHTML = '<span class="eyebrow">Model tiers</span>' + s.llm.map(t => `<span><b>${t.tier}</b> ${esc(t.model)}${t.live ? '' : ''}</span>`).join('');
+    $('tiers').innerHTML = '<span class="eyebrow">Model tiers</span>' + s.llm.map(t => `<span><b>${t.tier}</b> ${esc(t.model)}</span>`).join('');
+    if (mode === 'server' && s.llm.some(t => t.live)) $('modePill').textContent = 'PAPER MODE · LIVE AI · NO REAL TRANSACTIONS';
     welcome(); refresh(); connectEvents();
   } catch (e) { addAI(`<p>Could not start a session: ${esc(e.message)}</p>`); }
 })();

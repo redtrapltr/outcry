@@ -15,6 +15,9 @@ export interface ToolDef {
 
 export type ContentBlock =
   | { type: "text"; text: string }
+  /** Claude extended thinking. Must be sent back unchanged within a tool-use loop. */
+  | { type: "thinking"; thinking: string; signature: string }
+  | { type: "redacted_thinking"; data: string }
   | { type: "tool_use"; id: string; name: string; input: unknown }
   | { type: "tool_result"; tool_use_id: string; content: string; is_error?: boolean };
 
