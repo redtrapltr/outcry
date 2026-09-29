@@ -7,6 +7,7 @@ import type { Outcry } from "../app.js";
 import { Jacket } from "../core/types.js";
 import type { ModelRouter } from "../llm/router.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
+import type { AuthService, RequestMeta } from "./auth.js";
 import { blueprint } from "../orchestrator/tools-exec.js";
 
 export class HttpError extends Error {
@@ -33,15 +34,27 @@ const SessionBody = z.object({
   residence: z.string().length(2).default("CH"),
 });
 
-export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRouter, newToken: () => string) {
+export interface HandlerOptions {
+  /** Passkey accounts (server only). */
+  auth?: AuthService;
+  /** Extra fields for /api/health (e.g. persistence status). */
+  extraHealth?: () => Record<string, unknown>;
+}
+
+export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRouter, newToken: () => string, opts: HandlerOptions = {}) {
   const tokens = new Map<string, string>();
+  const auth = opts.auth;
 
   const own = <T extends { userId: string }>(x: T | undefined, uid: string, what: string): T => {
     if (!x || x.userId !== uid) throw new HttpError(404, `${what} not found`);
     return x;
   };
 
-  type Handler = (ctx: { uid: string; params: Record<string, string>; body: unknown }) => unknown | Promise<unknown>;
+  type Handler = (ctx: { uid: string; params: Record<string, string>; body: unknown; meta: RequestMeta; token?: string }) => unknown | Promise<unknown>;
+  const needAuth = () => {
+    if (!auth) throw new HttpError(501, "Accounts need the Outcry server (not available in the offline demo)");
+    return auth;
+  };
   const routes: { method: string; pattern: RegExp; keys: string[]; auth: boolean; fn: Handler }[] = [];
   const route = (method: string, path: string, fn: Handler, auth = true) => {
     const keys: string[] = [];
@@ -68,10 +81,22 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   // --- tickets ------------------------------------------------------------------
   route("GET", "/api/tickets", ({ uid }) => app.desk.listForUser(uid));
   route("GET", "/api/tickets/:id", ({ uid, params }) => own(app.desk.tickets.get(params.id!), uid, "Ticket"));
-  route("POST", "/api/tickets/:id/approve", async ({ uid, params, body }) => {
-    const b = z.object({ passkeyAssertion: z.string().min(1), secondConfirmation: z.boolean().optional(), disclosureAccepted: z.boolean().optional() }).parse(body);
+  route("POST", "/api/tickets/:id/challenge", async ({ uid, params, meta }) => {
     const t = own(app.desk.tickets.get(params.id!), uid, "Ticket");
-    // TODO(live): verify b.passkeyAssertion with WebAuthn against the user's credential and this ticket's hash.
+    return needAuth().approvalOptions(uid, t.id, JSON.stringify({ kind: t.kind, status: t.status }), meta);
+  });
+  route("POST", "/api/tickets/:id/approve", async ({ uid, params, body, meta }) => {
+    const b = z.object({ passkeyAssertion: z.string().min(1).optional(), passkeyResponse: z.unknown().optional(), secondConfirmation: z.boolean().optional(), disclosureAccepted: z.boolean().optional() }).parse(body);
+    const t = own(app.desk.tickets.get(params.id!), uid, "Ticket");
+    if (auth?.hasPasskey(uid)) {
+      // Secured account: a passkey assertion bound to this ticket is required.
+      if (!b.passkeyResponse) throw new HttpError(401, "Confirm with your passkey to sign");
+      await auth.verifyApproval(uid, t.id, b.passkeyResponse, meta);
+      b.passkeyAssertion = `webauthn:${t.id}`;
+    } else if (app.config.mode === "live") {
+      throw new HttpError(403, "Secure your account with a passkey before live trading");
+    }
+    if (!b.passkeyAssertion) throw new HttpError(400, "Approval missing");
     if (t.kind === "launch") return app.launches.approve(t.id, { userApproval: b.passkeyAssertion, disclosureAccepted: b.disclosureAccepted });
     return app.desk.approve(t.id, { userApproval: b.passkeyAssertion, secondConfirmation: b.secondConfirmation });
   });
@@ -139,6 +164,32 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     return res.strategy;
   });
 
+  // --- accounts (passkeys) ------------------------------------------------------
+  route("GET", "/api/auth/status", ({ uid }) => ({ secured: auth?.hasPasskey(uid) ?? false, passkeys: auth?.listFor(uid) ?? [], available: !!auth }));
+  route("POST", "/api/auth/register/options", ({ uid, meta }) => {
+    const u = app.users.get(uid);
+    return needAuth().registerOptions(uid, u?.badge ?? "YOU", meta);
+  });
+  route("POST", "/api/auth/register/verify", async ({ uid, body, meta }) => {
+    const b = z.object({ response: z.unknown(), label: z.string().max(40).optional() }).parse(body);
+    await needAuth().registerVerify(uid, b.response, meta, b.label);
+    app.audit.append(`user:${uid}`, "account.passkey_added", {});
+    return { ok: true, secured: true };
+  });
+  route("POST", "/api/auth/login/options", ({ meta }) => needAuth().loginOptions(meta), false);
+  route("POST", "/api/auth/login/verify", async ({ body, meta }) => {
+    const b = z.object({ loginId: z.string(), response: z.object({ id: z.string() }).passthrough() }).parse(body);
+    const userId = await needAuth().loginVerify(b.loginId, b.response, meta);
+    const token = newToken();
+    tokens.set(token, userId);
+    app.audit.append(`user:${userId}`, "account.signed_in", {});
+    return { token, user: app.users.get(userId), llm: llmStatus(router) };
+  }, false);
+  route("POST", "/api/auth/logout", ({ token }) => {
+    if (token) tokens.delete(token);
+    return { ok: true };
+  });
+
   // --- public --------------------------------------------------------------------------
   route("GET", "/api/registry", () => app.registry.all(), false);
   route("GET", "/api/registry/:mint", ({ params }) => {
@@ -146,14 +197,14 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     if (!e) throw new HttpError(404, "Not an Outcry launch");
     return e;
   }, false);
-  route("GET", "/api/health", () => ({ ok: true, mode: app.config.mode, auditIntact: app.audit.verify(), llm: llmStatus(router), recentLlmErrors: router.recentErrors }), false);
+  route("GET", "/api/health", () => ({ ok: true, mode: app.config.mode, auditIntact: app.audit.verify(), llm: llmStatus(router), recentLlmErrors: router.recentErrors, ...(opts.extraHealth?.() ?? {}) }), false);
 
   return {
     tokens,
     userFor(token: string | undefined) {
       return token ? tokens.get(token) : undefined;
     },
-    async handle(method: string, path: string, token: string | undefined, body: unknown): Promise<ApiResult> {
+    async handle(method: string, path: string, token: string | undefined, body: unknown, meta: RequestMeta = { origin: "http://localhost", rpId: "localhost" }): Promise<ApiResult> {
       const r = routes.find((x) => x.method === method && x.pattern.test(path));
       if (!r) return { status: 404, json: { error: "Not found" } };
       const m = path.match(r.pattern)!;
@@ -161,7 +212,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
       const uid = token ? tokens.get(token) : undefined;
       if (r.auth && !uid) return { status: 401, json: { error: "Sign in first" } };
       try {
-        return { status: 200, json: await r.fn({ uid: uid ?? "", params, body }) };
+        return { status: 200, json: await r.fn({ uid: uid ?? "", params, body, meta, token }) };
       } catch (e) {
         const err = e as Error & { status?: number; name?: string; issues?: { path: (string | number)[]; message: string }[] };
         if (err.name === "ZodError" && err.issues) {

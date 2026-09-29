@@ -69,6 +69,9 @@ button,input{font:inherit;color:inherit}
 .ap-name{font-size:13px;font-weight:500} .ap-val{font:12px var(--mono);text-align:right}
 .up{color:var(--up)} .down{color:var(--down)}
 @media (max-width:700px){.perf-pills{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.acct{display:flex;flex-direction:column;gap:6px;padding:10px 12px;border:1px solid var(--line);border-radius:10px}
+.acct-st{font-size:11px;color:var(--muted)} .acct-st.ok{color:var(--up)}
+.linkbtn{background:none;border:0;padding:0;color:var(--voice-text);font-size:12.5px;text-align:left;cursor:pointer;text-decoration:underline;text-underline-offset:3px}
 .agent-row{display:flex;flex-direction:column;gap:6px;padding:8px 10px;border-radius:8px}
 .agent-row .item{padding:0}
 .a-ctl{display:flex;gap:6px;flex-wrap:wrap}
@@ -200,7 +203,13 @@ input[type=range]{width:100%;accent-color:var(--voice)}
       <span class="word">OUTCRY</span>
     </a>
     <div class="member"><span class="mbadge" id="badge">…</span><div><div style="font-weight:600;font-size:14px">Floor member</div><div class="mono" style="font-size:11px;color:var(--muted)" id="memberSub">connecting…</div></div></div>
-    <button class="btn btn-primary" type="button" id="newSession">+ New session</button>
+    <div class="acct" id="acct" hidden>
+      <span class="mono acct-st" id="acctState">Guest · saved in this browser only</span>
+      <button class="btn" type="button" id="secureBtn">Secure with a passkey</button>
+      <button class="linkbtn" type="button" id="signInBtn">Sign in with a passkey</button>
+      <button class="linkbtn" type="button" id="signOutBtn" hidden>Sign out</button>
+    </div>
+    <button class="btn btn-primary" type="button" id="newSession">+ New chat</button>
     <div class="list">
       <span class="eyebrow" style="padding:0 10px 6px">Agents</span>
       <div id="agents"><div class="empty">No agents yet.</div></div>
@@ -264,6 +273,27 @@ const amt = n => Math.abs(n) >= 1000 ? fmt(n, 2) : Math.abs(n) >= 1 ? fmt(n, 4) 
 const jtag = k => { const j = J[k] || J.swaps; return `<span class="jtag" style="background:${j[1]};color:${j[2]}">${j[0].toUpperCase()}</span>`; };
 // v0: the client sends a placeholder assertion. Production: navigator.credentials.get() over the ticket hash.
 const passkey = () => 'demo-passkey-' + Date.now();
+let secured = false;
+const TOKEN_KEY = 'outcry.token';
+const store = { get: k => { try { return localStorage.getItem(k); } catch { return null; } }, set: (k, v) => { try { v == null ? localStorage.removeItem(k) : localStorage.setItem(k, v); } catch {} } };
+let wa = null;
+async function webauthn() { wa ??= await import('./webauthn.js'); return wa; }
+/** Body fields that prove approval: a real passkey on secured accounts, a tap otherwise. */
+async function approval(ticketId) {
+  if (!secured) return { passkeyAssertion: passkey() };
+  const opts = await api(`/api/tickets/${ticketId}/challenge`, { method: 'POST' });
+  const { startAuthentication } = await webauthn();
+  return { passkeyResponse: await startAuthentication({ optionsJSON: opts }) };
+}
+function drawAccount(st) {
+  if (mode !== 'server') return;
+  $('acct').hidden = false;
+  secured = !!st?.secured;
+  $('acctState').textContent = secured ? '✓ Secured with a passkey · trades need Face ID / Touch ID' : 'Guest · saved in this browser only';
+  $('acctState').className = 'mono acct-st' + (secured ? ' ok' : '');
+  $('secureBtn').hidden = secured; $('signInBtn').hidden = secured; $('signOutBtn').hidden = !secured;
+}
+async function loadAccount() { try { drawAccount(await api('/api/auth/status')); } catch { /* ignore */ } }
 
 const shown = new Set();
 let token = null, sessionId = 'main-' + Date.now().toString(36), busy = false;
@@ -361,12 +391,12 @@ function orderCard(t) {
       b.onclick = async () => {
         if (second && !b.dataset.armed) { b.dataset.armed = '1'; b.textContent = 'Tap again to sign'; return; }
         b.disabled = c.disabled = true;
-        try { const r = await api(`/api/tickets/${t.id}/approve`, { method: 'POST', body: { passkeyAssertion: passkey(), secondConfirmation: second } }); draw(r); refresh(); }
+        try { const r = await api(`/api/tickets/${t.id}/approve`, { method: 'POST', body: { ...(await approval(t.id)), secondConfirmation: second } }); draw(r); refresh(); }
         catch (e) { toast(e.message); b.disabled = c.disabled = false; }
       };
       c.onclick = async () => { try { draw(await api(`/api/tickets/${t.id}/cancel`, { method: 'POST' })); } catch (e) { toast(e.message); } };
       acts.append(b, c);
-      const n = document.createElement('span'); n.className = 'meta'; n.textContent = 'Signed with your passkey (demo)'; acts.append(n);
+      const n = document.createElement('span'); n.className = 'meta'; n.textContent = secured ? 'You confirm with your passkey' : 'Paper trade · secure your account to sign with a passkey'; acts.append(n);
     } else if (t.status === 'filled') { stamp(tk, 'FILLED'); acts.innerHTML = `<span class="meta">${t.fills.length} fill${t.fills.length > 1 ? 's' : ''} · ${esc(t.fills.map(f => f.txId).join(', '))}</span>`; }
     else if (t.status === 'failed') { stamp(tk, 'FAILED', true); acts.innerHTML = `<span class="meta" style="color:var(--down)">${esc(t.rejection || '')}</span>`; }
     else if (t.status === 'cancelled') acts.innerHTML = '<span class="meta">Cancelled. Nothing was sent.</span>';
@@ -414,7 +444,9 @@ function launchCard(t0, devShare0) {
     const labels = ['Uploading metadata with disclosure', `Creating ${n} launch wallets`, 'Funding from your main wallet', 'Bundling create + dev buys (Jito)'];
     st.innerHTML = labels.map((l, i) => `<div class="step" data-i="${i}"><span class="ck"></span><span>${esc(l)}</span></div>`).join('');
     wrap.appendChild(st); scrollDown();
-    const req = api(`/api/tickets/${t.id}/approve`, { method: 'POST', body: { passkeyAssertion: passkey(), disclosureAccepted: true } });
+    let proof;
+    try { proof = await approval(t.id); } catch (e) { toast(e.message || 'Passkey cancelled'); b.disabled = false; st.remove(); return; }
+    const req = api(`/api/tickets/${t.id}/approve`, { method: 'POST', body: { ...proof, disclosureAccepted: true } });
     for (let i = 0; i < labels.length; i++) { const s = st.querySelector(`[data-i="${i}"]`); s.classList.add('on'); await wait(450); s.classList.add('done'); s.querySelector('.ck').textContent = '✓'; }
     try {
       const done = await req;
@@ -630,6 +662,29 @@ const SUGS = [
 $('sugs').innerHTML = SUGS.map((s, i) => `<button type="button" class="sug" data-i="${i}"><span class="sq" style="background:${J[s[0]][1]}"></span>${esc(s[1])}</button>`).join('');
 $('sugs').addEventListener('click', e => { const b = e.target.closest('.sug'); if (b) send(SUGS[+b.dataset.i][1]); });
 $('form').addEventListener('submit', e => { e.preventDefault(); send($('cmd').value); });
+$('secureBtn').onclick = async () => {
+  try {
+    const { startRegistration } = await webauthn();
+    const opts = await api('/api/auth/register/options', { method: 'POST' });
+    const response = await startRegistration({ optionsJSON: opts });
+    await api('/api/auth/register/verify', { method: 'POST', body: { response, label: navigator.platform || 'Passkey' } });
+    await loadAccount();
+    feed('Account secured with a passkey'); toast('Secured. Sign in with this passkey on any device.');
+  } catch (e) { toast(e.name === 'NotAllowedError' ? 'Passkey cancelled' : e.message); }
+};
+$('signInBtn').onclick = async () => {
+  try {
+    const { startAuthentication } = await webauthn();
+    const { loginId, options } = await api('/api/auth/login/options', { method: 'POST' });
+    const response = await startAuthentication({ optionsJSON: options });
+    const s = await api('/api/auth/login/verify', { method: 'POST', body: { loginId, response } });
+    store.set(TOKEN_KEY, s.token); location.reload();
+  } catch (e) { toast(e.name === 'NotAllowedError' ? 'Passkey cancelled' : e.message); }
+};
+$('signOutBtn').onclick = async () => {
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+  store.set(TOKEN_KEY, null); location.reload();
+};
 $('newSession').onclick = () => { sessionId = 'main-' + Date.now().toString(36); log.innerHTML = ''; welcome(); $('cmd').focus(); };
 async function agentAction(id, act, name) {
   if (act === 'delete') {
@@ -789,9 +844,15 @@ function connectEvents() {
   if (mode === 'none') { addAI('<p>No backend found. Run <span class="mono">npm start</span> or build <span class="mono">outcry-local.js</span>.</p>'); return; }
   $('modePill').textContent = mode === 'local' ? 'DEMO · RUNS IN YOUR BROWSER · PAPER MODE' : 'PAPER MODE · NO REAL TRANSACTIONS';
   try {
-    const s = await api('/api/session', { method: 'POST', body: { badge: 'LOUD', jacket: 'memes', residence: 'CH' } });
-    token = s.token;
+    let s = null;
+    const saved = mode === 'server' ? store.get(TOKEN_KEY) : null;
+    if (saved) {
+      token = saved;
+      try { const me = await api('/api/me'); s = { token, user: me.user, llm: me.llm }; } catch { token = null; store.set(TOKEN_KEY, null); }
+    }
+    if (!s) { s = await api('/api/session', { method: 'POST', body: { badge: 'LOUD', jacket: 'memes', residence: 'CH' } }); token = s.token; if (mode === 'server') store.set(TOKEN_KEY, token); }
     $('badge').textContent = s.user.badge;
+    loadAccount();
     $('memberSub').textContent = 'Memes jacket · paper wallet';
     $('tiers').innerHTML = '<span class="eyebrow">Model tiers</span>' + s.llm.map(t => `<span><b>${t.tier}</b> ${esc(t.model)}</span>`).join('');
     if (mode === 'server' && s.llm.some(t => t.live)) $('modePill').textContent = 'PAPER MODE · LIVE AI · NO REAL TRANSACTIONS';
