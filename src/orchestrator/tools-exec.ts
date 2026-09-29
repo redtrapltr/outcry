@@ -99,6 +99,8 @@ export function blueprint(a: Agent): BlueprintNode[] {
 const untrusted = (o: unknown) => `<untrusted_data>${JSON.stringify(o)}</untrusted_data>`;
 
 export class ToolExecutor {
+  /** Resolves Solana mints found in tool input (set by the server when live data is on). */
+  lookup?: { ensureFrom(text: string): Promise<string[]> };
   constructor(private app: Outcry) {}
 
   wrapForModel(name: string, outcome: ToolOutcome): string {
@@ -111,6 +113,7 @@ export class ToolExecutor {
     const i = (input ?? {}) as Record<string, unknown>;
     const { app } = this;
     try {
+      if (this.lookup) await this.lookup.ensureFrom(JSON.stringify(input ?? {}));
       switch (name) {
         case "get_portfolio": {
           const data = app.users.portfolio(userId);
@@ -129,13 +132,16 @@ export class ToolExecutor {
         }
         case "get_token_risk": {
           const r = app.market.tokenRisk(String(i.token));
-          if (!r) return { ok: false, result: { error: `No pump.fun token found for ${String(i.token)}` } };
+          if (!r) return { ok: false, result: { error: `No token found for ${String(i.token)}. For tokens not launched in the last hours, ask for the mint address.` } };
+          const px = (() => { try { return app.market.priceUsd(r.mint); } catch { return undefined; } })();
+          const age = (r.ageSeconds ?? r.ageMinutes * 60);
+          const ageTxt = age < 120 ? `${Math.round(age)}s` : age < 7200 ? `${Math.round(age / 60)} min` : age < 172_800 ? `${Math.round(age / 3600)} h` : `${Math.round(age / 86_400)} days`;
           const reg = app.registry.get(r.mint);
           const flags = [!r.mintRevoked && "mint authority active", !r.freezeRevoked && "freeze authority active", r.topWalletPct > 20 && `top wallet ${r.topWalletPct}%`].filter(Boolean);
           return {
             ok: true,
             result: {
-              summary: `$${r.symbol}: ${r.holdersCollapsed} real holders${r.holders !== r.holdersCollapsed ? ` (${r.holders} addresses, ${r.creatorWallets.length} are disclosed creator wallets)` : ""}, top wallet ${r.topWalletPct}%, liquidity $${r.liquidityUsd.toLocaleString("en-US")}. ${flags.length ? "Flags: " + flags.join(", ") + "." : "No red flags in the checks I ran."}`,
+              summary: `$${r.symbol} (${r.mint}): price ${px !== undefined ? "$" + (px < 0.01 ? px.toPrecision(4) : px.toFixed(4)) + `, market cap ≈ $${Math.round(px * 1e9).toLocaleString("en-US")}` : "unknown"}, launched ${ageTxt} ago${r.top10Pct !== undefined ? `, top 10 wallets ${r.top10Pct}%` : ""}. ${r.holdersCollapsed} real holders${r.holders !== r.holdersCollapsed ? ` (${r.holders} addresses, ${r.creatorWallets.length} are disclosed creator wallets)` : ""}, top wallet ${r.topWalletPct}%, liquidity $${r.liquidityUsd.toLocaleString("en-US")}. ${flags.length ? "Flags: " + flags.join(", ") + "." : "No red flags in the checks I ran."}`,
               risk: r,
               creatorRegistry: reg ? { wallets: reg.wallets.length, devSharePct: reg.devSharePct } : null,
             },

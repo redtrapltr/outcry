@@ -89,3 +89,35 @@ describe("pump.fun live feed", () => {
     expect(entries()).toHaveLength(1);
   });
 });
+
+describe("token lookup by mint", () => {
+  it("fetches an unknown mint live and answers price / holders / top 10", async () => {
+    const { TokenLookup, findMints } = await import("../src/data/lookup.js");
+    const { ToolExecutor } = await import("../src/orchestrator/tools-exec.js");
+    const app = createOutcry({ mode: "paper" } as never);
+    const MINT = "GrXMbn56JtFngA2FgoXenJG5HeD1GhvFnjyFPWbfpump";
+    expect(findMints(`price of https://pump.fun/coin/${MINT} ?`)).toEqual([MINT]);
+    const followed: string[] = [];
+    const lookup = new TokenLookup(app.market, {
+      follow: (m) => followed.push(m),
+      fetch: async (u) => {
+        expect(u).toContain(MINT);
+        return ok([{ id: MINT, name: "Grx", symbol: "GRX", dev: "DevWallet111", launchpad: "pump.fun", holderCount: 142, usdPrice: 0.0000123, liquidity: 18_500, firstPool: { createdAt: new Date(Date.now() - 7 * 60_000).toISOString() }, audit: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, topHoldersPercentage: 23.4, devBalancePercentage: 4.1 } }]);
+      },
+    });
+    const tools = new ToolExecutor(app);
+    tools.lookup = lookup;
+    const out = await tools.run("u1", "get_token_risk", { token: MINT });
+    expect(out.ok).toBe(true);
+    const summary = String(out.result.summary);
+    expect(summary).toContain("$GRX");
+    expect(summary).toContain("142 real holders");
+    expect(summary).toContain("top 10 wallets 23.4%");
+    expect(summary).toMatch(/launched 7 min ago/);
+    expect(app.market.priceUsd(MINT)).toBeCloseTo(0.0000123, 12);
+    expect(followed).toEqual([MINT]);
+    // And it can be quoted and ordered by mint.
+    const q = await tools.run("u1", "get_quote", { side: "buy", asset: MINT, quote_asset: "USDC", amount: 20 });
+    expect(q.ok).toBe(true);
+  });
+});
