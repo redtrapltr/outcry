@@ -44,6 +44,30 @@ export interface HandlerOptions {
 export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRouter, newToken: () => string, opts: HandlerOptions = {}) {
   const tokens = new Map<string, string>();
   const auth = opts.auth;
+  /** What the user saw in each chat (text + cards), keyed `${userId}:${sessionId}`. Persisted. */
+  type Line = { role: "user" | "ai"; text: string; at: string; cards?: unknown[]; meta?: unknown };
+  const transcripts = new Map<string, Line[]>();
+  const pushLine = (key: string, line: Line) => {
+    const l = transcripts.get(key) ?? [];
+    l.push(line);
+    if (l.length > 300) l.splice(0, l.length - 300);
+    transcripts.set(key, l);
+  };
+  /** Cards are shown with their CURRENT state (a signed ticket shows as filled, a deleted agent disappears). */
+  const freshCards = (uid: string, cards: unknown[] = []) =>
+    cards.flatMap((c) => {
+      const card = c as Record<string, unknown> & { type: string };
+      if (card.type === "order" || card.type === "launch") {
+        const t = app.desk.tickets.get((card.ticket as { id: string }).id);
+        return t && t.userId === uid ? [{ ...card, ticket: t }] : [];
+      }
+      if (card.type === "agent") {
+        const a = app.agents.get((card.agent as { id: string }).id);
+        return a && a.userId === uid && a.state !== "killed" ? [{ ...card, agent: a, blueprint: blueprint(a), replay: undefined }] : [];
+      }
+      if (card.type === "agent_control") return [];
+      return [card];
+    });
 
   const own = <T extends { userId: string }>(x: T | undefined, uid: string, what: string): T => {
     if (!x || x.userId !== uid) throw new HttpError(404, `${what} not found`);
@@ -74,9 +98,22 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
 
   // --- chat -------------------------------------------------------------------
   route("POST", "/api/chat", async ({ uid, body }) => {
-    const b = z.object({ sessionId: z.string().default("main"), text: z.string().min(1).max(4_000) }).parse(body);
-    return orch.handle(uid, b.sessionId, b.text);
+    const b = z.object({ sessionId: z.string().max(64).default("main"), text: z.string().min(1).max(4_000) }).parse(body);
+    const key = `${uid}:${b.sessionId}`;
+    pushLine(key, { role: "user", text: b.text, at: new Date().toISOString() });
+    const r = await orch.handle(uid, b.sessionId, b.text);
+    pushLine(key, { role: "ai", text: r.reply, at: new Date().toISOString(), cards: r.cards, meta: r.meta });
+    return r;
   });
+  route("GET", "/api/chat/:sessionId/history", ({ uid, params }) => {
+    const lines = transcripts.get(`${uid}:${params.sessionId}`) ?? [];
+    return { sessionId: params.sessionId, lines: lines.map((l) => (l.cards ? { ...l, cards: freshCards(uid, l.cards) } : l)) };
+  });
+  route("GET", "/api/chat", ({ uid }) =>
+    [...transcripts.entries()]
+      .filter(([k]) => k.startsWith(`${uid}:`))
+      .map(([k, l]) => ({ sessionId: k.slice(uid.length + 1), title: l.find((x) => x.role === "user")?.text.slice(0, 60) ?? "Chat", at: l.at(-1)?.at, messages: l.length }))
+      .sort((a, b) => String(b.at).localeCompare(String(a.at))));
 
   // --- tickets ------------------------------------------------------------------
   route("GET", "/api/tickets", ({ uid }) => app.desk.listForUser(uid));
@@ -201,6 +238,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
 
   return {
     tokens,
+    transcripts,
     userFor(token: string | undefined) {
       return token ? tokens.get(token) : undefined;
     },

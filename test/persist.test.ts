@@ -66,3 +66,22 @@ describe("persistence keeps saving", () => {
     await s.f.close();
   });
 });
+
+describe("chat history", () => {
+  it("returns the transcript with current card state, and survives a restart", async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "outcry-")), "state.json");
+    const s1 = await buildServer({ store: new FileStore(file), tickMs: 0, simLaunchEveryMs: 0 });
+    const inj = (s: typeof s1, method: string, url: string, token?: string, payload?: unknown) =>
+      s.f.inject({ method: method as never, url, headers: token ? { authorization: `Bearer ${token}` } : {}, payload: payload as never });
+    const { token } = (await inj(s1, "POST", "/api/session", undefined, {})).json();
+    const r = (await inj(s1, "POST", "/api/chat", token, { sessionId: "c1", text: "buy 1 SOL" })).json();
+    await inj(s1, "POST", `/api/tickets/${r.cards[0].ticket.id}/approve`, token, { passkeyAssertion: "tap" });
+    await s1.f.close();
+    const s2 = await buildServer({ store: new FileStore(file), tickMs: 0, simLaunchEveryMs: 0 });
+    const h = (await inj(s2, "GET", "/api/chat/c1/history", token)).json();
+    expect(h.lines.map((l: { role: string }) => l.role)).toEqual(["user", "ai"]);
+    expect(h.lines[1].cards[0].ticket.status).toBe("filled");
+    expect((await inj(s2, "GET", "/api/chat", token)).json()[0].sessionId).toBe("c1");
+    await s2.f.close();
+  });
+});

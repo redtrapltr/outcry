@@ -19,7 +19,7 @@ export class Persistence {
   constructor(
     readonly store: StateStore,
     private app: Outcry,
-    private parts: { router: ModelRouter; orch: Orchestrator; sessions: Map<string, string>; auth?: AuthService },
+    private parts: { router: ModelRouter; orch: Orchestrator; sessions: Map<string, string>; transcripts?: Map<string, unknown>; auth?: AuthService },
   ) {}
 
   private holders() {
@@ -36,6 +36,7 @@ export class Persistence {
       router: { obj: this.parts.router, fields: ["spend", "daily"] },
       chat: { obj: this.parts.orch, fields: ["sessions"] },
       sessions: { obj: { tokens: this.parts.sessions }, fields: ["tokens"] },
+      ...(this.parts.transcripts ? { transcripts: { obj: { lines: this.parts.transcripts }, fields: ["lines"] } } : {}),
       ...(this.parts.auth ? { auth: { obj: this.parts.auth, fields: ["credentials"] } } : {}),
     };
   }
