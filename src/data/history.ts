@@ -26,8 +26,10 @@ const BINANCE_TF: Record<Timeframe, string> = { "1m": "1m", "5m": "5m", "15m": "
 const TWELVE_TF: Record<Timeframe, string> = { "1m": "1min", "5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h", "1d": "1day" };
 
 /** Map terminal tickers to venue symbols (tokenized stocks track the listed share). */
+const TOKENIZED: Record<string, string> = { AAPLX: "AAPL", TSLAX: "TSLA", NVDAON: "NVDA", SPYON: "SPY" };
 function stockSymbol(s: string) {
-  return s.replace(/x$/i, "").replace(/\.ONDO$/i, "").toUpperCase();
+  const up = s.toUpperCase();
+  return TOKENIZED[up] ?? up.replace(/\.ONDO$/, "");
 }
 
 export class RealHistory implements HistoryProvider {

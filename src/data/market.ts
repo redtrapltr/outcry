@@ -39,6 +39,12 @@ export interface TokenRisk {
   flags: string[];
 }
 
+/** Implemented by data/live.ts: real prices/candles, undefined when unavailable. */
+export interface LiveOverlay {
+  price(symbol: string): number | undefined;
+  candles(symbol: string, kind: "crypto" | "stock", tf: Timeframe, count: number): Candle[] | undefined;
+}
+
 export interface NewTokenEvent {
   mint: string;
   symbol: string;
@@ -116,7 +122,20 @@ export function normalizeSymbol(s: string): string {
  * Memecoins launched through Outcry are registered at runtime.
  */
 export class SimulatedMarket implements MarketData {
-  private memes = new Map<string, { risk: TokenRisk; price: number }>();
+  private memes = new Map<string, { risk: TokenRisk; price: number; live?: boolean }>();
+  private live?: LiveOverlay;
+
+  /** Real prices and candles on top of the simulation (see data/live.ts). */
+  setLive(live: LiveOverlay | undefined) {
+    this.live = live;
+  }
+
+  private findMeme(s: string, raw: string) {
+    const direct = this.memes.get(raw);
+    if (direct) return direct;
+    for (const m of this.memes.values()) if (m.risk.symbol === s) return m;
+    return undefined;
+  }
   private launches: NewTokenEvent[] = [];
   private readonly epoch = Date.UTC(2024, 0, 1);
 
@@ -148,14 +167,15 @@ export class SimulatedMarket implements MarketData {
     const s = normalizeSymbol(symbol);
     const a = ASSETS.find((x) => x.symbol === s);
     if (a) return { symbol: a.symbol, chain: a.chain, kind: a.kind, decimals: a.decimals, address: a.address };
-    const m = [...this.memes.values()].find((x) => x.risk.symbol === s || x.risk.mint === symbol);
+    const m = this.findMeme(s, symbol);
     if (m) return { symbol: m.risk.symbol, chain: "solana", kind: "token", decimals: 6, address: m.risk.mint };
     return undefined;
   }
 
   priceUsd(symbol: string, atMs = Date.now()): number {
     const s = normalizeSymbol(symbol);
-    const meme = [...this.memes.values()].find((x) => x.risk.symbol === s || x.risk.mint === symbol);
+    const meme = this.findMeme(s, symbol);
+    if (meme?.live) return meme.price;
     if (meme) {
       // memes wobble around their launch price, deterministic per minute
       const r = rng(hashStr(s) ^ Math.floor(atMs / 60_000));
@@ -164,6 +184,10 @@ export class SimulatedMarket implements MarketData {
     const a = ASSETS.find((x) => x.symbol === s);
     if (!a) throw new Error(`unknown asset ${symbol}`);
     if (a.annualVol === 0) return a.basePrice;
+    if (this.live && Date.now() - atMs < 120_000) {
+      const p = this.live.price(s);
+      if (p !== undefined) return p;
+    }
     const c = this.candles(s, "1h", 1, atMs)[0]!;
     return c.close;
   }
@@ -172,6 +196,10 @@ export class SimulatedMarket implements MarketData {
     const s = normalizeSymbol(symbol);
     const a = ASSETS.find((x) => x.symbol === s);
     if (!a) throw new Error(`no candles for ${symbol}`);
+    if (this.live && Date.now() - endMs < 120_000) {
+      const real = this.live.candles(s, a.kind === "tokenized_stock" ? "stock" : "crypto", tf, count);
+      if (real) return real;
+    }
     const step = TF_MS[tf];
     const lastOpen = Math.floor(endMs / step) * step;
     const first = lastOpen - (count - 1) * step;
@@ -230,7 +258,7 @@ export class SimulatedMarket implements MarketData {
 
   tokenRisk(mintOrSymbol: string): TokenRisk | undefined {
     const s = normalizeSymbol(mintOrSymbol);
-    const m = [...this.memes.values()].find((x) => x.risk.symbol === s || x.risk.mint === mintOrSymbol);
+    const m = this.findMeme(s, mintOrSymbol);
     if (!m) return undefined;
     // Age is live: derived from the creation time on every read.
     const r = m.risk;
@@ -248,6 +276,32 @@ export class SimulatedMarket implements MarketData {
     const createdAtMs = risk.createdAtMs ?? Date.now() - risk.ageMinutes * 60_000;
     this.memes.set(risk.mint, { risk: { ...risk, createdAtMs }, price: priceUsd });
     this.launches.push({ mint: risk.mint, symbol: risk.symbol, at: createdAtMs });
+  }
+
+  /** Live feed: register a real token (price is exact, no simulated wobble). */
+  registerLiveMeme(risk: TokenRisk, priceUsd: number) {
+    this.registerMeme(risk, priceUsd);
+    this.memes.get(risk.mint)!.live = true;
+  }
+
+  updateMeme(mint: string, patch: Partial<TokenRisk>, priceUsd?: number) {
+    const m = this.memes.get(mint);
+    if (!m) return;
+    Object.assign(m.risk, patch);
+    if (priceUsd !== undefined && Number.isFinite(priceUsd) && priceUsd > 0) m.price = priceUsd;
+  }
+
+  hasSymbol(symbol: string) {
+    return ASSETS.some((a) => a.symbol.toUpperCase() === symbol.toUpperCase()) || !!ALIASES[symbol.toUpperCase()] || [...this.memes.values()].some((m) => m.risk.symbol === symbol);
+  }
+
+  /** Drop old live tokens nobody holds, so memory and snapshots stay small. */
+  pruneMemes(maxAgeMs: number, keep: (mint: string) => boolean) {
+    const now = Date.now();
+    for (const [mint, m] of this.memes) {
+      if (m.live && now - (m.risk.createdAtMs ?? now) > maxAgeMs && !keep(mint)) this.memes.delete(mint);
+    }
+    if (this.launches.length > 3_000) this.launches.splice(0, this.launches.length - 3_000);
   }
 
   /** Test/demo hook: emit a brand-new token. */

@@ -38,6 +38,12 @@ export class UserStore {
     return user;
   }
 
+  /** True if any user holds a balance of this asset (used to keep live tokens tracked). */
+  anyHolds(symbol: string) {
+    for (const u of this.users.values()) if ((u.balances[symbol] ?? 0) > 0) return true;
+    return false;
+  }
+
   get(id: string): UserProfile {
     const u = this.users.get(id);
     if (!u) throw new Error("unknown user");

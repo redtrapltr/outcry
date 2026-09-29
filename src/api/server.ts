@@ -9,6 +9,8 @@
  * State is saved to Postgres (DATABASE_URL) or a file (OUTCRY_STATE_FILE).
  */
 import { RealHistory } from "../data/history.js";
+import { LiveFeeds } from "../data/live.js";
+import { PumpPortalFeed } from "../data/pumpfeed.js";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
@@ -34,17 +36,32 @@ export interface ServerOptions {
 }
 
 export async function buildServer(opts: ServerOptions = {}) {
-  const app = opts.app ?? createOutcry({
-    mode: (process.env.OUTCRY_MODE as "paper" | "live") ?? "paper",
-    history: process.env.OUTCRY_REAL_HISTORY === "0" ? undefined : new RealHistory({ twelveDataKey: process.env.TWELVEDATA_API_KEY }),
-  });
+  const history = process.env.OUTCRY_REAL_HISTORY === "0" ? undefined : new RealHistory({ twelveDataKey: process.env.TWELVEDATA_API_KEY });
+  const app = opts.app ?? createOutcry({ mode: (process.env.OUTCRY_MODE as "paper" | "live") ?? "paper", history });
+
+  // "Paper money, real market": real prices/candles and the live pump.fun launch stream.
+  const live = !opts.app && process.env.OUTCRY_LIVE_PRICES === "1" ? new LiveFeeds({ history, twelveDataKey: process.env.TWELVEDATA_API_KEY }).start() : undefined;
+  if (live) app.market.setLive(live);
+  const holds = (mint: string) => {
+    const sym = app.market.tokenRisk(mint)?.symbol;
+    if (!sym) return false;
+    if (app.users.anyHolds(sym)) return true;
+    for (const a of app.agents.agents.values()) if (app.agents.positionsOf(a.id).some((p) => p.symbol === sym)) return true;
+    return false;
+  };
+  const pump = !opts.app && process.env.OUTCRY_PUMP_FEED === "pumpportal" ? new PumpPortalFeed(app.market, { isHeld: holds }).start() : undefined;
   const router = opts.router ?? ModelRouter.fromEnv();
   const orch = new Orchestrator(app, router);
   const auth = new AuthService();
   let persistence: Persistence | undefined;
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
     auth,
-    extraHealth: () => ({ persistence: persistence?.status() ?? { store: "memory (data is lost on restart)" } }),
+    // Only claim a real market while real data is actually arriving.
+    marketMode: () => (live?.price("SOL") !== undefined || pump?.status().connected ? "real" : "simulated"),
+    extraHealth: () => ({
+      persistence: persistence?.status() ?? { store: "memory (data is lost on restart)" },
+      marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches" },
+    }),
   });
   const store = opts.store === null ? undefined : opts.store ?? (await storeFromEnv());
   if (store) {
@@ -113,9 +130,13 @@ export async function buildServer(opts: ServerOptions = {}) {
     socket.on("close", off);
   });
 
-  const stop = startLoops(app, opts.tickMs ?? 5_000, opts.simLaunchEveryMs ?? Number(process.env.OUTCRY_SIM_LAUNCH_MS ?? 20_000));
+  // With the live pump.fun stream on, no simulated launches are mixed in.
+  const simEvery = pump ? 0 : opts.simLaunchEveryMs ?? Number(process.env.OUTCRY_SIM_LAUNCH_MS ?? 20_000);
+  const stop = startLoops(app, opts.tickMs ?? 5_000, simEvery);
   f.addHook("onClose", async () => {
     stop();
+    live?.stop();
+    pump?.stop();
     await persistence?.stop();
   });
 

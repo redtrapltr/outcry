@@ -24,6 +24,11 @@ services:
           property: connectionString
       - key: OUTCRY_SIM_LAUNCH_MS
         value: "15000"
+      # Paper money, real market: live prices/candles and real pump.fun launches (no keys needed).
+      - key: OUTCRY_LIVE_PRICES
+        value: "1"
+      - key: OUTCRY_PUMP_FEED
+        value: pumpportal
       # AI spend caps (USD per UTC day). Over the cap, chat falls back to the offline engine.
       - key: OUTCRY_MAX_AI_USD_PER_USER
         value: "0.50"

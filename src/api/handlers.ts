@@ -39,6 +39,8 @@ export interface HandlerOptions {
   auth?: AuthService;
   /** Extra fields for /api/health (e.g. persistence status). */
   extraHealth?: () => Record<string, unknown>;
+  /** "real" when live prices / launches feed the paper market. */
+  marketMode?: () => "real" | "simulated";
 }
 
 export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRouter, newToken: () => string, opts: HandlerOptions = {}) {
@@ -92,9 +94,9 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     const user = app.users.create(b);
     const token = newToken();
     tokens.set(token, user.id);
-    return { token, user, llm: llmStatus(router) };
+    return { token, user, llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" };
   }, false);
-  route("GET", "/api/me", ({ uid }) => ({ user: app.users.get(uid), portfolio: app.users.portfolio(uid), usage: router.spendOf(uid), llm: llmStatus(router) }));
+  route("GET", "/api/me", ({ uid }) => ({ user: app.users.get(uid), portfolio: app.users.portfolio(uid), usage: router.spendOf(uid), llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" }));
 
   // --- chat -------------------------------------------------------------------
   route("POST", "/api/chat", async ({ uid, body }) => {

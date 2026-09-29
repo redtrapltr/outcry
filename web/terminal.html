@@ -920,14 +920,14 @@ function connectEvents() {
     const saved = mode === 'server' ? store.get(TOKEN_KEY) : null;
     if (saved) {
       token = saved;
-      try { const me = await api('/api/me'); s = { token, user: me.user, llm: me.llm }; } catch { token = null; store.set(TOKEN_KEY, null); }
+      try { const me = await api('/api/me'); s = { token, user: me.user, llm: me.llm, market: me.market }; } catch { token = null; store.set(TOKEN_KEY, null); }
     }
     if (!s) { s = await api('/api/session', { method: 'POST', body: { badge: 'LOUD', jacket: 'memes', residence: 'CH' } }); token = s.token; if (mode === 'server') store.set(TOKEN_KEY, token); }
     $('badge').textContent = s.user.badge;
     loadAccount();
     $('memberSub').textContent = 'Memes jacket · paper wallet';
     $('tiers').innerHTML = '<span class="eyebrow">Model tiers</span>' + s.llm.map(t => `<span><b>${t.tier}</b> ${esc(t.model)}</span>`).join('');
-    if (mode === 'server' && s.llm.some(t => t.live)) $('modePill').textContent = 'PAPER MODE · LIVE AI · NO REAL TRANSACTIONS';
+    if (mode === 'server') $('modePill').textContent = (s.market === 'real' ? 'PAPER MONEY · REAL MARKET' : 'PAPER MODE · SIMULATED MARKET') + (s.llm.some(t => t.live) ? ' · LIVE AI' : '');
     if (mode === 'server') {
       // Reopen the last chat: from this browser, or the account's most recent one (new device).
       let c = store.get(CHAT_KEY);
