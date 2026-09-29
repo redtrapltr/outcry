@@ -112,6 +112,10 @@ export class AgentRuntime {
       unrealizedPnlUsd: positions.reduce((x, p) => x + p.pnlUsd, 0),
       drawdownPct: a.stats.peakEquityUsd > 0 ? Math.max(0, ((a.stats.peakEquityUsd - equity) / a.stats.peakEquityUsd) * 100) : 0,
       cashUsd: equity - positions.reduce((x, p) => x + p.valueUsd, 0),
+      /** What the cash is held in (a SOL-funded agent moves with SOL's price even without trades). */
+      cash: Object.entries(a.balances).filter(([k, v]) => v > 1e-9 && !positions.some((p) => p.symbol === k)).map(([asset, amount]) => ({ asset, amount })),
+      fundedIn: Object.keys(a.balances)[0],
+      watching: a.spec.kind === "sniper" ? this.watching(agentId) : [],
       virtual: a.spec.mode === "paper",
       history: this.history.get(agentId) ?? [],
       trades: trades.slice(-100),
@@ -456,18 +460,44 @@ export class AgentRuntime {
   private countSkip(a: Agent, reason: string) {
     const st = this.skipStats.get(a.id) ?? { at: Date.now(), checked: 0, reasons: new Map<string, number>() };
     st.checked++;
-    const kind = reason.replace(/[\d.]+/g, "N").replace(/\$\w+/g, "");
+    const kind = this.reasonKind(a, reason);
     st.reasons.set(kind, (st.reasons.get(kind) ?? 0) + 1);
     this.skipStats.set(a.id, st);
+  }
+
+  /** Group skip reasons into readable categories that name the agent's own limit. */
+  private reasonKind(a: Agent, reason: string) {
+    const u = a.spec.universe;
+    if (/holders/.test(reason) && /needs/.test(reason)) return `fewer than ${u?.minHolders ?? "?"} holders`;
+    if (/^top 10/.test(reason)) return `top 10 wallets over ${u?.maxTop10Pct ?? "?"}%`;
+    if (/^top wallet holds/.test(reason)) return `top wallet over ${u?.maxTopWalletPct ?? "?"}%`;
+    return reason;
   }
 
   private flushSkipSummary(a: Agent, force = false) {
     const st = this.skipStats.get(a.id);
     if (!st || (!force && Date.now() - st.at < 60_000)) return;
     this.skipStats.delete(a.id);
-    const top = [...st.reasons.entries()].sort((x, y) => y[1] - x[1])[0];
-    if (st.checked === 1 && top) this.activity(a, `Watching 1 new launch: ${top[0].replace(/N/g, "#")}`);
-    else if (top) this.activity(a, `Watching ${st.checked} new launches, none passed yet (most common: ${top[0].replace(/N/g, "#")})`);
+    const ranked = [...st.reasons.entries()].sort((x, y) => y[1] - x[1]);
+    if (!ranked.length) return;
+    const why = ranked.slice(0, 2).map(([k, n]) => `${n} ${k}`).join(", ");
+    const best = this.watching(a.id)[0];
+    const closest = best && a.spec.universe ? ` Closest: $${best.symbol} with ${best.holders}/${a.spec.universe.minHolders} holders at ${best.ageSeconds}s.` : "";
+    this.activity(a, `Checked ${st.checked} new launch${st.checked > 1 ? "es" : ""} in the last minute, none passed yet (${why}).${closest}`);
+  }
+
+  /** Launches the sniper is still re-checking, closest to passing first. */
+  watching(agentId: string) {
+    const a = this.agents.get(agentId);
+    const w = this.pendingChecks.get(agentId);
+    if (!a || !w) return [];
+    const out: { symbol: string; mint: string; ageSeconds: number; holders: number; top10Pct?: number; reason: string }[] = [];
+    for (const [mint, reason] of w) {
+      const r = this.d.market.tokenRisk(mint);
+      if (!r) continue;
+      out.push({ symbol: r.symbol, mint, ageSeconds: Math.round(r.ageSeconds ?? r.ageMinutes * 60), holders: r.holdersCollapsed, top10Pct: r.top10Pct, reason: this.reasonKind(a, reason) });
+    }
+    return out.sort((x, y) => y.holders - x.holders).slice(0, 8);
   }
 
   private async manageExits(a: Agent) {

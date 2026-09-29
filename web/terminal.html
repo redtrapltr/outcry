@@ -844,7 +844,9 @@ function perfPanel(agentId) {
   el.innerHTML = `<div class="perf-top"><div><div class="eyebrow">Live performance · <span class="pv"></span></div><div class="perf-eq">$0</div></div><div class="perf-pnl"></div></div>
     <div class="perf-chart" data-id="${agentId}"></div>
     <div class="perf-pills"><div><b class="p-real"></b><span>REALIZED</span></div><div><b class="p-unr"></b><span>OPEN P&amp;L</span></div><div><b class="p-win"></b><span>WIN RATE</span></div><div><b class="p-dd"></b><span>DRAWDOWN</span><div class="dd-bar"><i></i></div></div></div>
-    <div class="perf-pos"></div>`;
+    <div class="perf-pos"></div>
+    <div class="perf-pos perf-trades"></div>
+    <div class="perf-pos perf-watch"></div>`;
   const q = s => el.querySelector(s);
   const update = (perf, agent) => {
     if (!perf) return;
@@ -857,9 +859,20 @@ function perfPanel(agentId) {
     const lim = agent?.spec.limits.maxDrawdownPct ?? 50; const ratio = Math.min(1, perf.drawdownPct / lim);
     q('.p-dd').textContent = `−${perf.drawdownPct.toFixed(1)}% / −${lim}%`;
     const bar = q('.dd-bar i'); bar.style.width = (ratio * 100) + '%'; bar.style.background = ratio > .75 ? 'var(--down)' : ratio > .4 ? '#f5b642' : 'var(--up)';
+    const cashTxt = (perf.cash || []).map(c => `${c.asset === 'USDC' ? fmt(c.amount) : amt(c.amount)} ${esc(c.asset)}`).join(' + ') || usd(perf.cashUsd);
+    const solNote = perf.fundedIn && perf.fundedIn !== 'USDC' ? ` · value moves with ${esc(perf.fundedIn)}'s price` : '';
     q('.perf-pos').innerHTML = perf.positions.length
-      ? `<span class="eyebrow">Holding ${perf.positions.length} · cash ${usd(perf.cashUsd)}</span>` + perf.positions.map(p => `<div><span>$${esc(p.symbol)}</span><span>${usd(p.valueUsd)} <span class="${p.pnlUsd >= 0 ? 'up' : 'down'}">${sgn(p.pnlPct)}${Math.abs(p.pnlPct).toFixed(1)}%</span></span></div>`).join('')
-      : `<span class="meta">No open positions · cash ${usd(perf.cashUsd)}${agent?.state === 'paused' ? ' · paused' : ''}</span>`;
+      ? `<span class="eyebrow">Holding ${perf.positions.length} · cash ${cashTxt} (${usd(perf.cashUsd)})</span>` + perf.positions.map(p => `<div><span>$${esc(p.symbol)}</span><span>${usd(p.valueUsd)} <span class="${p.pnlUsd >= 0 ? 'up' : 'down'}">${sgn(p.pnlPct)}${Math.abs(p.pnlPct).toFixed(1)}%</span></span></div>`).join('')
+      : `<span class="meta">No open positions · cash ${cashTxt} (${usd(perf.cashUsd)})${solNote}${agent?.state === 'paused' ? ' · paused' : ''}</span>`;
+    const tr = (perf.trades || []).slice(-6).reverse();
+    q('.perf-trades').innerHTML = tr.length
+      ? `<span class="eyebrow">Recent trades</span>` + tr.map(t => `<div><span>${new Date(t.t).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })} · ${t.side === 'buy' ? 'Bought' : 'Sold'} $${esc(t.symbol)}</span><span>${usd(t.usd)}${t.pnlUsd != null ? ` <span class="${t.pnlUsd >= 0 ? 'up' : 'down'}">${sgn(t.pnlUsd)}${usd(Math.abs(t.pnlUsd)).replace('−', '')}</span>` : ''}</span></div>`).join('')
+      : '';
+    const w = perf.watching || [];
+    const need = agent?.spec?.universe?.minHolders;
+    q('.perf-watch').innerHTML = w.length
+      ? `<span class="eyebrow">Watching now · not bought yet</span>` + w.map(x => `<div><span>$${esc(x.symbol)} · ${x.ageSeconds}s old · ${x.holders}${need ? '/' + need : ''} holders</span><span class="meta">${esc(x.reason)}</span></div>`).join('')
+      : (agent?.spec?.kind === 'sniper' && !tr.length ? '<span class="meta">Waiting for new launches that match…</span>' : '');
     drawPerfChart(q('.perf-chart'), perf);
   };
   liveCharts.set(agentId, update);
