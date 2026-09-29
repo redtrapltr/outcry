@@ -35,6 +35,11 @@ export class Orchestrator {
     this.tools = new ToolExecutor(app);
   }
 
+  /** Forget a chat's model history. */
+  dropSession(userId: string, sessionId: string) {
+    this.sessions.delete(`${userId}:${sessionId}`);
+  }
+
   private session(userId: string, sessionId: string): Session {
     const key = `${userId}:${sessionId}`;
     let s = this.sessions.get(key);
