@@ -32,6 +32,12 @@ export interface TokenRisk {
   topWalletPct: number;
   /** Share of supply held by the 10 largest holders (creator wallets included). */
   top10Pct?: number;
+  /** Share held by the bonding curve / liquidity pools (not counted as holders). */
+  poolPct?: number;
+  /** Address of the largest real wallet, when known. */
+  topWallet?: string;
+  /** True when the single top-wallet share could not be measured. */
+  topWalletUnknown?: boolean;
   mintRevoked: boolean;
   freezeRevoked: boolean;
   liquidityUsd: number;
