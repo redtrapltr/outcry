@@ -468,7 +468,7 @@ function launchCard(t0, devShare0) {
 }
 const shareOf = sol => { const k = 30 * 1.073e9; return (1.073e9 - k / (30 + sol)) / 1e9 * 100; };
 
-async function agentCard(card) {
+async function agentCard(card, instant = false) {
   let a = card.agent;
   const wrap = document.createElement('div');
   wrap.className = 'builder';
@@ -486,12 +486,12 @@ async function agentCard(card) {
   queueMicrotask(async () => {
     const nodes = [...wrap.querySelectorAll('.node')];
     for (let i = 0; i < nodes.length; i++) {
-      await wait(i === 0 ? 200 : 550);
+      if (!instant) await wait(i === 0 ? 200 : 550);
       nodes[i].classList.add('on');
       q('.spine').style.height = (nodes[i].offsetTop + 14 - 30) + 'px';
       q('.bp').textContent = `Assembling · ${i + 1}/5`; scrollDown();
     }
-    await wait(300);
+    if (!instant) await wait(300);
     const deployed = ['paper', 'live', 'paused'].includes(a.state);
     q('.bp').textContent = deployed ? `Updated · v${a.version} · ${a.state}` : 'Ready · adjust below'; q('.hand').classList.remove('hand');
     drawAdjust();
@@ -621,17 +621,40 @@ function searchCard(c) {
   return w;
 }
 
-async function renderCards(body, cards) {
+async function renderCards(body, cards, instant = false) {
   for (const c of cards) {
     if (c.type === 'order') body.appendChild(orderCard(c.ticket));
     else if (c.type === 'launch') body.appendChild(launchCard(c.ticket, c.devSharePct));
-    else if (c.type === 'agent') body.appendChild(await agentCard(c));
+    else if (c.type === 'agent') body.appendChild(await agentCard(c, instant));
     else if (c.type === 'strategy') body.appendChild(strategyCard(c));
     else if (c.type === 'strategy_search') body.appendChild(searchCard(c));
   }
 }
 
 // ---------------- chat ----------------
+function metaLine(body, meta) {
+  if (!meta) return;
+  const m = document.createElement('span'); m.className = 'meta';
+  m.textContent = `${meta.tier} · ${meta.model}${meta.escalated ? ' · escalated' : ''} · $${meta.costUsd.toFixed(4)}${meta.notice ? ' · ' + meta.notice : ''}`;
+  body.appendChild(m);
+}
+const CHAT_KEY = 'outcry.chat';
+async function loadHistory() {
+  if (mode !== 'server') return false;
+  try {
+    const h = await api(`/api/chat/${encodeURIComponent(sessionId)}/history`);
+    if (!h.lines.length) return false;
+    for (const l of h.lines) {
+      if (l.role === 'user') { addUser(l.text); continue; }
+      const body = addAI(`<p>${esc(l.text)}</p>`);
+      await renderCards(body, l.cards || [], true);
+      metaLine(body, l.meta);
+    }
+    scrollDown();
+    return true;
+  } catch { return false; }
+}
+
 async function send(text) {
   text = text.trim(); if (!text || busy) return;
   busy = true; addUser(text); $('cmd').value = '';
@@ -641,9 +664,7 @@ async function send(text) {
     th.parentElement.remove();
     const body = addAI(`<p>${esc(r.reply)}</p>`);
     await renderCards(body, r.cards);
-    const m = document.createElement('span'); m.className = 'meta';
-    m.textContent = `${r.meta.tier} · ${r.meta.model}${r.meta.escalated ? ' · escalated' : ''} · $${r.meta.costUsd.toFixed(4)}${r.meta.notice ? ' · ' + r.meta.notice : ''}`;
-    body.appendChild(m);
+    metaLine(body, r.meta);
     refresh();
   } catch (e) { th.parentElement.remove(); addAI(`<p>${esc(e.message)}</p>`); }
   finally { busy = false; scrollDown(); }
@@ -678,14 +699,14 @@ $('signInBtn').onclick = async () => {
     const { loginId, options } = await api('/api/auth/login/options', { method: 'POST' });
     const response = await startAuthentication({ optionsJSON: options });
     const s = await api('/api/auth/login/verify', { method: 'POST', body: { loginId, response } });
-    store.set(TOKEN_KEY, s.token); location.reload();
+    store.set(TOKEN_KEY, s.token); store.set(CHAT_KEY, null); location.reload();
   } catch (e) { toast(e.name === 'NotAllowedError' ? 'Passkey cancelled' : e.message); }
 };
 $('signOutBtn').onclick = async () => {
   try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
-  store.set(TOKEN_KEY, null); location.reload();
+  store.set(TOKEN_KEY, null); store.set(CHAT_KEY, null); location.reload();
 };
-$('newSession').onclick = () => { sessionId = 'main-' + Date.now().toString(36); log.innerHTML = ''; welcome(); $('cmd').focus(); };
+$('newSession').onclick = () => { sessionId = 'main-' + Date.now().toString(36); store.set(CHAT_KEY, sessionId); log.innerHTML = ''; welcome(); $('cmd').focus(); };
 async function agentAction(id, act, name) {
   if (act === 'delete') {
     if (!confirm(`Delete ${name}? It stops trading, open positions stay in your wallet and unspent funds go back to your main wallet.`)) return;
@@ -856,7 +877,15 @@ function connectEvents() {
     $('memberSub').textContent = 'Memes jacket · paper wallet';
     $('tiers').innerHTML = '<span class="eyebrow">Model tiers</span>' + s.llm.map(t => `<span><b>${t.tier}</b> ${esc(t.model)}</span>`).join('');
     if (mode === 'server' && s.llm.some(t => t.live)) $('modePill').textContent = 'PAPER MODE · LIVE AI · NO REAL TRANSACTIONS';
-    welcome(); refresh(); connectEvents();
+    if (mode === 'server') {
+      // Reopen the last chat: from this browser, or the account's most recent one (new device).
+      let c = store.get(CHAT_KEY);
+      if (!c) { try { c = (await api('/api/chat'))[0]?.sessionId; } catch {} }
+      if (c) sessionId = c;
+      store.set(CHAT_KEY, sessionId);
+    }
+    if (!(await loadHistory())) welcome();
+    refresh(); connectEvents();
   } catch (e) { addAI(`<p>Could not start a session: ${esc(e.message)}</p>`); }
 })();
 </script>
