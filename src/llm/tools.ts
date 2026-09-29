@@ -180,6 +180,22 @@ export const TOOLS: ToolDef[] = [
     input_schema: { type: "object", properties: { program, lookback_days: { type: "number", description: "Backtest window in calendar days, e.g. 365 for 'one year'. Omit for the default (1-3 years)." } }, required: ["program"] },
   },
   {
+    name: "search_strategies",
+    kind: "write",
+    description:
+      "Find the best-performing strategies for one asset: backtests a library of classic strategies (moving-average trend, breakouts, RSI and Bollinger mean reversion, MACD, momentum) on 1d and 4h candles, ranks them on the first 70% of the window and reports the last 30% as the out-of-sample check. Use it whenever the user asks for the best / most profitable strategy, or to find or compare strategies, instead of asking them to pick one. Always report: data source (real or SIMULATED), window, buy-and-hold, and the out-of-sample figure of the winners.",
+    input_schema: {
+      type: "object",
+      properties: {
+        asset: { type: "string" },
+        lookback_days: { type: "number", description: "Window in calendar days; default 365" },
+        timeframes: { type: "array", items: { type: "string", enum: ["1h", "4h", "1d"] } },
+        size_usd: { type: "number", description: "Per-trade size; default 1000" },
+      },
+      required: ["asset"],
+    },
+  },
+  {
     name: "control_agent",
     kind: "write",
     description: "Pause, resume or kill one of the user's agents by name or id. Kill keeps positions and sweeps unspent funds back to the main wallet.",
@@ -214,6 +230,7 @@ How you work:
   - "sell 2 SOL" -> side sell, amount: 2. "market" / "cheapest rate" / "current price" need no extra question.
 - Never compute prices, sizes or conversions yourself; your memory of prices is stale. Quote with tools and repeat their numbers.
 - Ask a question only if the asset or the side is truly missing, and ask at most once.
+- "Best / most profitable strategy for X", "find me a strategy": call search_strategies right away. Then explain the top results plainly: a winner that failed out-of-sample or lost to buy-and-hold is not a real edge, say so. Offer to refine the best one or run it as a paper agent.
 - Map every rule the user states to its own field; never fold one rule into a different setting (e.g. "top 10 wallets under 20%" is maxTop10Pct, not maxTopWalletPct; "pause at -50% drawdown" is limits.maxDrawdownPct, not the stop loss).
 - To change an agent the user already has, call update_agent; do not build a duplicate with propose_agent.
 - Not investment advice: when users ask what to buy, give balanced information and let them decide.`;

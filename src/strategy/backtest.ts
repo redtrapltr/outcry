@@ -216,21 +216,26 @@ function monteCarlo(trades: Trade[], start: number, n = 500, seed = 7) {
   return { p5: q(0.05), p50: q(0.5), p95: q(0.95) };
 }
 
-export function backtest(program: StrategyProgram, candles: Candle[], startEquity = 10_000): BacktestReport {
-  if (candles.length < 100) throw new Error("Need at least 100 candles to backtest");
+/**
+ * @param fromIndex first candle of the test window. Candles before it are only
+ * used to warm up indicators (e.g. a 200-day average on a 1-year test).
+ */
+export function backtest(program: StrategyProgram, candles: Candle[], startEquity = 10_000, fromIndex = 0): BacktestReport {
+  if (candles.length - fromIndex < 100) throw new Error("Need at least 100 candles to backtest");
   const compiled = compile(program, candles); // validates the program
-  if (compiled.warmup >= candles.length * 0.5) throw new Error("Indicators need more history than available; use a longer period or smaller lookbacks");
+  const first = Math.max(fromIndex, compiled.warmup);
+  if (candles.length - first < 60) throw new Error("Indicators need more history than available; use a longer period or smaller lookbacks");
   const last = candles.length - 1;
-  const split = Math.floor(candles.length * 0.7);
-  const full = run(program, candles, 0, last, startEquity);
-  const is = run(program, candles, 0, split, startEquity);
+  const split = first + Math.floor((last - first) * 0.7);
+  const full = run(program, candles, first, last, startEquity);
+  const is = run(program, candles, first, split, startEquity);
   const oos = run(program, candles, split, last, startEquity);
 
   const warnings: string[] = [];
   if (compiled.paramCount > 5) warnings.push(`${compiled.paramCount} tuned parameters: high risk of fitting noise`);
   if (full.metrics.trades < 30) warnings.push(`Only ${full.metrics.trades} trades: too few to trust the statistics`);
   // Compare return per bar, since the two windows differ in length (70/30).
-  const isRate = is.metrics.totalReturnPct / Math.max(1, split);
+  const isRate = is.metrics.totalReturnPct / Math.max(1, split - first);
   const oosRate = oos.metrics.totalReturnPct / Math.max(1, last - split);
   if (isRate > 0 && oosRate < isRate * 0.3) {
     warnings.push("Out-of-sample return is far below in-sample: the edge may not persist");
@@ -241,8 +246,8 @@ export function backtest(program: StrategyProgram, candles: Candle[], startEquit
   const stride = Math.max(1, Math.floor(full.curve.length / 200));
   return {
     program,
-    bars: candles.length,
-    from: candles[0]!.t,
+    bars: last - first + 1,
+    from: candles[first]!.t,
     to: candles[last]!.t,
     full: full.metrics,
     inSample: is.metrics,

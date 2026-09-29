@@ -43,6 +43,14 @@ button,input{font:inherit;color:inherit}
 .item{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;font-size:14px}
 .sq{width:10px;height:10px;border-radius:3px;flex-shrink:0;display:inline-block}
 .status{font:10.5px var(--mono);letter-spacing:.08em}
+.rank{display:flex;flex-direction:column;gap:8px;border:1px solid var(--line,rgba(127,127,127,.25));border-radius:12px;padding:12px}
+.rank-head{display:flex;flex-direction:column;gap:2px}
+.rank-scroll{overflow-x:auto}
+.rank table{width:100%;border-collapse:collapse;font-size:13px}
+.rank th{font:10px var(--mono);letter-spacing:.08em;color:var(--muted);text-align:left;padding:4px 6px;white-space:nowrap}
+.rank td{padding:6px;border-top:1px solid rgba(127,127,127,.15);white-space:nowrap}
+.rank .v{font:11px var(--mono);padding:2px 6px;border-radius:5px}
+.rank .v.ok{color:var(--up);background:rgba(61,220,151,.12)} .rank .v.mid{color:#f5b642;background:rgba(245,182,66,.12)} .rank .v.no{color:var(--muted);background:rgba(127,127,127,.12)}
 .perf{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line,rgba(127,127,127,.25));border-radius:12px;padding:12px}
 .perf-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
 .perf-eq{font:600 26px var(--mono)}
@@ -564,12 +572,30 @@ function strategyCard(card) {
   return wrap;
 }
 
+function searchCard(c) {
+  const pct = n => `${n >= 0 ? '+' : ''}${n.toFixed(1)}%`;
+  const col = n => n >= 0 ? 'var(--up)' : 'var(--down)';
+  const w = document.createElement('div'); w.className = 'rank';
+  const rows = c.ranking.map(r => {
+    const held = r.outOfSamplePct > 0 && r.trades >= 6;
+    const beat = r.fullPct > r.holdPct;
+    const verdict = held && beat ? '<span class="v ok" title="Positive out-of-sample and beat buy & hold">✓ held up</span>' : held ? '<span class="v mid" title="Positive out-of-sample but lost to buy & hold">~ below hold</span>' : '<span class="v no" title="Failed out-of-sample or too few trades">✗ no edge</span>';
+    return `<tr><td class="mono">${r.rank}</td><td>${esc(r.name)}</td><td class="mono">${r.trades}</td><td class="mono" style="color:${col(r.fullPct)}">${pct(r.fullPct)}</td><td class="mono" style="color:${col(r.outOfSamplePct)}">${pct(r.outOfSamplePct)}</td><td class="mono">−${r.maxDrawdownPct.toFixed(1)}%</td><td>${verdict}</td></tr>`;
+  }).join('');
+  w.innerHTML = `<div class="rank-head"><b>${c.tested} strategies tested on ${esc(c.asset)}</b><span class="meta">${c.real ? 'REAL PRICES · ' + esc(c.sources.join(' · ')) : 'SIMULATED PRICES, not real history'} · buy &amp; hold ${pct(c.buyHoldPct)}</span></div>
+    ${c.real ? '' : '<div class="t-warn">These prices are simulated. The ranking checks the logic only; it says nothing about the real asset.</div>'}
+    <div class="rank-scroll"><table><thead><tr><th>#</th><th>Strategy</th><th>Trades</th><th>Return</th><th title="Last 30% of the window, not used for ranking">Out-of-sample</th><th>Max DD</th><th></th></tr></thead><tbody>${rows}</tbody></table></div>
+    <div class="meta">Ranked on the first 70% of the window; "out-of-sample" is the last 30%, the part that shows whether the result holds up. Past results, not a forecast.</div>`;
+  return w;
+}
+
 async function renderCards(body, cards) {
   for (const c of cards) {
     if (c.type === 'order') body.appendChild(orderCard(c.ticket));
     else if (c.type === 'launch') body.appendChild(launchCard(c.ticket, c.devSharePct));
     else if (c.type === 'agent') body.appendChild(await agentCard(c));
     else if (c.type === 'strategy') body.appendChild(strategyCard(c));
+    else if (c.type === 'strategy_search') body.appendChild(searchCard(c));
   }
 }
 
