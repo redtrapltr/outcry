@@ -53,7 +53,8 @@ export async function buildServer(opts: ServerOptions = {}) {
   const pump = !opts.app && process.env.OUTCRY_PUMP_FEED === "pumpportal" ? new PumpPortalFeed(app.market, { isHeld: holds }).start() : undefined;
   const router = opts.router ?? ModelRouter.fromEnv();
   const orch = new Orchestrator(app, router);
-  if (live || pump) orch.tools.lookup = new TokenLookup(app.market, { follow: (m) => pump?.follow(m) });
+  const rpcUrl = process.env.SOLANA_RPC_URL ?? (process.env.HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}` : undefined);
+  if (live || pump) orch.tools.lookup = new TokenLookup(app.market, { follow: (m) => pump?.follow(m), rpcUrl });
   const auth = new AuthService();
   let persistence: Persistence | undefined;
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {

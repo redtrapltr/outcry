@@ -242,6 +242,7 @@ export class AgentRuntime {
       const note = u.collapseCreatorWallets && risk.holders !== risk.holdersCollapsed ? ` (${risk.holders} before collapsing ${risk.creatorWallets.length} disclosed creator wallets)` : "";
       return `${holders} holders${note}, needs ${u.minHolders}`;
     }
+    if (risk.topWalletUnknown) return "top wallet share unknown";
     if (risk.topWalletPct > u.maxTopWalletPct) return `top wallet holds ${risk.topWalletPct}%`;
     if (u.maxTop10Pct !== undefined && (risk.top10Pct ?? 0) > u.maxTop10Pct) return `top 10 wallets hold ${(risk.top10Pct ?? 0).toFixed(1)}% (max ${u.maxTop10Pct}%)`;
     if (u.requireMintRevoked && !risk.mintRevoked) return "mint authority still active";

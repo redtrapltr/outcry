@@ -11,6 +11,7 @@
 import type { SimulatedMarket, TokenRisk } from "./market.js";
 import { cleanSymbol } from "./pumpfeed.js";
 
+type RpcCall = (method: string, params: unknown[]) => Promise<unknown>;
 type FetchLike = (url: string) => Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
 /** Base58 Solana address (32-44 chars). */
@@ -41,8 +42,58 @@ export class TokenLookup {
 
   constructor(
     private market: SimulatedMarket,
-    private opts: { fetch?: FetchLike; follow?: (mint: string) => void } = {},
+    private opts: { fetch?: FetchLike; follow?: (mint: string) => void; rpc?: RpcCall; rpcUrl?: string } = {},
   ) {}
+
+  private rpc: RpcCall = (method, params) =>
+    this.opts.rpc
+      ? this.opts.rpc(method, params)
+      : fetch(this.opts.rpcUrl ?? "https://api.mainnet-beta.solana.com", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+          signal: AbortSignal.timeout(6_000),
+        })
+          .then((r) => r.json() as Promise<{ result?: unknown; error?: { message: string } }>)
+          .then((j) => {
+            if (j.error) throw new Error(j.error.message);
+            return j.result;
+          });
+
+  /**
+   * Largest holders from the chain: token accounts -> owners -> keep only
+   * real wallets (system-owned), so the bonding curve and AMM pools don't count
+   * as "holders". Returns shares of total supply.
+   */
+  async holders(mint: string): Promise<{ topWalletPct: number; top10Pct: number; poolPct: number; topWallet: string } | undefined> {
+    try {
+      const largest = (await this.rpc("getTokenLargestAccounts", [mint, { commitment: "confirmed" }])) as { value: { address: string; uiAmount: number | null }[] };
+      const supply = (await this.rpc("getTokenSupply", [mint, { commitment: "confirmed" }])) as { value: { uiAmount: number | null } };
+      const total = supply?.value?.uiAmount ?? 0;
+      const accts = largest?.value?.filter((a) => (a.uiAmount ?? 0) > 0) ?? [];
+      if (!total || !accts.length) return undefined;
+      const parsed = (await this.rpc("getMultipleAccounts", [accts.map((a) => a.address), { encoding: "jsonParsed" }])) as { value: ({ data?: { parsed?: { info?: { owner?: string } } } } | null)[] };
+      const owners = accts.map((_, i) => parsed?.value?.[i]?.data?.parsed?.info?.owner ?? "");
+      const uniq = [...new Set(owners.filter(Boolean))];
+      const ownerInfo = (await this.rpc("getMultipleAccounts", [uniq, { encoding: "base64", dataSlice: { offset: 0, length: 0 } }])) as { value: ({ owner?: string } | null)[] };
+      const program = new Map(uniq.map((o, i) => [o, ownerInfo?.value?.[i]?.owner ?? "none"]));
+      const SYSTEM = "11111111111111111111111111111111";
+      const byOwner = new Map<string, number>();
+      let pool = 0;
+      accts.forEach((a, i) => {
+        const o = owners[i]!;
+        const prog = program.get(o);
+        // Wallets are owned by the system program (or hold no SOL at all); anything else is a program account: curve, pool, vault.
+        if (o && (prog === SYSTEM || prog === "none")) byOwner.set(o, (byOwner.get(o) ?? 0) + (a.uiAmount ?? 0));
+        else pool += a.uiAmount ?? 0;
+      });
+      const sorted = [...byOwner.entries()].sort((x, y) => y[1] - x[1]);
+      const pct = (n: number) => Number(((n / total) * 100).toFixed(2));
+      return { topWalletPct: pct(sorted[0]?.[1] ?? 0), top10Pct: pct(sorted.slice(0, 10).reduce((x, y) => x + y[1], 0)), poolPct: pct(pool), topWallet: sorted[0]?.[0] ?? "" };
+    } catch {
+      return undefined;
+    }
+  }
 
   private get f(): FetchLike {
     return this.opts.fetch ?? ((u) => fetch(u, { signal: AbortSignal.timeout(6_000) }) as never);
@@ -70,6 +121,7 @@ export class TokenLookup {
         const p = await this.pumpFun(mint);
         if (p) {
           this.register(p);
+          await this.enrich(mint);
           this.misses.set(`ok:${mint}`, Date.now());
           return true;
         }
@@ -77,12 +129,18 @@ export class TokenLookup {
         return !!known;
       }
       this.register(t);
+      await this.enrich(mint);
       this.misses.set(`ok:${mint}`, Date.now());
       return true;
     } catch {
       this.misses.set(mint, Date.now());
       return !!known;
     }
+  }
+
+  private async enrich(mint: string) {
+    const h = await this.holders(mint);
+    if (h) this.market.updateMeme(mint, { topWalletPct: h.topWalletPct, top10Pct: h.top10Pct, poolPct: h.poolPct, topWallet: h.topWallet, topWalletUnknown: false });
   }
 
   /** pump.fun's public frontend API (unofficial, best effort). */
@@ -114,8 +172,9 @@ export class TokenLookup {
     const patch: Partial<TokenRisk> = {
       holders: t.holderCount ?? 0,
       holdersCollapsed: t.holderCount ?? 0,
-      // Jupiter reports the top-10 share; the single top wallet is not given separately.
-      topWalletPct: top10 !== undefined ? Number(Math.min(top10, t.audit?.devBalancePercentage ?? top10).toFixed(2)) : 0,
+      // Jupiter reports only the top-10 share. The single top wallet comes from the chain (enrich); until then it's unknown.
+      topWalletPct: 0,
+      topWalletUnknown: true,
       top10Pct: top10 !== undefined ? Number(top10.toFixed(2)) : undefined,
       mintRevoked: t.audit?.mintAuthorityDisabled ?? false,
       freezeRevoked: t.audit?.freezeAuthorityDisabled ?? false,

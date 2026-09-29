@@ -137,11 +137,12 @@ export class ToolExecutor {
           const age = (r.ageSeconds ?? r.ageMinutes * 60);
           const ageTxt = age < 120 ? `${Math.round(age)}s` : age < 7200 ? `${Math.round(age / 60)} min` : age < 172_800 ? `${Math.round(age / 3600)} h` : `${Math.round(age / 86_400)} days`;
           const reg = app.registry.get(r.mint);
-          const flags = [!r.mintRevoked && "mint authority active", !r.freezeRevoked && "freeze authority active", r.topWalletPct > 20 && `top wallet ${r.topWalletPct}%`].filter(Boolean);
+          const flags = [!r.mintRevoked && "mint authority active", !r.freezeRevoked && "freeze authority active", !r.topWalletUnknown && r.topWalletPct > 20 && `top wallet ${r.topWalletPct}%`].filter(Boolean);
+          const topTxt = r.topWalletUnknown ? "top single wallet: not measured" : `top wallet ${r.topWalletPct}%${r.topWallet ? ` (${r.topWallet.slice(0, 4)}…${r.topWallet.slice(-4)})` : ""}`;
           return {
             ok: true,
             result: {
-              summary: `$${r.symbol} (${r.mint}): price ${px !== undefined ? "$" + (px < 0.01 ? px.toPrecision(4) : px.toFixed(4)) + `, market cap ≈ $${Math.round(px * 1e9).toLocaleString("en-US")}` : "unknown"}, launched ${ageTxt} ago${r.top10Pct !== undefined ? `, top 10 wallets ${r.top10Pct}%` : ""}. ${r.holdersCollapsed} real holders${r.holders !== r.holdersCollapsed ? ` (${r.holders} addresses, ${r.creatorWallets.length} are disclosed creator wallets)` : ""}, top wallet ${r.topWalletPct}%, liquidity $${r.liquidityUsd.toLocaleString("en-US")}. ${flags.length ? "Flags: " + flags.join(", ") + "." : "No red flags in the checks I ran."}`,
+              summary: `$${r.symbol} (${r.mint}): price ${px !== undefined ? "$" + (px < 0.01 ? px.toPrecision(4) : px.toFixed(4)) + `, market cap ≈ $${Math.round(px * 1e9).toLocaleString("en-US")}` : "unknown"}, launched ${ageTxt} ago. ${r.holdersCollapsed} holders, ${topTxt}${r.top10Pct !== undefined ? `, top 10 wallets ${r.top10Pct}% combined` : ""}${r.poolPct !== undefined ? ` (bonding curve / liquidity pool accounts hold ${r.poolPct}% and are not counted as holders)` : ""}, liquidity $${r.liquidityUsd.toLocaleString("en-US")}. ${flags.length ? "Flags: " + flags.join(", ") + "." : "No red flags in the checks I ran."} Bundles (wallets buying together at launch) are not detected yet.`,
               risk: r,
               creatorRegistry: reg ? { wallets: reg.wallets.length, devSharePct: reg.devSharePct } : null,
             },

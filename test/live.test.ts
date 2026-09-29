@@ -98,8 +98,22 @@ describe("token lookup by mint", () => {
     const MINT = "GrXMbn56JtFngA2FgoXenJG5HeD1GhvFnjyFPWbfpump";
     expect(findMints(`price of https://pump.fun/coin/${MINT} ?`)).toEqual([MINT]);
     const followed: string[] = [];
+    const SYS = "11111111111111111111111111111111", PUMP = "6EF8rrecthR5Dkzon8Nwu78hRvfCKubJ14M5uBEwF6P";
+    const accounts = [
+      { address: "curveAta", uiAmount: 89_700_000, owner: "curvePda", prog: PUMP },
+      { address: "a1", uiAmount: 49_500_000, owner: "7TixWallet", prog: SYS },
+      { address: "a2", uiAmount: 36_600_000, owner: "foede", prog: SYS },
+      { address: "a3", uiAmount: 33_700_000, owner: "wirel", prog: SYS },
+    ];
     const lookup = new TokenLookup(app.market, {
       follow: (m) => followed.push(m),
+      rpc: async (method, params) => {
+        if (method === "getTokenLargestAccounts") return { value: accounts.map((a) => ({ address: a.address, uiAmount: a.uiAmount })) };
+        if (method === "getTokenSupply") return { value: { uiAmount: 1_000_000_000 } };
+        const keys = params[0] as string[];
+        if ((params[1] as { encoding: string }).encoding === "jsonParsed") return { value: keys.map((k) => ({ data: { parsed: { info: { owner: accounts.find((a) => a.address === k)!.owner } } } })) };
+        return { value: keys.map((k) => ({ owner: accounts.find((a) => a.owner === k)!.prog })) };
+      },
       fetch: async (u) => {
         expect(u).toContain(MINT);
         return ok([{ id: MINT, name: "Grx", symbol: "GRX", dev: "DevWallet111", launchpad: "pump.fun", holderCount: 142, usdPrice: 0.0000123, liquidity: 18_500, firstPool: { createdAt: new Date(Date.now() - 7 * 60_000).toISOString() }, audit: { mintAuthorityDisabled: true, freezeAuthorityDisabled: true, topHoldersPercentage: 23.4, devBalancePercentage: 4.1 } }]);
@@ -111,8 +125,10 @@ describe("token lookup by mint", () => {
     expect(out.ok).toBe(true);
     const summary = String(out.result.summary);
     expect(summary).toContain("$GRX");
-    expect(summary).toContain("142 real holders");
-    expect(summary).toContain("top 10 wallets 23.4%");
+    expect(summary).toContain("142 holders");
+    expect(summary).toContain("top wallet 4.95% (7Tix");
+    expect(summary).toContain("top 10 wallets 11.98% combined");
+    expect(summary).toContain("liquidity pool accounts hold 8.97%");
     expect(summary).toMatch(/launched 7 min ago/);
     expect(app.market.priceUsd(MINT)).toBeCloseTo(0.0000123, 12);
     expect(followed).toEqual([MINT]);
