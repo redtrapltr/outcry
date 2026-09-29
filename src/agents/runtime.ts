@@ -394,36 +394,79 @@ export class AgentRuntime {
     }
   }
 
+  /** Young launches that failed a filter so far: re-checked every tick until they pass or age out. */
+  private pendingChecks = new Map<string, Map<string, string>>();
+  private skipStats = new Map<string, { at: number; checked: number; reasons: Map<string, number> }>();
+
   private async tickSniper(a: Agent) {
     const seen = this.seenTokens.get(a.id) ?? new Set<string>();
     this.seenTokens.set(a.id, seen);
-    const fresh = this.d.market.recentLaunches(50).filter((l) => !seen.has(l.mint));
+    const waiting = this.pendingChecks.get(a.id) ?? new Map<string, string>();
+    this.pendingChecks.set(a.id, waiting);
+    const maxAge = a.spec.universe?.maxAgeSeconds ?? 3_600;
+    const fresh = this.d.market.recentLaunches(300).filter((l) => !seen.has(l.mint));
     for (const l of fresh) {
-      seen.add(l.mint);
       const risk = this.d.market.tokenRisk(l.mint);
-      if (!risk) continue;
+      if (!risk) {
+        seen.add(l.mint);
+        continue;
+      }
       const age = risk.ageSeconds ?? risk.ageMinutes * 60;
-      const maxAge = a.spec.universe?.maxAgeSeconds ?? 3_600;
+      const first = !waiting.has(l.mint);
       if (age > maxAge) {
+        seen.add(l.mint);
+        const last = waiting.get(l.mint);
+        waiting.delete(l.mint);
         // Launches that were already old when the agent started are ignored silently.
-        if (age <= maxAge + 600) this.decision(a, "skip", { symbol: risk.symbol, reason: `launched ${Math.round(age)}s ago (max ${maxAge}s)` });
+        if (age <= maxAge + 600) this.decision(a, "skip", { symbol: risk.symbol, reason: last ? `${last}; aged out after ${maxAge}s` : `launched ${Math.round(age)}s ago (max ${maxAge}s)` });
         continue;
       }
       // Never snipe a token the owner launched themselves.
       const reg = this.d.registry.get(risk.mint);
       if (reg && reg.creatorUserId === a.userId) {
+        seen.add(l.mint);
         this.decision(a, "skip", { symbol: risk.symbol, reason: "your own launch" });
         continue;
       }
       const reason = this.filterReason(a, risk);
       if (reason) {
-        this.decision(a, "skip", { symbol: risk.symbol, reason });
-        this.activity(a, `Skipped $${risk.symbol}: ${reason}`);
+        // Not yet: holders and concentration change fast in the first minutes. Check again next tick.
+        waiting.set(l.mint, reason);
+        if (first) {
+          this.decision(a, "skip", { symbol: risk.symbol, reason, recheck: true });
+          this.countSkip(a, reason);
+        }
         continue;
       }
-      this.decision(a, "entry", { symbol: risk.symbol, holders: risk.holdersCollapsed, topWalletPct: risk.topWalletPct });
+      seen.add(l.mint);
+      waiting.delete(l.mint);
+      this.decision(a, "entry", { symbol: risk.symbol, holders: risk.holdersCollapsed, topWalletPct: risk.topWalletPct, top10Pct: risk.top10Pct, ageSeconds: Math.round(age) });
       await this.buy(a, risk.symbol, "SOL");
     }
+    if (seen.size > 5_000) {
+      const keep = [...seen].slice(-2_000);
+      seen.clear();
+      keep.forEach((m) => seen.add(m));
+    }
+    this.flushSkipSummary(a);
+  }
+
+  /** One activity line per minute instead of one per skipped launch. */
+  private countSkip(a: Agent, reason: string) {
+    const st = this.skipStats.get(a.id) ?? { at: Date.now(), checked: 0, reasons: new Map<string, number>() };
+    st.checked++;
+    const kind = reason.replace(/[\d.]+/g, "N").replace(/\$\w+/g, "");
+    st.reasons.set(kind, (st.reasons.get(kind) ?? 0) + 1);
+    this.skipStats.set(a.id, st);
+  }
+
+  private flushSkipSummary(a: Agent, force = false) {
+    const st = this.skipStats.get(a.id);
+    if (!st || (!force && Date.now() - st.at < 60_000)) return;
+    this.skipStats.delete(a.id);
+    const top = [...st.reasons.entries()].sort((x, y) => y[1] - x[1])[0];
+    if (st.checked === 1 && top) this.activity(a, `Watching 1 new launch: ${top[0].replace(/N/g, "#")}`);
+    else if (top) this.activity(a, `Watching ${st.checked} new launches, none passed yet (most common: ${top[0].replace(/N/g, "#")})`);
   }
 
   private async manageExits(a: Agent) {
