@@ -27,6 +27,8 @@ interface WsLike {
 }
 
 interface Tracked {
+  /** Followed after a lookup: we never saw its full trade history, so holder stats come from the lookup, not the stream. */
+  partial?: boolean;
   mint: string;
   creator: string;
   balances: Map<string, number>;
@@ -203,7 +205,7 @@ export class PumpPortalFeed {
         else t.balances.delete(who);
       }
     }
-    this.market.updateMeme(mint, { ...this.holderStats(t), liquidityUsd: this.liquidityOf(msg) }, this.priceOf(msg));
+    this.market.updateMeme(mint, { ...(t.partial ? {} : this.holderStats(t)), liquidityUsd: this.liquidityOf(msg) }, this.priceOf(msg));
   }
 
   private holderStats(t: Tracked) {
@@ -216,6 +218,13 @@ export class PumpPortalFeed {
       topWalletPct: pct(vals[0] ?? 0),
       top10Pct: pct(vals.slice(0, 10).reduce((a, b) => a + b, 0)),
     };
+  }
+
+  /** Follow an existing token's trades (e.g. one the user looked up). */
+  follow(mint: string) {
+    if (this.tracked.has(mint)) return;
+    this.tracked.set(mint, { mint, creator: "", balances: new Map(), createdAt: Date.now(), partial: true });
+    this.followMore([mint]);
   }
 
   private followMore(keys: string[]) {

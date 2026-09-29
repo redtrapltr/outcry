@@ -11,6 +11,7 @@
 import { RealHistory } from "../data/history.js";
 import { LiveFeeds } from "../data/live.js";
 import { PumpPortalFeed } from "../data/pumpfeed.js";
+import { TokenLookup } from "../data/lookup.js";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
@@ -52,6 +53,7 @@ export async function buildServer(opts: ServerOptions = {}) {
   const pump = !opts.app && process.env.OUTCRY_PUMP_FEED === "pumpportal" ? new PumpPortalFeed(app.market, { isHeld: holds }).start() : undefined;
   const router = opts.router ?? ModelRouter.fromEnv();
   const orch = new Orchestrator(app, router);
+  if (live || pump) orch.tools.lookup = new TokenLookup(app.market, { follow: (m) => pump?.follow(m) });
   const auth = new AuthService();
   let persistence: Persistence | undefined;
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
