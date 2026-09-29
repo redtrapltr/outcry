@@ -117,6 +117,7 @@ export class Orchestrator {
         toolCalls.push(c.name);
         const out = await this.tools.run(userId, c.name, c.input);
         if (out.card) cards.push(out.card);
+        if (out.cards) cards.push(...out.cards);
         if (out.validationError) failures++;
         results.push({ type: "tool_result", tool_use_id: c.id, content: this.tools.wrapForModel(c.name, out), is_error: !out.ok });
       }

@@ -18,7 +18,7 @@ export function classify(text: string): Intent {
   if (/\bwhy did\b|\bexplain\b.*\b(agent|buy|sell)\b/.test(s)) return "explain";
   if (/\b(launch|deploy|create|mint)\b.*\b(token|coin|\$[a-z0-9]+|on pump)/.test(s)) return "launch";
   if (/\b(agent|bot|autopilot|trade for me|manage my|snipe|sniper)\b/.test(s)) return "agent";
-  if (/\b(strategy|backtest|rsi|macd|ema|sma|bollinger|indicator|crosses|pine)\b/.test(s)) return "strategy";
+  if (/\b(strateg(y|ies)|backtests?|rsi|macd|ema|sma|bollinger|indicators?|crosses|pine|profitable|edge)\b/.test(s)) return "strategy";
   if (/\b(buy|sell|swap|long|dump|ape|put)\b/.test(s)) return "order";
   // "4 SOL", "exactly 4.0 sol please", "$200 of NVDA": a quantity next to an asset is an order.
   if (/\d+(?:[.,]\d+)?\s*\$?(sol|eth|btc|nvda|spy|tsla|aapl|usdc)\b|\$\s*\d+.*\b(of|in|into)\b/.test(s)) return "order";
@@ -186,6 +186,9 @@ export class OfflineProvider implements ModelProvider {
       case "launch": return call("propose_launch", parseLaunch(text));
       case "agent": return call("propose_agent", parseAgent(text));
       case "strategy": {
+        if (/\b(best|most profitable|find|search|compare|which strateg)/.test(text.toLowerCase())) {
+          return call("search_strategies", { asset: (text.match(ASSET_RE)?.[1] ?? "SOL").toUpperCase() });
+        }
         const l = text.toLowerCase();
         // Period words only: "1 year", "6 months", "over the last 90 days" (not "20 day high").
         const m = l.match(/(\d+|one|a|two|three)\s*(year|yr|month)s?\b/) ?? l.match(/(?:over|past|last|for)\s+(?:the\s+)?(?:last\s+)?(\d+)\s*(week|day)s?\b/);

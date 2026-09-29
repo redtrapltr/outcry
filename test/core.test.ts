@@ -381,3 +381,25 @@ describe("strategy lab: periods, sizing, breakouts, real data", () => {
     expect(res.strategy.summary).toMatch(/real prices/);
   });
 });
+
+describe("strategy search", () => {
+  it("tests the template library, ranks it and saves the top strategies", async () => {
+    const { createOutcry } = await import("../src/app.js");
+    const app = createOutcry({ mode: "paper" } as never);
+    const res = await app.lab.search("u1", { asset: "AAPL", days: 365 });
+    expect(res.ok).toBe(true);
+    if (!res.ok) return;
+    expect(res.tested).toBeGreaterThan(15);
+    expect(res.real).toBe(false);
+    expect(res.top).toHaveLength(3);
+    expect(app.lab.get(res.top[0]!.id)).toBeDefined();
+    const days = (res.top[0]!.report.to - res.top[0]!.report.from) / 86_400_000;
+    expect(days).toBeGreaterThan(300);
+    expect(days).toBeLessThan(370);
+  });
+
+  it("routes 'most profitable strategies' to the frontier tier and the search tool", async () => {
+    const { classify } = await import("../src/llm/offline.js");
+    expect(classify("search for the most profitable strategies for aapl")).toBe("strategy");
+  });
+});

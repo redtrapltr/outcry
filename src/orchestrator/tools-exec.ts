@@ -17,6 +17,7 @@ export type Card =
   | { type: "launch"; ticket: LaunchTicket; devSharePct: number }
   | { type: "agent"; agent: Agent; blueprint: BlueprintNode[]; backtest?: BacktestSummary; replay?: SniperReplay }
   | { type: "strategy"; strategy: Omit<SavedStrategy, "report">; report: BacktestSummary }
+  | { type: "strategy_search"; asset: string; tested: number; real: boolean; sources: string[]; buyHoldPct: number; ranking: StrategyRank[] }
   | { type: "portfolio"; data: ReturnType<Outcry["users"]["portfolio"]> }
   | { type: "agent_control"; agent: Agent };
 
@@ -24,6 +25,11 @@ export interface BlueprintNode {
   key: "goal" | "markets" | "signals" | "risk" | "execution";
   label: string;
   lines: string[];
+}
+
+export interface StrategyRank {
+  rank: number; name: string; timeframe: string; trades: number; inSamplePct: number; outOfSamplePct: number;
+  fullPct: number; holdPct: number; maxDrawdownPct: number; winRatePct: number; strategyId?: string;
 }
 
 export interface BacktestSummary {
@@ -47,6 +53,8 @@ export interface ToolOutcome {
   /** JSON-able content returned to the model. */
   result: Record<string, unknown>;
   card?: Card;
+  /** Extra cards after `card` (e.g. a ranking followed by the top strategies). */
+  cards?: Card[];
   /** True when the input failed validation (counts toward escalation). */
   validationError?: boolean;
 }
@@ -215,6 +223,26 @@ export class ToolExecutor {
             ok: true,
             result: { summary: `${res.agent.spec.name} updated to v${res.agent.version} (${res.agent.state}). ${res.agent.lastBacktest?.summary ?? ""}`, agentId: res.agent.id },
             card: { type: "agent", agent: res.agent, blueprint: blueprint(res.agent), backtest: bt, replay: res.replay },
+          };
+        }
+        case "search_strategies": {
+          const tfs = Array.isArray(i.timeframes) ? (i.timeframes as string[]).filter((x) => ["1h", "4h", "1d"].includes(x)) : undefined;
+          const res = await app.lab.search(userId, { asset: String(i.asset ?? ""), days: Number(i.lookback_days ?? 0) || undefined, timeframes: tfs as never, sizeUsd: Number(i.size_usd ?? 0) || undefined });
+          if (!res.ok) return { ok: false, result: { error: res.error } };
+          const pct = (n: number) => `${n >= 0 ? "+" : ""}${n.toFixed(1)}%`;
+          const lines = res.ranking.slice(0, 8).map((r) => `${r.rank}. ${r.name}: ${pct(r.fullPct)} full, ${pct(r.outOfSamplePct)} out-of-sample, ${r.trades} trades, ${r.winRatePct.toFixed(0)}% win, max DD ${r.maxDrawdownPct.toFixed(1)}%`);
+          const cards: Card[] = [{ type: "strategy_search", asset: res.asset, tested: res.tested, real: res.real, sources: res.sources, buyHoldPct: res.buyHoldPct, ranking: res.ranking }];
+          for (const s of res.top.slice(0, 2)) {
+            const { report, ...rest } = s;
+            cards.push({ type: "strategy", strategy: rest, report: summarizeReport(report, rest.summary) });
+          }
+          return {
+            ok: true,
+            result: {
+              summary: `Tested ${res.tested} strategies on ${res.asset} (${res.real ? "REAL prices: " + res.sources.join(", ") : "SIMULATED prices, not real history"}). Buy-and-hold over the window: ${pct(res.buyHoldPct)}. Ranked on the first 70% of the window; out-of-sample = last 30%.\n${lines.join("\n")}`,
+              topStrategyIds: res.top.map((t) => t.id),
+            },
+            cards,
           };
         }
         case "compile_strategy": {
