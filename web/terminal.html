@@ -553,7 +553,7 @@ function strategyCard(card) {
       <div class="metric"><b>${f.sharpe.toFixed(2)}</b><span>SHARPE</span></div>
       <div class="metric"><b>${f.exposurePct.toFixed(0)}%</b><span>TIME IN MARKET</span></div>
     </div>
-    <div class="curve"><div class="ctl-top"><span>Equity curve · past, simulated</span><span class="mono" style="font-size:11px">$${fmt(min, 0)}–$${fmt(max, 0)}</span></div><svg viewBox="0 0 600 115" preserveAspectRatio="none" role="img" aria-label="Backtest equity curve"><path d="${path}" fill="none" stroke="#8E95FF" stroke-width="2"/></svg></div>
+    <div class="curve"><div class="ctl-top"><span>Equity curve · past · ${r.realData ? "real prices" : "simulated prices"}</span><span class="mono" style="font-size:11px">$${fmt(min, 0)}–$${fmt(max, 0)}</span></div><svg viewBox="0 0 600 115" preserveAspectRatio="none" role="img" aria-label="Backtest equity curve"><path d="${path}" fill="none" stroke="#8E95FF" stroke-width="2"/></svg></div>
     ${r.warnings.length ? `<div class="warns">${r.warnings.map(w => `<span>⚠ ${esc(w)}</span>`).join('')}</div>` : ''}
     <div class="actions"><button class="btn btn-primary" type="button">Turn into an agent (paper)</button></div>`;
   wrap.querySelector('button').onclick = async (e) => {
