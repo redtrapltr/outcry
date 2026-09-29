@@ -85,3 +85,21 @@ describe("chat history", () => {
     await s2.f.close();
   });
 });
+
+describe("chat list", () => {
+  it("lists, renames and deletes chats", async () => {
+    const s = await buildServer({ store: null, tickMs: 0, simLaunchEveryMs: 0 });
+    const inj = (method: string, url: string, token?: string, payload?: unknown) =>
+      s.f.inject({ method: method as never, url, headers: token ? { authorization: `Bearer ${token}` } : {}, payload: payload as never });
+    const { token } = (await inj("POST", "/api/session", undefined, {})).json();
+    await inj("POST", "/api/chat", token, { sessionId: "a", text: "buy 1 SOL" });
+    await inj("POST", "/api/chat", token, { sessionId: "b", text: "what is my balance" });
+    expect((await inj("GET", "/api/chat", token)).json().map((c: { sessionId: string }) => c.sessionId)).toEqual(["b", "a"]);
+    await inj("PATCH", "/api/chat/a", token, { title: "Orders" });
+    await inj("DELETE", "/api/chat/b", token);
+    const list = (await inj("GET", "/api/chat", token)).json();
+    expect(list).toHaveLength(1);
+    expect(list[0].title).toBe("Orders");
+    await s.f.close();
+  });
+});

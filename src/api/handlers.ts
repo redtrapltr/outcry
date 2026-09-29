@@ -109,10 +109,22 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     const lines = transcripts.get(`${uid}:${params.sessionId}`) ?? [];
     return { sessionId: params.sessionId, lines: lines.map((l) => (l.cards ? { ...l, cards: freshCards(uid, l.cards) } : l)) };
   });
+  route("DELETE", "/api/chat/:sessionId", ({ uid, params }) => {
+    transcripts.delete(`${uid}:${params.sessionId}`);
+    orch.dropSession(uid, params.sessionId!);
+    return { ok: true };
+  });
+  route("PATCH", "/api/chat/:sessionId", ({ uid, params, body }) => {
+    const b = z.object({ title: z.string().trim().min(1).max(60) }).parse(body);
+    const l = transcripts.get(`${uid}:${params.sessionId}`);
+    if (!l) throw new HttpError(404, "Chat not found");
+    (l as (Line & { title?: string })[])[0]!.title = b.title;
+    return { ok: true };
+  });
   route("GET", "/api/chat", ({ uid }) =>
     [...transcripts.entries()]
       .filter(([k]) => k.startsWith(`${uid}:`))
-      .map(([k, l]) => ({ sessionId: k.slice(uid.length + 1), title: l.find((x) => x.role === "user")?.text.slice(0, 60) ?? "Chat", at: l.at(-1)?.at, messages: l.length }))
+      .map(([k, l]) => ({ sessionId: k.slice(uid.length + 1), title: (l[0] as Line & { title?: string } | undefined)?.title ?? l.find((x) => x.role === "user")?.text.slice(0, 60) ?? "Chat", at: l.at(-1)?.at, messages: l.length }))
       .sort((a, b) => String(b.at).localeCompare(String(a.at))));
 
   // --- tickets ------------------------------------------------------------------
