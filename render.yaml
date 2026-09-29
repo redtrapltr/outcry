@@ -4,7 +4,7 @@ services:
   - type: web
     name: outcry
     runtime: node
-    plan: free            # free instances sleep when idle; in-memory state resets on restart
+    plan: free            # free instances sleep after 15 min idle (agents pause); Starter keeps them running
     region: frankfurt
     buildCommand: npm ci && npm run build:web
     startCommand: npm start
@@ -17,6 +17,11 @@ services:
         value: "1"
       - key: OUTCRY_MODE
         value: paper
+      # Users, wallets, agents, tickets and the audit log are saved here and survive restarts.
+      - key: DATABASE_URL
+        fromDatabase:
+          name: outcry-db
+          property: connectionString
       - key: OUTCRY_SIM_LAUNCH_MS
         value: "15000"
       # AI spend caps (USD per UTC day). Over the cap, chat falls back to the offline engine.
@@ -32,3 +37,9 @@ services:
       # Free key from twelvedata.com: real stock history for backtests (crypto works without it).
       - key: TWELVEDATA_API_KEY
         sync: false
+
+databases:
+  - name: outcry-db
+    databaseName: outcry
+    region: frankfurt
+    plan: free   # free Postgres is deleted after 30 days; switch to basic-256mb (~$6/month) to keep data

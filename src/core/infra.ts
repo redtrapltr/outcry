@@ -68,6 +68,25 @@ export class AuditLog {
     return entry;
   }
 
+  get length() {
+    return this.entries.length;
+  }
+
+  /** Entries from `seq` on (for incremental persistence). */
+  since(seq: number): AuditEntry[] {
+    return this.entries.slice(seq);
+  }
+
+  /** Restore a persisted log. Refuses a chain that doesn't verify. */
+  load(entries: AuditEntry[]) {
+    const prev = this.entries;
+    this.entries = [...entries].sort((a, b) => a.seq - b.seq);
+    if (!this.verify()) {
+      this.entries = prev;
+      throw new Error("Persisted audit log failed verification; refusing to load it");
+    }
+  }
+
   query(filter: (e: AuditEntry) => boolean, limit = 100): AuditEntry[] {
     return this.entries.filter(filter).slice(-limit);
   }

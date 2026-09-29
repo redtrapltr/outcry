@@ -10,7 +10,7 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "demo": "tsx scripts/demo.ts",
-    "build:web": "esbuild src/browser/entry.ts --bundle --format=iife --platform=browser --target=es2020 --minify --outfile=web/outcry-local.js"
+    "build:web": "esbuild src/browser/entry.ts --bundle --format=iife --platform=browser --target=es2020 --minify --outfile=web/outcry-local.js && esbuild node_modules/@simplewebauthn/browser/esm/index.js --bundle --format=esm --platform=browser --target=es2020 --minify --outfile=web/webauthn.js"
   },
   "engines": {
     "node": ">=20"
@@ -18,14 +18,18 @@
   "dependencies": {
     "@fastify/static": "^10.1.5",
     "@fastify/websocket": "^11.3.1",
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.3",
+    "esbuild": "^0.28.2",
     "fastify": "^5.12.5",
     "nanoid": "^6.0.1",
-    "zod": "^4.6.5",
+    "pg": "^8.23.0",
     "tsx": "^4.23.15",
-    "esbuild": "^0.28.2"
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/node": "^26.6.3",
+    "@types/pg": "^8.23.1",
     "playwright": "^1.63.0",
     "typescript": "^7.0.2",
     "vitest": "^5.0.2"

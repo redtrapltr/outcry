@@ -25,7 +25,12 @@ Safety rails for a public link:
 - **AI spend caps.** `OUTCRY_MAX_AI_USD_PER_USER` ($0.50/day) and `OUTCRY_MAX_AI_USD_PER_DAY` ($10/day). Over a cap, the chat keeps working on the offline engine.
 - **Session limit.** At most 30 new sessions per IP per hour.
 - **Model errors.** If the model API fails (bad key, outage, rate limit), the chat falls back to the next model, then to the offline engine.
-- **Free plan limits.** Free instances sleep when idle, and in-memory state (wallets, agents) resets on restart. Use a paid instance plus Postgres before real users.
+- **Saved state.** Users, sessions, passkeys, wallets, agents, tickets, strategies, chat history and the hash-chained audit log are saved to Postgres (`DATABASE_URL`, created by the blueprint) every few seconds and on shutdown, and restored on boot. Without a database, `OUTCRY_STATE_FILE=./data/state.json` saves to a file; with neither, state lives in memory only.
+- **Free plan limits.** Free web instances sleep after 15 minutes idle, which pauses agents; the Starter plan keeps them running. Free Postgres is deleted after 30 days; the Basic plan keeps it.
+
+## Accounts
+
+Everyone starts as a guest; the session is remembered in that browser. **Secure with a passkey** (Face ID, Touch ID, Windows Hello, a security key) turns the guest into an account that can **sign in with a passkey** on any device. On a secured account every ticket and launch must be confirmed with the passkey; the server checks a WebAuthn assertion bound to that ticket (`src/api/auth.ts`). Live mode refuses to sign for accounts without a passkey.
 
 ## Static demo (no server)
 
@@ -72,13 +77,13 @@ See `.env.example`. Model IDs and prices come from the architecture doc (Sept 20
 
 ## Before going live (not done in v0)
 
-1. **Passkeys:** replace `/api/session` with WebAuthn registration, and verify each `passkeyAssertion` against the ticket hash (`@simplewebauthn/server`).
+1. ~~**Passkeys**~~ done (`src/api/auth.ts`). Still to do: passkey on agent deploys in ask/auto mode, account recovery, session expiry.
 2. **Turnkey:** implement `Signer` with Turnkey sub-orgs and policies. The rules in `SimulatedTurnkeySigner` are the spec. Negotiate enterprise signature pricing first; see unit economics.
 3. **Market data:** implement `MarketData` with Pyth or Chainlink prices, a Helius or Yellowstone token stream, Birdeye or Codex holders, and Ondo OHLC.
 4. **Jupiter:** confirm Swap V2 endpoint paths, then finish `simulate` and `submit` in `src/adapters/live/jupiter.ts` (Jito bundle, retry once).
 5. **pump.fun:** turn the `LaunchPlan` steps into real instructions with `@solana/web3.js`. Verify the program id, account layouts and bonding-curve constants in `policy/engine.ts`.
 6. **Ondo / xStocks:** get API access and written confirmation on Swiss eligibility.
-7. **Persistence:** move the stores to Postgres, ClickHouse and Redis, and the scheduler to Temporal.
+7. **Persistence:** snapshot persistence to Postgres is done (`src/core/persist.ts`, `src/api/persistence.ts`). At scale, move to per-table storage, ClickHouse for market data and Temporal for the agent scheduler.
 8. **Legal:** get the AMLA/SRO position, check the FinSA advertising rules for tokenized stocks, and decide EU scope under MiCA.
 9. **External security audit** of the policy engine, signer integration and agent runtime.
 
