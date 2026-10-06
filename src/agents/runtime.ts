@@ -399,6 +399,20 @@ export class AgentRuntime {
     }
   }
 
+  /** On-chain holder check (Helius / Solana RPC), set by the server. */
+  verifyHolders?: (mint: string) => Promise<{ topWalletPct: number; top10Pct: number; poolPct: number } | undefined>;
+  private verifyCache = new Map<string, { at: number; v: Awaited<ReturnType<NonNullable<AgentRuntime["verifyHolders"]>>> }>();
+
+  private async verify(mint: string) {
+    if (!this.verifyHolders) return undefined;
+    const hit = this.verifyCache.get(mint);
+    if (hit && Date.now() - hit.at < 15_000) return hit.v;
+    const v = await this.verifyHolders(mint).catch(() => undefined);
+    this.verifyCache.set(mint, { at: Date.now(), v });
+    if (this.verifyCache.size > 2_000) this.verifyCache.delete(this.verifyCache.keys().next().value!);
+    return v;
+  }
+
   /** Young launches that failed a filter so far: re-checked every tick until they pass or age out. */
   private pendingChecks = new Map<string, Map<string, string>>();
   private skipStats = new Map<string, { at: number; checked: number; reasons: Map<string, number> }>();
@@ -443,9 +457,23 @@ export class AgentRuntime {
         }
         continue;
       }
+      // Passed on stream data: confirm holder concentration on-chain before buying.
+      const chain = await this.verify(l.mint);
+      let verified = false;
+      if (chain) {
+        (this.d.market as { updateMeme?: (m: string, p: object) => void }).updateMeme?.(l.mint, { topWalletPct: chain.topWalletPct, top10Pct: chain.top10Pct, poolPct: chain.poolPct, topWalletUnknown: false });
+        const again = this.filterReason(a, { ...risk, topWalletPct: chain.topWalletPct, top10Pct: chain.top10Pct, topWalletUnknown: false });
+        if (again) {
+          waiting.set(l.mint, `${again} (on-chain check)`);
+          if (first) this.countSkip(a, again);
+          this.decision(a, "skip", { symbol: risk.symbol, reason: `${again} (on-chain check)`, recheck: true });
+          continue;
+        }
+        verified = true;
+      }
       seen.add(l.mint);
       waiting.delete(l.mint);
-      this.decision(a, "entry", { symbol: risk.symbol, holders: risk.holdersCollapsed, topWalletPct: risk.topWalletPct, top10Pct: risk.top10Pct, ageSeconds: Math.round(age) });
+      this.decision(a, "entry", { symbol: risk.symbol, holders: risk.holdersCollapsed, topWalletPct: chain?.topWalletPct ?? risk.topWalletPct, top10Pct: chain?.top10Pct ?? risk.top10Pct, ageSeconds: Math.round(age), onChainVerified: verified });
       await this.buy(a, risk.symbol, "SOL");
     }
     if (seen.size > 5_000) {
