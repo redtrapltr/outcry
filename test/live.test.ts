@@ -137,3 +137,35 @@ describe("token lookup by mint", () => {
     expect(q.ok).toBe(true);
   });
 });
+
+describe("on-chain holder check before a sniper buy", () => {
+  it("blocks a buy when the chain shows a concentrated top wallet, buys when it's clean", async () => {
+    for (const [chainTop, expectBuy] of [[35, false], [4, true]] as const) {
+      const app = createOutcry({ mode: "paper" } as never);
+      const sock = { readyState: 1, send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null } as never;
+      const feed = new PumpPortalFeed(app.market, { makeSocket: () => sock }).start();
+      const checked: string[] = [];
+      app.agents.verifyHolders = async (mint) => (checked.push(mint), { topWalletPct: chainTop, top10Pct: chainTop + 10, poolPct: 80 });
+      const u = app.users.create({ badge: "T", jacket: "memes", residence: "CH" });
+      const { agent } = app.agents.propose(u.id, {
+        name: "CHK", goal: "x", markets: ["memes"], kind: "sniper",
+        universe: { venue: "pumpfun", minHolders: 5, maxTopWalletPct: 20, maxTop10Pct: 50, maxAgeSeconds: 120 },
+        sizeUsd: 10, exit: { stopLossPct: 30, takeProfitPct: 100 },
+        limits: { maxPerTradeUsd: 10, maxPerDayUsd: 50, maxOpenPositions: 3, maxDrawdownPct: 50 }, mode: "paper",
+      });
+      app.agents.deploy(u.id, agent.id, { mode: "paper" });
+      await app.agents.tick();
+      const MINT = "9xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+      feed.handle({ mint: MINT, txType: "create", traderPublicKey: "c", initialBuy: 10_000_000, marketCapSol: 30, vSolInBondingCurve: 31, symbol: "CHK1" });
+      for (let i = 0; i < 6; i++) feed.handle({ mint: MINT, txType: "buy", traderPublicKey: `w${i}`, tokenAmount: 1_000_000, newTokenBalance: 1_000_000, marketCapSol: 32, vSolInBondingCurve: 33 });
+      await app.agents.tick();
+      const log = app.agents.explain(agent.id, 50);
+      expect(checked).toContain(MINT);
+      const entry = log.find((e) => e.action.endsWith("entry"));
+      expect(!!entry).toBe(expectBuy);
+      if (expectBuy) expect((entry!.data as { onChainVerified: boolean }).onChainVerified).toBe(true);
+      else expect(log.some((e) => String((e.data as { reason?: string }).reason).includes("on-chain check"))).toBe(true);
+      feed.stop();
+    }
+  });
+});

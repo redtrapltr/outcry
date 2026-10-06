@@ -54,7 +54,30 @@ export async function buildServer(opts: ServerOptions = {}) {
   const router = opts.router ?? ModelRouter.fromEnv();
   const orch = new Orchestrator(app, router);
   const rpcUrl = process.env.SOLANA_RPC_URL ?? (process.env.HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}` : undefined);
-  if (live || pump) orch.tools.lookup = new TokenLookup(app.market, { follow: (m) => pump?.follow(m), rpcUrl });
+  const lookup = live || pump ? new TokenLookup(app.market, { follow: (m) => pump?.follow(m), rpcUrl }) : undefined;
+  if (lookup) {
+    orch.tools.lookup = lookup;
+    // Snipers confirm holder concentration on-chain before each buy.
+    if (pump) app.agents.verifyHolders = (mint) => lookup.holders(mint);
+  }
+  // Solana RPC status for /api/health (shows whether the Helius key works).
+  const rpcStatus: { provider: string; ok?: boolean; slot?: number; latencyMs?: number; error?: string; checkedAt?: string } = {
+    provider: process.env.SOLANA_RPC_URL ? "custom" : process.env.HELIUS_API_KEY ? "helius" : "public (rate-limited)",
+  };
+  const checkRpc = async () => {
+    const t0 = Date.now();
+    try {
+      const r = await fetch(rpcUrl ?? "https://api.mainnet-beta.solana.com", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "getSlot" }), signal: AbortSignal.timeout(6_000) });
+      const j = (await r.json()) as { result?: number; error?: { message: string } };
+      Object.assign(rpcStatus, { ok: typeof j.result === "number", slot: j.result, latencyMs: Date.now() - t0, error: j.error?.message ?? (r.ok ? undefined : `HTTP ${r.status}`), checkedAt: new Date().toISOString() });
+    } catch (e) {
+      Object.assign(rpcStatus, { ok: false, error: (e as Error).message, checkedAt: new Date().toISOString() });
+    }
+  };
+  if (live || pump) {
+    void checkRpc();
+    setInterval(() => void checkRpc(), 5 * 60_000).unref();
+  }
   const auth = new AuthService();
   let persistence: Persistence | undefined;
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
@@ -63,7 +86,7 @@ export async function buildServer(opts: ServerOptions = {}) {
     marketMode: () => (live?.price("SOL") !== undefined || pump?.status().connected ? "real" : "simulated"),
     extraHealth: () => ({
       persistence: persistence?.status() ?? { store: "memory (data is lost on restart)" },
-      marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches" },
+      marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", solanaRpc: rpcStatus },
     }),
   });
   const store = opts.store === null ? undefined : opts.store ?? (await storeFromEnv());
