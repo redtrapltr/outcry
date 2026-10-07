@@ -103,3 +103,63 @@ describe("chat list", () => {
     await s.f.close();
   });
 });
+
+describe("persistence never takes the site down", () => {
+  const PG = process.env.TEST_DATABASE_URL;
+
+  async function activity(s: Awaited<ReturnType<typeof buildServer>>, n = 3) {
+    const { token } = (await s.f.inject({ method: "POST", url: "/api/session", payload: {} })).json();
+    for (let i = 0; i < n; i++) await s.f.inject({ method: "POST", url: "/api/chat", headers: { authorization: `Bearer ${token}` }, payload: { text: "buy 1 SOL" } });
+    return token as string;
+  }
+
+  it.skipIf(!PG)("starts with a broken audit chain: keeps the valid part, quarantines the rest", async () => {
+    const pg = await import("pg");
+    const pool = new pg.default.Pool({ connectionString: PG });
+    await pool.query("drop table if exists outcry_state; drop table if exists outcry_audit; drop table if exists outcry_audit_quarantine");
+    const s1 = await buildServer({ store: await PostgresStore.connect(PG!), tickMs: 0, simLaunchEveryMs: 0 });
+    const token = await activity(s1);
+    await s1.f.close();
+    const total = Number((await pool.query("select count(*) from outcry_audit")).rows[0].count);
+    expect(total).toBeGreaterThan(4);
+    await pool.query("delete from outcry_audit where seq = 2"); // a gap, like a lost write
+    const s2 = await buildServer({ store: await PostgresStore.connect(PG!), tickMs: 0, simLaunchEveryMs: 0 });
+    const health = (await s2.f.inject({ method: "GET", url: "/api/health" })).json();
+    expect(health.auditIntact).toBe(true);
+    expect(health.persistence.auditRepair.brokenAtSeq).toBe(2);
+    // Users and sessions are still there.
+    expect((await s2.f.inject({ method: "GET", url: "/api/me", headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(200);
+    await s2.persistence!.flush();
+    await s2.f.close();
+    expect(Number((await pool.query("select count(*) from outcry_audit_quarantine")).rows[0].count)).toBe(total - 3);
+    // The next boot is clean.
+    const s3 = await buildServer({ store: await PostgresStore.connect(PG!), tickMs: 0, simLaunchEveryMs: 0 });
+    expect((await s3.f.inject({ method: "GET", url: "/api/health" })).json().persistence.auditRepair).toBeUndefined();
+    await s3.f.close();
+    await pool.end();
+  });
+
+  it.skipIf(!PG)("during a deploy the old instance stops writing once the new one starts", async () => {
+    const pg = await import("pg");
+    const pool = new pg.default.Pool({ connectionString: PG });
+    await pool.query("drop table if exists outcry_state; drop table if exists outcry_audit; drop table if exists outcry_audit_quarantine");
+    const oldI = await buildServer({ store: await PostgresStore.connect(PG!), tickMs: 0, simLaunchEveryMs: 0 });
+    await activity(oldI, 1);
+    await oldI.persistence!.flush();
+    const newI = await buildServer({ store: await PostgresStore.connect(PG!), tickMs: 0, simLaunchEveryMs: 0 });
+    // Both keep working; only the new one may write.
+    await activity(oldI, 2);
+    await activity(newI, 2);
+    await oldI.persistence!.flush();
+    await newI.persistence!.flush();
+    expect(oldI.persistence!.status().lastError).toMatch(/newer instance/);
+    await oldI.f.close();
+    await newI.f.close();
+    const after = await buildServer({ store: await PostgresStore.connect(PG!), tickMs: 0, simLaunchEveryMs: 0 });
+    const h = (await after.f.inject({ method: "GET", url: "/api/health" })).json();
+    expect(h.auditIntact).toBe(true);
+    expect(h.persistence.auditRepair).toBeUndefined();
+    await after.f.close();
+    await pool.end();
+  });
+});

@@ -15,6 +15,10 @@ export class Persistence {
   private saving: Promise<void> | undefined;
   lastSavedAt?: string;
   lastError?: string;
+  /** Set when the persisted audit chain was broken at boot and the tail was quarantined. */
+  auditRepair?: { brokenAtSeq: number; quarantined: number; at: string };
+  private fenced = false;
+  readonly instanceId = `inst_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
   constructor(
     readonly store: StateStore,
@@ -44,8 +48,19 @@ export class Persistence {
   /** Load the last snapshot. Returns what was restored. */
   async restore() {
     const { state, audit } = await this.store.load();
-    if (audit.length) this.app.audit.load(audit);
-    this.lastSeq = this.app.audit.length;
+    // Take over as the only writer first: an older instance still running during a deploy stops saving.
+    await this.store.claim(this.instanceId);
+    if (audit.length) {
+      const broken = this.app.audit.loadValidPrefix(audit);
+      if (broken !== undefined) {
+        // Never refuse to start over a broken log: keep the valid part, set the rest aside, say so.
+        const quarantined = await this.store.quarantine(broken);
+        this.auditRepair = { brokenAtSeq: broken, quarantined, at: new Date().toISOString() };
+        console.error(`[outcry] audit chain broken at seq ${broken}; ${quarantined} entries moved to quarantine`);
+        this.app.audit.append("system", "audit.repaired", { brokenAtSeq: broken, quarantined });
+      }
+    }
+    this.lastSeq = this.auditRepair ? this.app.audit.length - 1 : this.app.audit.length;
     if (state) {
       restore(this.holders(), decode(state));
       this.lastState = state;
@@ -70,7 +85,15 @@ export class Persistence {
       const state = encode(snapshot(this.holders()));
       const seq = this.app.audit.length;
       if (state === this.lastState && seq === this.lastSeq) return;
-      await this.store.save(state, this.app.audit.since(this.lastSeq));
+      if (this.fenced) return;
+      const ok = await this.store.save(state, this.app.audit.since(this.lastSeq), this.instanceId);
+      if (!ok) {
+        this.fenced = true;
+        if (this.timer) clearInterval(this.timer);
+        this.lastError = "A newer instance took over (deploy); this one stopped saving";
+        console.warn("[outcry] fenced by a newer instance; no longer saving");
+        return;
+      }
       this.lastState = state;
       this.lastSeq = seq;
       this.lastSavedAt = new Date().toISOString();
@@ -93,6 +116,6 @@ export class Persistence {
   }
 
   status() {
-    return { store: this.store.kind, lastSavedAt: this.lastSavedAt ?? null, lastError: this.lastError ?? null };
+    return { store: this.store.kind, lastSavedAt: this.lastSavedAt ?? null, lastError: this.lastError ?? null, ...(this.auditRepair ? { auditRepair: this.auditRepair } : {}) };
   }
 }
