@@ -76,7 +76,12 @@ export function restore(holders: Record<string, Holder>, data: Record<string, Re
 export interface StateStore {
   readonly kind: string;
   load(): Promise<{ state?: string; audit: AuditEntry[] }>;
-  save(state: string, newAudit: AuditEntry[]): Promise<void>;
+  /** Become the only writer. A previous instance (e.g. during a deploy) is fenced off. */
+  claim(instanceId: string): Promise<void>;
+  /** Returns false when another instance has claimed the store since (this one must stop writing). */
+  save(state: string, newAudit: AuditEntry[], instanceId: string): Promise<boolean>;
+  /** Move audit entries from `fromSeq` on out of the live log (kept for inspection). */
+  quarantine(fromSeq: number): Promise<number>;
   close?(): Promise<void>;
 }
 
@@ -93,20 +98,38 @@ export class FileStore implements StateStore {
     }
   }
   private audit: AuditEntry[] | undefined;
+  async claim() {}
+  async quarantine(fromSeq: number) {
+    this.audit ??= (await this.load()).audit;
+    const before = this.audit.length;
+    this.audit = this.audit.filter((e) => e.seq < fromSeq);
+    return before - this.audit.length;
+  }
   async save(state: string, newAudit: AuditEntry[]) {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     this.audit ??= (await this.load()).audit;
-    this.audit.push(...newAudit);
+    const have = new Set(this.audit.map((e) => e.seq));
+    this.audit.push(...newAudit.filter((e) => !have.has(e.seq)));
     await fs.mkdir(path.dirname(this.path), { recursive: true });
     const tmp = `${this.path}.tmp`;
     await fs.writeFile(tmp, JSON.stringify({ state, audit: this.audit }));
     await fs.rename(tmp, this.path);
+    return true;
   }
 }
 
+interface PgResult {
+  rows: Record<string, unknown>[];
+  rowCount?: number | null;
+}
+interface PgClient {
+  query(sql: string, params?: unknown[]): Promise<PgResult>;
+  release(): void;
+}
 interface PgLike {
-  query(sql: string, params?: unknown[]): Promise<{ rows: Record<string, unknown>[] }>;
+  query(sql: string, params?: unknown[]): Promise<PgResult>;
+  connect(): Promise<PgClient>;
   end(): Promise<void>;
 }
 
@@ -130,6 +153,33 @@ export class PostgresStore implements StateStore {
   private async migrate() {
     await this.pool.query(`create table if not exists outcry_state (id text primary key, data text not null, updated_at timestamptz not null default now())`);
     await this.pool.query(`create table if not exists outcry_audit (seq integer primary key, entry text not null)`);
+    await this.pool.query(`alter table outcry_state add column if not exists owner text`);
+    await this.pool.query(`create table if not exists outcry_audit_quarantine (seq integer not null, entry text not null, moved_at timestamptz not null default now())`);
+  }
+
+  async claim(instanceId: string) {
+    await this.ready;
+    await this.pool.query(
+      `insert into outcry_state (id, data, owner, updated_at) values ('main', '', $1, now()) on conflict (id) do update set owner = excluded.owner`,
+      [instanceId],
+    );
+  }
+
+  async quarantine(fromSeq: number) {
+    await this.ready;
+    const c = await this.pool.connect();
+    try {
+      await c.query("begin");
+      await c.query(`insert into outcry_audit_quarantine (seq, entry) select seq, entry from outcry_audit where seq >= $1`, [fromSeq]);
+      const r = await c.query(`delete from outcry_audit where seq >= $1`, [fromSeq]);
+      await c.query("commit");
+      return r.rowCount ?? 0;
+    } catch (e) {
+      await c.query("rollback").catch(() => {});
+      throw e;
+    } finally {
+      c.release();
+    }
   }
 
   async load() {
@@ -137,17 +187,20 @@ export class PostgresStore implements StateStore {
     const s = await this.pool.query(`select data from outcry_state where id = 'main'`);
     const a = await this.pool.query(`select entry from outcry_audit order by seq`);
     // Entries are stored as exact text: jsonb would reorder keys and break the hash chain.
-    return { state: s.rows[0]?.data as string | undefined, audit: a.rows.map((r) => (typeof r.entry === "string" ? JSON.parse(r.entry) : r.entry) as AuditEntry) };
+    return { state: (s.rows[0]?.data as string | undefined) || undefined, audit: a.rows.map((r) => (typeof r.entry === "string" ? JSON.parse(r.entry) : r.entry) as AuditEntry) };
   }
 
-  async save(state: string, newAudit: AuditEntry[]) {
+  async save(state: string, newAudit: AuditEntry[], instanceId: string) {
     await this.ready;
-    await this.pool.query("begin");
+    // One connection for the whole transaction (pool.query would spread it across connections).
+    const c = await this.pool.connect();
     try {
-      await this.pool.query(
-        `insert into outcry_state (id, data, updated_at) values ('main', $1, now()) on conflict (id) do update set data = excluded.data, updated_at = now()`,
-        [state],
-      );
+      await c.query("begin");
+      const u = await c.query(`update outcry_state set data = $1, updated_at = now() where id = 'main' and owner = $2`, [state, instanceId]);
+      if (!u.rowCount) {
+        await c.query("rollback");
+        return false; // fenced: a newer instance owns the store
+      }
       for (let i = 0; i < newAudit.length; i += 200) {
         const chunk = newAudit.slice(i, i + 200);
         const params: unknown[] = [];
@@ -155,12 +208,15 @@ export class PostgresStore implements StateStore {
           params.push(e.seq, JSON.stringify(e));
           return `($${j * 2 + 1}, $${j * 2 + 2})`;
         });
-        await this.pool.query(`insert into outcry_audit (seq, entry) values ${values.join(",")} on conflict (seq) do nothing`, params);
+        await c.query(`insert into outcry_audit (seq, entry) values ${values.join(",")} on conflict (seq) do nothing`, params);
       }
-      await this.pool.query("commit");
+      await c.query("commit");
+      return true;
     } catch (e) {
-      await this.pool.query("rollback").catch(() => {});
+      await c.query("rollback").catch(() => {});
       throw e;
+    } finally {
+      c.release();
     }
   }
 

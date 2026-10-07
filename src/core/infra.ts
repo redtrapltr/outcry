@@ -77,6 +77,24 @@ export class AuditLog {
     return this.entries.slice(seq);
   }
 
+  /**
+   * Restore the longest valid prefix of a persisted log. Returns the seq of the
+   * first broken entry (everything from there was not loaded), or undefined.
+   */
+  loadValidPrefix(entries: AuditEntry[]): number | undefined {
+    const sorted = [...entries].sort((a, b) => a.seq - b.seq);
+    const ok: AuditEntry[] = [];
+    let prev = "genesis";
+    for (const e of sorted) {
+      const expect = sha256Hex(JSON.stringify({ seq: e.seq, at: e.at, actor: e.actor, action: e.action, data: e.data, prevHash: prev }));
+      if (e.seq !== ok.length || e.prevHash !== prev || e.hash !== expect) break;
+      ok.push(e);
+      prev = e.hash;
+    }
+    this.entries = ok;
+    return ok.length < sorted.length ? ok.length : undefined;
+  }
+
   /** Restore a persisted log. Refuses a chain that doesn't verify. */
   load(entries: AuditEntry[]) {
     const prev = this.entries;
