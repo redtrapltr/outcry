@@ -27,6 +27,9 @@ interface Session {
 const MAX_ITERATIONS = 6;
 const KEEP_MESSAGES = 12; // last ~6 turns; older turns roll into the summary
 
+/** Phrases that tell the user a ticket exists and can be signed. */
+const CLAIMS_TICKET = /ticket (is )?(ready|created|prepared)|ticket for .{0,60}(is|waiting)|tap \**sign|sign (it |them )?(in the app|to (execute|deploy|launch))|waiting for your signature|ready to sign/i;
+
 export class Orchestrator {
   private sessions = new Map<string, Session>();
   readonly tools: ToolExecutor;
@@ -56,6 +59,12 @@ export class Orchestrator {
     return [
       `Wallet: $${p.walletUsd.toFixed(2)}; balances ${Object.entries(p.balances).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${+v.toFixed(4)}`).join(", ")}.`,
       agents.length ? `Agents: ${agents.join(", ")}.` : "No agents yet.",
+      (() => {
+        const pending = this.app.desk.listForUser(userId).filter((t) => t.status === "needs_confirmation" || t.status === "needs_second_confirmation").slice(-5);
+        return pending.length
+          ? `Tickets waiting for the user's signature (shown in the app's "Waiting for your signature" panel): ${pending.map((t) => `${t.id} ${t.kind === "launch" ? "launch" : (t as { legs?: { side: string; asset: string }[] }).legs?.map((l) => `${l.side} ${l.asset}`).join("+")}`).join("; ")}.`
+          : "No tickets are waiting for a signature.";
+      })(),
       s.summary ? `Earlier in this session: ${s.summary}` : "",
     ].filter(Boolean).join("\n");
   }
@@ -86,6 +95,7 @@ export class Orchestrator {
 
     const turnMessages: ChatMessage[] = [{ role: "user", content: `${text}\n\n<context>\n${this.context(userId, s)}\n</context>` }];
     let reply = "";
+    let corrected = false;
 
     for (let iter = 0; iter < MAX_ITERATIONS; iter++) {
       let res: Awaited<ReturnType<ModelProvider["chat"]>> | undefined;
@@ -115,6 +125,23 @@ export class Orchestrator {
       const texts = res.content.filter((b) => b.type === "text").map((b) => (b as { text: string }).text);
       if (!calls.length) {
         reply = texts.join("\n").trim();
+        // Guard: a reply that says a ticket is ready when no ticket was created this turn.
+        const madeTicket = cards.some((c) => c.type === "order" || c.type === "launch");
+        const asked = toolCalls.some((n) => n === "propose_order" || n === "propose_launch");
+        // An existing unsigned ticket is fine to point at (it's listed in the app); only a ticket that exists nowhere is a problem.
+        const anyPending = this.app.desk.listForUser(userId).some((t) => t.status === "needs_confirmation" || t.status === "needs_second_confirmation");
+        if (!corrected && !madeTicket && !asked && !anyPending && CLAIMS_TICKET.test(reply)) {
+          corrected = true;
+          this.app.audit.append("system", "llm.claimed_ticket_without_tool", { model, reply: reply.slice(0, 200) });
+          turnMessages.push({ role: "user", content: "System check: your reply says a ticket is ready, but no propose_order or propose_launch call was made in this turn, so the user sees nothing to sign. Call the right tool now to create the ticket. If the user's request does not call for a new ticket, say plainly that nothing new was created." });
+          if (route.tier !== "T2") {
+            route = { ...route, tier: "T2", reason: "claimed a ticket without creating it" };
+            candidates = candidatesFor("T2");
+            ci = 0;
+            escalated = true;
+          }
+          continue;
+        }
         break;
       }
       const results: ContentBlock[] = [];

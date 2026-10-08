@@ -51,6 +51,10 @@ button,input{font:inherit;color:inherit}
 .rank td{padding:6px;border-top:1px solid rgba(127,127,127,.15);white-space:nowrap}
 .rank .v{font:11px var(--mono);padding:2px 6px;border-radius:5px}
 .rank .v.ok{color:var(--up);background:rgba(61,220,151,.12)} .rank .v.mid{color:#f5b642;background:rgba(245,182,66,.12)} .rank .v.no{color:var(--muted);background:rgba(127,127,127,.12)}
+.pend{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--line2);border-radius:8px;cursor:pointer;font-size:13px}
+.pend:hover{background:var(--card2)}
+.pend b{font:600 12px var(--mono)}
+#pending{display:flex;flex-direction:column;gap:6px}
 .perf{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line,rgba(127,127,127,.25));border-radius:12px;padding:12px}
 .perf-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
 .perf-eq{font:600 26px var(--mono)}
@@ -256,6 +260,10 @@ input[type=range]{width:100%;accent-color:var(--voice)}
       <span class="big" id="walletUsd">$0</span>
       <span class="mono" style="font-size:12px;color:var(--muted)" id="balances"></span>
     </div>
+    <div class="p-sec" id="pendingSec" hidden>
+      <span class="eyebrow">Waiting for your signature</span>
+      <div id="pending"></div>
+    </div>
     <div class="p-sec" id="agentPerfSec" hidden>
       <span class="eyebrow">Agents · live</span>
       <span class="mono" style="font-size:11px;color:var(--muted)" id="agentPerfNote"></span>
@@ -356,7 +364,18 @@ function feed(text) {
 }
 
 // ---------------- portfolio & agents ----------------
+async function loadPending() {
+  try {
+    const list = (await api('/api/tickets')).filter(t => t.status === 'needs_confirmation' || t.status === 'needs_second_confirmation');
+    $('pendingSec').hidden = !list.length;
+    $('pending').innerHTML = list.slice(-6).reverse().map(t => {
+      const what = t.kind === 'launch' ? `LAUNCH $${esc(t.request.ticker)} · ${fmt(t.totalSol || 0)} SOL` : t.legs.map(l => `${l.side.toUpperCase()} ${esc(l.asset)}`).join(' + ') + ` · $${fmt(t.totalUsd)}`;
+      return `<div class="pend" data-id="${t.id}"><b>${what}</b><span class="meta">${t.source?.type === 'agent' ? 'agent' : 'open →'}</span></div>`;
+    }).join('');
+  } catch { /* ignore */ }
+}
 async function refresh() {
+  loadPending();
   try {
     const me = await api('/api/me');
     const p = me.portfolio;
@@ -422,6 +441,7 @@ function orderCard(t) {
 }
 
 function launchCard(t0, devShare0) {
+  if (devShare0 == null) devShare0 = shareOf(t0.totalSol || 0);
   const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px';
   let t = t0, devShare = devShare0;
   const render = () => {
@@ -739,6 +759,15 @@ $('signOutBtn').onclick = async () => {
   store.set(TOKEN_KEY, null); store.set(CHAT_KEY, null); location.reload();
 };
 $('newSession').onclick = () => { sessionId = 'main-' + Date.now().toString(36); store.set(CHAT_KEY, sessionId); log.innerHTML = ''; welcome(); loadChats(); $('side').classList.remove('open'); $('cmd').focus(); };
+$('pending').addEventListener('click', async e => {
+  const row = e.target.closest('.pend'); if (!row) return;
+  try {
+    const t = await api('/api/tickets/' + row.dataset.id);
+    const body = addAI('<p>Here is the ticket waiting for your signature.</p>');
+    body.appendChild(t.kind === 'launch' ? launchCard(t) : orderCard(t));
+    scrollDown();
+  } catch (err) { toast(err.message); }
+});
 $('menuBtn').onclick = () => $('side').classList.toggle('open');
 document.addEventListener('click', e => { const sd = $('side'); if (sd.classList.contains('open') && !sd.contains(e.target) && e.target !== $('menuBtn')) sd.classList.remove('open'); });
 $('chats').addEventListener('click', async e => {
