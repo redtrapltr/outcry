@@ -50,6 +50,20 @@ export class UserStore {
     return u;
   }
 
+  /** Public bio shown on the creator profile (160 characters, plain text). */
+  setBio(userId: string, raw: string) {
+    const u = this.get(userId);
+    u.bio = String(raw).replace(/\s+/g, " ").trim().slice(0, 160) || undefined;
+    return u;
+  }
+
+  /** The user who owns this @handle, if any. */
+  byHandle(raw: string): UserProfile | undefined {
+    const h = String(raw).trim().replace(/^@/, "").toLowerCase();
+    for (const u of this.users.values()) if (u.handle === h) return u;
+    return undefined;
+  }
+
   /** Every asset symbol any user holds a balance of. */
   heldSymbols(): Set<string> {
     const out = new Set<string>();

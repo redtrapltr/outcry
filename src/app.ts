@@ -12,7 +12,7 @@ import { TicketDesk } from "./tickets/desk.js";
 import { CreatorRegistry, LaunchService } from "./launch/service.js";
 import { AgentRuntime } from "./agents/runtime.js";
 import { StrategyLab } from "./strategy/lab.js";
-import { Marketplace } from "./market/listings.js";
+import { RANK_MIN_CLOSED_TRADES, RANK_MIN_HOURS, Marketplace } from "./market/listings.js";
 import type { HistoryProvider } from "./data/history.js";
 import { DEFAULT_POLICY, type PolicyConfig } from "./policy/engine.js";
 
@@ -62,7 +62,11 @@ export function createOutcry(overrides: Partial<OutcryConfig> = {}) {
   agents = new AgentRuntime({ users, market, desk, signer, audit, bus, registry, paperDaysBeforeAuto: config.paperDaysBeforeAuto });
   const launches = new LaunchService({ users, signer, desk, market, registry, audit, bus, mode: config.mode, launchFeeSol: config.launchFeeSol, policy: config.policy });
   const lab = new StrategyLab(market, audit, config.history);
-  marketplace = new Marketplace({ users, agents, registry, audit, bus });
+  const env = typeof process !== "undefined" ? process.env : {};
+  marketplace = new Marketplace({ users, agents, registry, audit, bus }, {
+    minHours: Number(env.OUTCRY_RANK_MIN_HOURS ?? RANK_MIN_HOURS),
+    minClosedTrades: Number(env.OUTCRY_RANK_MIN_TRADES ?? RANK_MIN_CLOSED_TRADES),
+  });
   agents.marketHooks = {
     isCopy: (id) => marketplace.isCopy(id),
     blockedToken: (id, mint) => marketplace.blockedToken(id, mint),

@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Creator · Outcry</title>
+<meta name="description" content="AI trading agents by this creator on Outcry. Results only, the strategy stays private.">
+<meta property="og:title" content="Creator on Outcry">
+<meta property="og:description" content="AI trading agents you can copy. Results only, the strategy stays private.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Big+Shoulders+Display:wght@700;800;900&family=Geist:wght@400;500;600&family=JetBrains+Mono:wght@400;500;700&display=swap">
+<style>
+:root{--bg:#0E1030;--card:#161A40;--line:#262B57;--line2:#3A407A;--text:#F3EFE4;--soft:#C9CBE0;--muted:#9EA2C9;--voice:#2F3CFF;--up:#3DDC97;--down:#FF6B6B;--display:'Big Shoulders Display',Impact,sans-serif;--mono:'JetBrains Mono',ui-monospace,monospace}
+*{box-sizing:border-box}
+body{margin:0;min-height:100dvh;background:var(--bg);color:var(--text);font:15px/1.5 'Geist',system-ui,sans-serif}
+main{width:min(860px,100%);margin:0 auto;padding:32px 16px 64px;display:flex;flex-direction:column;gap:20px}
+.brand{font:900 26px var(--display);letter-spacing:.03em;color:var(--text);text-decoration:none}
+.head{display:flex;gap:18px;align-items:center}
+.badge{width:76px;height:76px;flex:none;border-radius:16px;display:grid;place-items:center;background:#ff5fa2;color:#1a0f2a;font:900 24px var(--display);overflow:hidden}
+h1{margin:0;font:900 clamp(40px,9vw,64px)/1 var(--display);letter-spacing:.01em;overflow-wrap:anywhere}
+.meta{font:12px var(--mono);color:var(--muted)}
+.stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+.stat{border:1px solid var(--line);border-radius:12px;padding:14px;background:var(--card);display:flex;flex-direction:column}
+.stat b{font:800 30px var(--display)}
+.stat span{font:12px var(--mono);color:var(--soft)}
+.card{border:1px solid var(--line);border-radius:14px;padding:16px;background:var(--card);display:grid;grid-template-columns:1fr 200px;gap:10px 16px}
+.card h2{margin:0;font:800 28px var(--display);letter-spacing:.02em}
+.ret{font:800 32px var(--display);text-align:right}
+.row{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 16px;font:12px var(--mono);color:var(--soft)}
+.rank{display:inline-block;margin-right:10px;padding:2px 8px;border-radius:8px;border:1px solid var(--line2);font:700 15px var(--mono);vertical-align:middle;color:var(--soft)}
+.rank.top{background:var(--voice);border-color:var(--voice);color:#fff}
+svg{width:200px;height:56px}
+.btn{display:inline-block;border:1px solid var(--line2);background:transparent;color:inherit;border-radius:999px;padding:11px 20px;font:inherit;cursor:pointer;text-decoration:none}
+.btn.primary{background:var(--voice);border-color:var(--voice);font-weight:600}
+.bar{display:flex;gap:10px;flex-wrap:wrap}
+.foot{font:12px var(--mono);color:var(--muted)}
+@media (max-width:600px){.card{grid-template-columns:1fr}.ret{text-align:left}svg{width:100%}}
+</style>
+</head>
+<body>
+<main>
+  <a class="brand" href="terminal.html">OUTCRY</a>
+  <div id="root"><p class="meta">Loading…</p></div>
+  <p class="foot">Results come from each agent's own track record (paper money unless marked live). Strategies stay private. Not investment advice.</p>
+</main>
+<script>
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+const pct = n => `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(1)}%`;
+function spark(vals, start) {
+  if (!vals || vals.length < 2) return '<svg viewBox="0 0 200 56"></svg>';
+  const lo = Math.min(start, ...vals), hi = Math.max(start, ...vals), r = Math.max(1e-9, hi - lo);
+  const X = i => (i / (vals.length - 1)) * 200, Y = v => 52 - ((v - lo) / r) * 48;
+  const up = vals[vals.length - 1] >= start;
+  return `<svg viewBox="0 0 200 56" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="200" y1="${Y(start)}" y2="${Y(start)}" stroke="rgba(150,150,180,.4)" stroke-dasharray="3 3"/><path d="${vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${up ? 'var(--up)' : 'var(--down)'}" stroke-width="2"/></svg>`;
+}
+(async () => {
+  const h = (new URLSearchParams(location.search).get('h') || '').replace(/^@/, '');
+  const root = document.getElementById('root');
+  try {
+    const r = await fetch('/api/creators/' + encodeURIComponent(h));
+    const p = await r.json();
+    if (!r.ok) throw new Error(p.error || 'Creator not found');
+    document.title = `@${p.handle} · Outcry`;
+    const s = p.stats;
+    const stat = (v, k) => `<div class="stat"><b>${v}</b><span>${k}</span></div>`;
+    root.innerHTML = `<div style="display:flex;flex-direction:column;gap:20px">
+      <div class="head"><div class="badge">${esc(p.badge)}</div><div><h1>@${esc(p.handle)}</h1>${p.bio ? `<p style="margin:4px 0 0">${esc(p.bio)}</p>` : ''}<span class="meta">${p.creatorSince ? 'Creator since ' + new Date(p.creatorSince).toLocaleDateString() : ''}</span></div></div>
+      <div class="stats">${stat(s.bestRank ? '#' + s.bestRank : '—', 'best leaderboard rank')}${stat(s.bestReturnPct === null ? '—' : pct(s.bestReturnPct), 'best return')}${stat(s.subscribers, 'traders copying')}${stat(s.winRatePct === null ? '—' : s.winRatePct + '%', `win rate · ${s.closedTrades} closed trades`)}</div>
+      <div class="bar"><a class="btn primary" href="terminal.html#creator=${encodeURIComponent(p.handle)}">Copy an agent on Outcry →</a><a class="btn" href="terminal.html#market">See the leaderboard</a></div>
+      ${p.agents.map(a => `<div class="card"><div><h2>${a.rank ? `<span class="rank${a.rank <= 3 ? ' top' : ''}">#${a.rank}</span>` : ''}${esc(a.title)}</h2><div class="meta">${a.kind === 'sniper' ? 'pump.fun sniper' : 'strategy agent'} · ${a.mode === 'paper' ? 'paper track record' : 'live'} · v${a.version}</div>${a.description ? `<p style="margin:8px 0 0">${esc(a.description)}</p>` : ''}</div>
+        <div><div class="ret" style="color:${a.returnPct >= 0 ? 'var(--up)' : 'var(--down)'}">${pct(a.returnPct)}</div>${spark(a.spark, a.startUsd)}</div>
+        <div class="row"><span>score ${a.score.toFixed(2)}</span><span>max drawdown −${a.drawdownPct.toFixed(1)}%</span><span>${a.closedTrades ? `win rate ${Math.round(a.wins / a.closedTrades * 100)}%` : 'no closed trades yet'}</span><span>${a.subscribers} copying</span><span>${(a.fees.perTradePct).toFixed(2)}% per trade${a.fees.performanceFeePct ? ` · ${a.fees.performanceFeePct}% of profits` : ''}</span></div></div>`).join('') || '<p class="meta">No agents listed right now.</p>'}
+    </div>`;
+  } catch (e) {
+    root.innerHTML = `<h1>Not found</h1><p class="meta">${esc(e.message)}</p><a class="btn primary" href="terminal.html#market">See the leaderboard</a>`;
+  }
+})();
+</script>
+</body>
+</html>
