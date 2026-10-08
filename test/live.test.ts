@@ -50,7 +50,12 @@ describe("pump.fun live feed", () => {
     const { app, feed, sent } = setup();
     expect(sent[0]).toContain("subscribeNewToken");
     feed.handle({ mint: MINT, txType: "create", traderPublicKey: "creator1", initialBuy: 30_000_000, marketCapSol: 30, vSolInBondingCurve: 31, symbol: "wOrK!", name: "Work" });
+    feed.flushSubscriptions();
     expect(sent.at(-1)).toContain("subscribeTokenTrade");
+    expect(sent.at(-1)).toContain(MINT);
+    feed.handle({ message: "Successfully subscribed to keys." });
+    expect(feed.status().otherMessages).toBe(1);
+    expect(feed.status().lastOtherMessage).toContain("Successfully subscribed");
     let r = app.market.tokenRisk(MINT)!;
     expect(r.symbol).toBe("WORK");
     expect(r.holders).toBe(1);
@@ -59,6 +64,7 @@ describe("pump.fun live feed", () => {
     for (let i = 0; i < 12; i++) feed.handle({ mint: MINT, txType: "buy", traderPublicKey: `w${i}`, tokenAmount: 1_000_000, newTokenBalance: 1_000_000, marketCapSol: 32 + i, vSolInBondingCurve: 33 + i });
     feed.handle({ mint: MINT, txType: "sell", traderPublicKey: "w0", tokenAmount: 1_000_000, newTokenBalance: 0, marketCapSol: 40, vSolInBondingCurve: 41 });
     r = app.market.tokenRisk(MINT)!;
+    expect(feed.status().tradesSeen).toBe(13);
     expect(r.holders).toBe(12);
     expect(r.top10Pct).toBeCloseTo(3 + 9 * 0.1, 5);
     expect(app.market.priceUsd(MINT)).toBeCloseTo((40 / 1e9) * app.market.priceUsd("SOL"), 12);

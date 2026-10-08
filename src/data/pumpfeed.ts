@@ -39,6 +39,12 @@ export interface PumpFeedStatus {
   connected: boolean;
   tokensSeen: number;
   tracked: number;
+  /** Trade events received: if this stays 0 while tokens arrive, trade subscriptions are not working. */
+  tradesSeen: number;
+  lastTradeAt: string | null;
+  subscribeBatches: number;
+  otherMessages: number;
+  lastOtherMessage: string | null;
   lastEventAt: string | null;
   lastError: string | null;
 }
@@ -56,6 +62,13 @@ export class PumpPortalFeed {
   private tracked = new Map<string, Tracked>();
   private seen = 0;
   private lastEventAt?: number;
+  private trades = 0;
+  private lastTradeAt?: number;
+  private otherMessages = 0;
+  private lastOther?: string;
+  private subscribeBatches = 0;
+  private queued: string[] = [];
+  private flushTimer?: ReturnType<typeof setInterval>;
   private lastError?: string;
   private stopped = false;
   private retryMs = 2_000;
@@ -68,6 +81,7 @@ export class PumpPortalFeed {
       /** Tokens someone holds are followed (and kept) beyond the normal window. */
       isHeld?: (mint: string) => boolean;
       followMinutes?: number;
+      batchMs?: number;
       maxTracked?: number;
       makeSocket?: (url: string) => WsLike;
     } = {},
@@ -82,6 +96,7 @@ export class PumpPortalFeed {
 
   stop() {
     this.stopped = true;
+    if (this.flushTimer) clearInterval(this.flushTimer);
     if (this.pruneTimer) clearInterval(this.pruneTimer);
     this.ws?.close();
   }
@@ -91,6 +106,11 @@ export class PumpPortalFeed {
       connected: this.ws?.readyState === 1,
       tokensSeen: this.seen,
       tracked: this.tracked.size,
+      tradesSeen: this.trades,
+      lastTradeAt: this.lastTradeAt ? new Date(this.lastTradeAt).toISOString() : null,
+      subscribeBatches: this.subscribeBatches,
+      otherMessages: this.otherMessages,
+      lastOtherMessage: this.lastOther ?? null,
       lastEventAt: this.lastEventAt ? new Date(this.lastEventAt).toISOString() : null,
       lastError: this.lastError ?? null,
     };
@@ -147,10 +167,20 @@ export class PumpPortalFeed {
   /** Exposed for tests. */
   handle(msg: Record<string, unknown>) {
     const mint = typeof msg.mint === "string" ? msg.mint : undefined;
-    if (!mint) return;
+    const tx = String(msg.txType ?? "").toLowerCase();
+    if (!mint || (tx !== "create" && tx !== "buy" && tx !== "sell")) {
+      // Server notices (subscription acks, errors, limits): keep the last one for /api/health.
+      this.otherMessages++;
+      this.lastOther = JSON.stringify(msg).slice(0, 300);
+      return;
+    }
     this.lastEventAt = Date.now();
-    if (msg.txType === "create") this.onCreate(mint, msg);
-    else if (msg.txType === "buy" || msg.txType === "sell") this.onTrade(mint, msg);
+    if (tx === "create") this.onCreate(mint, msg);
+    else {
+      this.trades++;
+      this.lastTradeAt = Date.now();
+      this.onTrade(mint, { ...msg, txType: tx });
+    }
   }
 
   private priceOf(msg: Record<string, unknown>) {
@@ -227,8 +257,21 @@ export class PumpPortalFeed {
     this.followMore([mint]);
   }
 
+  /** Subscriptions are batched (one message every 2s) instead of one message per launch. */
   private followMore(keys: string[]) {
-    if (this.ws?.readyState === 1) this.ws.send(JSON.stringify({ method: "subscribeTokenTrade", keys }));
+    this.queued.push(...keys);
+    if (!this.flushTimer) {
+      this.flushTimer = setInterval(() => this.flushSubscriptions(), this.opts.batchMs ?? 2_000);
+      this.flushTimer.unref?.();
+    }
+  }
+
+  flushSubscriptions() {
+    if (!this.queued.length || this.ws?.readyState !== 1) return;
+    const keys = [...new Set(this.queued.splice(0))].filter((k) => this.tracked.has(k));
+    if (!keys.length) return;
+    this.subscribeBatches++;
+    this.ws.send(JSON.stringify({ method: "subscribeTokenTrade", keys }));
   }
 
   /** Stop following old tokens nobody holds; drop them from the market later. */
