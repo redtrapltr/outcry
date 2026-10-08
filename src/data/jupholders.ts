@@ -41,7 +41,13 @@ export class JupiterHolderPoller {
   constructor(
     private market: SimulatedMarket,
     private source: { youngMints(maxAgeMs: number, limit?: number): string[]; tradesFlowing(): boolean },
-    private opts: { everyMs?: number; maxAgeMs?: number; fetch?: FetchLike } = {},
+    private opts: {
+      everyMs?: number;
+      maxAgeMs?: number;
+      fetch?: FetchLike;
+      /** Mints someone holds: always refreshed first, whatever their age (prices drive stop-loss and charts). */
+      heldMints?: () => string[];
+    } = {},
   ) {}
 
   private get f(): FetchLike {
@@ -69,8 +75,11 @@ export class JupiterHolderPoller {
   }
 
   async poll() {
-    if (this.source.tradesFlowing() || Date.now() < this.backoffUntil) return;
-    const mints = this.source.youngMints(this.opts.maxAgeMs ?? 10 * 60_000, 100);
+    if (Date.now() < this.backoffUntil) return;
+    const held = this.opts.heldMints?.() ?? [];
+    // With paid trade data flowing, young tokens are covered by the stream; held ones still need prices here.
+    const young = this.source.tradesFlowing() ? [] : this.source.youngMints(this.opts.maxAgeMs ?? 10 * 60_000, 100);
+    const mints = [...new Set([...held, ...young])].slice(0, 100);
     if (!mints.length) return;
     try {
       this.calls++;
@@ -85,10 +94,20 @@ export class JupiterHolderPoller {
       const want = new Set(mints);
       let hit = 0;
       for (const t of Array.isArray(rows) ? rows : []) {
-        if (!want.has(t.id) || t.holderCount === undefined) continue;
+        if (!want.has(t.id) || (t.holderCount === undefined && t.usdPrice === undefined)) continue;
         hit++;
         this.updated++;
         const top10 = t.audit?.topHoldersPercentage;
+        const isHeldOnly = !young.includes(t.id);
+        if (isHeldOnly) {
+          // Older held token: refresh price and liquidity; keep its verified holder data.
+          this.market.updateMeme(t.id, { ...(t.holderCount !== undefined ? { holders: t.holderCount, holdersCollapsed: t.holderCount } : {}), ...(t.liquidity ? { liquidityUsd: Math.round(t.liquidity) } : {}) }, t.usdPrice);
+          continue;
+        }
+        if (t.holderCount === undefined) {
+          this.market.updateMeme(t.id, {}, t.usdPrice);
+          continue;
+        }
         this.market.updateMeme(
           t.id,
           {
