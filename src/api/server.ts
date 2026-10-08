@@ -161,7 +161,7 @@ export async function buildServer(opts: ServerOptions = {}) {
       sessionsByIp.set(ip, { hour, n });
       if (n > maxSessionsPerHour) return reply.code(429).send({ error: "Too many new sessions from this address; try again later" });
     }
-    const res = await api.handle(req.method, url, tokenOf(req.headers, req.query), req.body, metaOf(req.headers));
+    const res = await api.handle(req.method, req.url, tokenOf(req.headers, req.query), req.body, metaOf(req.headers));
     return reply.code(res.status).send(res.json);
   });
 

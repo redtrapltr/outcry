@@ -19,6 +19,11 @@ import type { CreatorRegistry } from "../launch/service.js";
 
 export const OUTCRY_COPY_BPS = 40;
 export const MAX_CREATOR_FEE_BPS = 200;
+/** A listing is ranked once its track record is long enough to mean something. */
+export const RANK_MIN_HOURS = 24;
+export const RANK_MIN_CLOSED_TRADES = 3;
+
+export type LeaderSort = "score" | "return" | "copied" | "new";
 
 export interface ListingTerms {
   title: string;
@@ -70,7 +75,7 @@ export class Marketplace {
   readonly subs = new Map<string, Subscription>();
   private byAgent = new Map<string, string>(); // copy agentId -> subscription id
 
-  constructor(private d: MarketDeps) {}
+  constructor(private d: MarketDeps, private rank: { minHours: number; minClosedTrades: number } = { minHours: RANK_MIN_HOURS, minClosedTrades: RANK_MIN_CLOSED_TRADES }) {}
 
   // --- creators ------------------------------------------------------------
 
@@ -166,6 +171,67 @@ export class Marketplace {
 
   list() {
     return [...this.listings.values()].filter((l) => l.status === "listed").map((l) => this.publicView(l)).sort((a, b) => b.returnPct - a.returnPct);
+  }
+
+  /**
+   * Leaderboard view of a listing. Score = return per unit of risk: the return
+   * divided by the worst drawdown (counted as at least 5%), so a steady +20%
+   * outranks a +25% that went through a -60% hole.
+   */
+  private ranked(l: Listing) {
+    const v = this.publicView(l);
+    const hours = (Date.now() - Date.parse(v.runningSince)) / 3_600_000;
+    const qualified = hours >= this.rank.minHours && v.closedTrades >= this.rank.minClosedTrades;
+    const score = v.returnPct / Math.max(5, v.drawdownPct);
+    const winRatePct = v.closedTrades ? (v.wins / v.closedTrades) * 100 : null;
+    return { ...v, creatorHandle: this.d.users.get(l.creatorUserId)?.handle ?? null, runningHours: Math.round(hours * 10) / 10, qualified, score: Math.round(score * 100) / 100, winRatePct };
+  }
+
+  /**
+   * Ranked listings plus "rising" ones that don't have a long enough record yet.
+   * Unranked agents are never mixed into the ranking, so a lucky 10-minute run
+   * can't top the board.
+   */
+  leaderboard(sort: LeaderSort = "score", limit = 50) {
+    const all = [...this.listings.values()].filter((l) => l.status === "listed").map((l) => this.ranked(l));
+    const by: Record<LeaderSort, (a: ReturnType<Marketplace["ranked"]>, b: ReturnType<Marketplace["ranked"]>) => number> = {
+      score: (a, b) => b.score - a.score || b.returnPct - a.returnPct,
+      return: (a, b) => b.returnPct - a.returnPct,
+      copied: (a, b) => b.subscribers - a.subscribers || b.score - a.score,
+      new: (a, b) => Date.parse(b.runningSince) - Date.parse(a.runningSince),
+    };
+    const cmp = by[sort] ?? by.score;
+    const ranked = all.filter((x) => x.qualified).sort(cmp).slice(0, limit).map((x, i) => ({ ...x, rank: i + 1 }));
+    const rising = all.filter((x) => !x.qualified).sort(sort === "new" ? by.new : by.return).slice(0, limit);
+    return { sort, rules: { minHours: this.rank.minHours, minClosedTrades: this.rank.minClosedTrades }, ranked, rising };
+  }
+
+  /** Public creator page: who they are and how their listed agents do. Earnings stay private. */
+  creatorProfile(handle: string) {
+    const u = this.d.users.byHandle(handle);
+    if (!u?.handle) return undefined;
+    const mine = [...this.listings.values()].filter((l) => l.creatorUserId === u.id);
+    const listed = mine.filter((l) => l.status === "listed").map((l) => this.ranked(l)).sort((a, b) => b.score - a.score);
+    const board = this.leaderboard("score", 1_000).ranked;
+    const ranks = new Map(board.map((x) => [x.id, x.rank]));
+    const closed = listed.reduce((s, x) => s + x.closedTrades, 0);
+    const wins = listed.reduce((s, x) => s + x.wins, 0);
+    const since = mine.map((l) => l.createdAt).sort()[0];
+    return {
+      handle: u.handle,
+      badge: u.badge,
+      bio: u.bio ?? "",
+      creatorSince: since ?? null,
+      stats: {
+        listed: listed.length,
+        subscribers: listed.reduce((s, x) => s + x.subscribers, 0),
+        bestReturnPct: listed.length ? Math.max(...listed.map((x) => x.returnPct)) : null,
+        bestRank: listed.reduce<number | null>((b, x) => (ranks.has(x.id) && (b === null || ranks.get(x.id)! < b) ? ranks.get(x.id)! : b), null),
+        closedTrades: closed,
+        winRatePct: closed ? Math.round((wins / closed) * 1000) / 10 : null,
+      },
+      agents: listed.map((x) => ({ ...x, rank: ranks.get(x.id) ?? null })),
+    };
   }
 
   // --- subscribers -----------------------------------------------------------

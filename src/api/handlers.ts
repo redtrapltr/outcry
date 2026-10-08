@@ -97,7 +97,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     return x;
   };
 
-  type Handler = (ctx: { uid: string; params: Record<string, string>; body: unknown; meta: RequestMeta; token?: string }) => unknown | Promise<unknown>;
+  type Handler = (ctx: { uid: string; params: Record<string, string>; query: Record<string, string>; body: unknown; meta: RequestMeta; token?: string }) => unknown | Promise<unknown>;
   const needAuth = () => {
     if (!auth) throw new HttpError(501, "Accounts need the Outcry server (not available in the offline demo)");
     return auth;
@@ -185,8 +185,10 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     return { agent: redactAgent(a), blueprint: blueprint(a) };
   });
   route("PATCH", "/api/me", ({ uid, body }) => {
-    const b = z.object({ handle: z.string().max(17) }).parse(body);
-    return { user: app.users.setHandle(uid, b.handle) };
+    const b = z.object({ handle: z.string().max(17).optional(), bio: z.string().max(400).optional() }).parse(body);
+    if (b.handle !== undefined) app.users.setHandle(uid, b.handle);
+    if (b.bio !== undefined) app.users.setBio(uid, b.bio);
+    return { user: app.users.get(uid) };
   });
   route("GET", "/api/agents/:id/perf", ({ uid, params }) => {
     own(app.agents.get(params.id!), uid, "Agent");
@@ -239,6 +241,15 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   });
   // --- marketplace ------------------------------------------------------------------
   route("GET", "/api/market", () => app.marketplace.list(), false);
+  route("GET", "/api/leaderboard", ({ query }) => {
+    const q = z.object({ sort: z.enum(["score", "return", "copied", "new"]).optional() }).parse(query);
+    return app.marketplace.leaderboard(q.sort ?? "score");
+  }, false);
+  route("GET", "/api/creators/:handle", ({ params }) => {
+    const p = app.marketplace.creatorProfile(params.handle!);
+    if (!p) throw new HttpError(404, "No creator with that @handle");
+    return p;
+  }, false);
   route("GET", "/api/market/mine", ({ uid }) => app.marketplace.mineFor(uid));
   route("POST", "/api/market", ({ uid, body }) => {
     const b = z.object({
@@ -335,7 +346,9 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     userFor(token: string | undefined) {
       return token ? tokens.get(token) : undefined;
     },
-    async handle(method: string, path: string, token: string | undefined, body: unknown, meta: RequestMeta = { origin: "http://localhost", rpId: "localhost" }): Promise<ApiResult> {
+    async handle(method: string, fullPath: string, token: string | undefined, body: unknown, meta: RequestMeta = { origin: "http://localhost", rpId: "localhost" }): Promise<ApiResult> {
+      const [path = "", qs = ""] = fullPath.split("?");
+      const query = Object.fromEntries(new URLSearchParams(qs));
       const r = routes.find((x) => x.method === method && x.pattern.test(path));
       if (!r) return { status: 404, json: { error: "Not found" } };
       const m = path.match(r.pattern)!;
@@ -343,7 +356,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
       const uid = token ? tokens.get(token) : undefined;
       if (r.auth && !uid) return { status: 401, json: { error: "Sign in first" } };
       try {
-        return { status: 200, json: await r.fn({ uid: uid ?? "", params, body, meta, token }) };
+        return { status: 200, json: await r.fn({ uid: uid ?? "", params, query, body, meta, token }) };
       } catch (e) {
         const err = e as Error & { status?: number; name?: string; issues?: { path: (string | number)[]; message: string }[] };
         if (err.name === "ZodError" && err.issues) {

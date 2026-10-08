@@ -65,6 +65,19 @@ button,input{font:inherit;color:inherit}
 .lst .row{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 16px;font:12px var(--mono);color:var(--soft)}
 .lst .acts{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
 .lst svg{width:200px;height:56px}
+.rank{display:inline-block;margin-right:10px;padding:2px 8px;border-radius:8px;border:1px solid var(--line2);font:700 15px var(--mono);vertical-align:middle;color:var(--soft)}
+.rank.top{background:var(--voice);border-color:var(--voice);color:#fff}
+.rank.new{font-size:11px;letter-spacing:.08em}
+.tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
+.tabs .chip{border:1px solid var(--line2);background:transparent;color:inherit;border-radius:999px;padding:7px 14px;font:13px var(--mono);cursor:pointer}
+.tabs .chip.on{background:var(--voice);border-color:var(--voice);color:#fff}
+.creator-head{display:flex;gap:16px;align-items:center}
+.cbadge{width:64px;height:64px;flex:none;border-radius:14px;display:grid;place-items:center;background:#ff5fa2;color:#1a0f2a;font:900 22px var(--display)}
+.cstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
+.cstat{border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--card);display:flex;flex-direction:column;gap:2px}
+.cstat b{font:800 26px var(--display)}
+.cstat span{font:12px var(--mono);color:var(--soft)}
+@media (max-width:640px){.lst{grid-template-columns:1fr}.lst .ret{text-align:left}.lst svg{width:100%}}
 .form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
 .form label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--soft)}
 .form input,.form textarea{background:var(--card);border:1px solid var(--line2);border-radius:8px;padding:9px 10px;color:var(--text)}
@@ -984,22 +997,23 @@ function sparkSvg(vals, start) {
   const up = vals[vals.length - 1] >= start;
   return `<svg viewBox="0 0 200 56" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="200" y1="${Y(start)}" y2="${Y(start)}" stroke="rgba(150,150,180,.4)" stroke-dasharray="3 3"/><path d="${vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${up ? 'var(--up)' : 'var(--down)'}" stroke-width="2"/></svg>`;
 }
-async function openMarket() {
-  const { body, close } = sheet('Marketplace');
-  body.innerHTML = '<p class="meta">Loading…</p>';
-  let list = [], mine = [];
-  try { [list, mine] = await Promise.all([api('/api/market'), api('/api/market/mine')]); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
-  const earn = mine.reduce((s, l) => s + l.earnings.tradeFees + l.earnings.performanceFees + l.earnings.unlocks + l.earnings.subscriptions, 0);
-  body.innerHTML = `<p class="meta" style="margin:0">Agents published by other traders. You see their results, never their strategy. Activating one runs your own copy, with your own budget.</p>
-    ${mine.length ? `<div class="summary"><b>Your listings</b>: ${mine.map(l => `${esc(l.title)} · ${l.subscribers} subscriber${l.subscribers === 1 ? '' : 's'}`).join(' · ')}<br><span class="meta">Earned so far: ${usd(earn)} (paper)</span></div>` : ''}
-    <div class="lists" style="display:flex;flex-direction:column;gap:12px">${list.length ? list.map(l => `<div class="lst" data-id="${l.id}">
-      <div><h3>${esc(l.title)}</h3><div class="meta">by ${esc(l.creator)} · ${l.kind === 'sniper' ? 'pump.fun sniper' : 'strategy agent'} · ${l.mode === 'paper' ? 'paper track record' : 'live'}</div>${l.description ? `<p style="margin:8px 0 0">${esc(l.description)}</p>` : ''}</div>
-      <div><div class="ret" style="color:${l.returnPct >= 0 ? 'var(--up)' : 'var(--down)'}">${pctTxt(l.returnPct)}</div>${sparkSvg(l.spark, l.startUsd)}</div>
-      <div class="row"><span>max drawdown −${l.drawdownPct.toFixed(1)}%</span><span>${l.closedTrades ? `win rate ${Math.round(l.wins / l.closedTrades * 100)}% (${l.wins}/${l.closedTrades})` : 'no closed trades yet'}</span><span>running since ${new Date(l.runningSince).toLocaleDateString()}</span><span>${l.subscribers} subscriber${l.subscribers === 1 ? '' : 's'}</span></div>
-      <div class="row"><span>${esc(feeTxt(l.fees))}</span></div>
-      <div class="acts"><button class="btn" type="button" data-recap="${l.id}">▶ Recap</button><button class="btn btn-primary" type="button" data-activate="${l.id}">Activate</button><span class="act-host"></span></div>
-    </div>`).join('') : '<p class="meta">No agents listed yet. Publish one of yours from the agent list (Publish).</p>'}</div>`;
-  body.addEventListener('click', async e => {
+function listingCard(l) {
+  const creator = l.creatorHandle ? `<button class="linkbtn" type="button" data-creator="${esc(l.creatorHandle)}">@${esc(l.creatorHandle)}</button>` : esc(l.creator);
+  const rank = l.rank ? `<span class="rank${l.rank <= 3 ? ' top' : ''}">#${l.rank}</span>` : (l.qualified === false ? '<span class="rank new">RISING</span>' : '');
+  const wr = l.closedTrades ? `win rate ${Math.round(l.wins / l.closedTrades * 100)}% (${l.wins}/${l.closedTrades})` : 'no closed trades yet';
+  return `<div class="lst" data-id="${l.id}">
+    <div><h3>${rank}${esc(l.title)}</h3><div class="meta">by ${creator} · ${l.kind === 'sniper' ? 'pump.fun sniper' : 'strategy agent'} · ${l.mode === 'paper' ? 'paper track record' : 'live'}</div>${l.description ? `<p style="margin:8px 0 0">${esc(l.description)}</p>` : ''}</div>
+    <div><div class="ret" style="color:${l.returnPct >= 0 ? 'var(--up)' : 'var(--down)'}">${pctTxt(l.returnPct)}</div>${sparkSvg(l.spark, l.startUsd)}</div>
+    <div class="row">${l.score !== undefined ? `<span title="Return divided by the worst drawdown (counted as at least 5%)">score ${l.score.toFixed(2)}</span>` : ''}<span>max drawdown −${l.drawdownPct.toFixed(1)}%</span><span>${wr}</span><span>running ${l.runningHours !== undefined ? (l.runningHours >= 48 ? Math.floor(l.runningHours / 24) + ' days' : (l.runningHours < 1 ? '<1h' : Math.round(l.runningHours) + 'h')) : 'since ' + new Date(l.runningSince).toLocaleDateString()}</span><span>${l.subscribers} subscriber${l.subscribers === 1 ? '' : 's'}</span></div>
+    <div class="row"><span>${esc(feeTxt(l.fees))}</span></div>
+    <div class="acts"><button class="btn" type="button" data-recap="${l.id}">▶ Recap</button><button class="btn btn-primary" type="button" data-activate="${l.id}">Activate</button><span class="act-host"></span></div>
+  </div>`;
+}
+/** Click handling shared by the marketplace and creator profiles. */
+function wireListings(root, getList, close) {
+  root.addEventListener('click', async e => {
+    const cr = e.target.closest('[data-creator]');
+    if (cr) { close(); openCreator(cr.dataset.creator); return; }
     const rc = e.target.closest('[data-recap]');
     if (rc) {
       try {
@@ -1013,7 +1027,8 @@ async function openMarket() {
     }
     const ac = e.target.closest('[data-activate]');
     if (ac) {
-      const l = list.find(x => x.id === ac.dataset.activate);
+      const l = getList().find(x => x.id === ac.dataset.activate);
+      if (!l) return;
       const host = ac.parentElement.querySelector('.act-host');
       host.innerHTML = `<form class="form" style="grid-template-columns:repeat(3,minmax(0,1fr));align-items:end">
         <label>Budget (agent wallet, $)<input name="budget" type="number" min="5" step="5" value="100" required></label>
@@ -1033,6 +1048,58 @@ async function openMarket() {
       };
     }
   });
+}
+async function openMarket(sort = 'score') {
+  const { body, close } = sheet('Marketplace');
+  body.innerHTML = '<p class="meta">Loading…</p>';
+  let board, mine = [], shown = [];
+  const load = async (s) => {
+    sort = s;
+    try { [board, mine] = await Promise.all([api('/api/leaderboard?sort=' + s), api('/api/market/mine').catch(() => [])]); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
+    shown = [...board.ranked, ...board.rising];
+    const earn = mine.reduce((t, l) => t + l.earnings.tradeFees + l.earnings.performanceFees + l.earnings.unlocks + l.earnings.subscriptions, 0);
+    const tabs = [['score', 'Top score'], ['return', 'Top return'], ['copied', 'Most copied'], ['new', 'New']];
+    body.innerHTML = `<p class="meta" style="margin:0">Agents published by other traders. You see their results, never their strategy. Activating one runs your own copy, with your own budget.</p>
+      ${mine.length ? `<div class="summary"><b>Your listings</b>: ${mine.map(l => `${esc(l.title)} · ${l.subscribers} subscriber${l.subscribers === 1 ? '' : 's'}`).join(' · ')}<br><span class="meta">Earned so far: ${usd(earn)} (paper)${myHandle ? ` · <button class="linkbtn" type="button" data-creator="${esc(myHandle)}">your public profile</button>` : ''}</span></div>` : ''}
+      <div class="tabs" role="tablist">${tabs.map(([k, t]) => `<button class="chip${k === sort ? ' on' : ''}" role="tab" aria-selected="${k === sort}" type="button" data-sort="${k}">${t}</button>`).join('')}</div>
+      <div style="display:flex;flex-direction:column;gap:12px">
+        <span class="eyebrow">Leaderboard</span>
+        ${board.ranked.length ? board.ranked.map(listingCard).join('') : `<p class="meta">No ranked agents yet. An agent joins the board after ${board.rules.minHours}h live and ${board.rules.minClosedTrades} closed trades.</p>`}
+        ${board.rising.length ? `<span class="eyebrow">Rising · not ranked yet (under ${board.rules.minHours}h or ${board.rules.minClosedTrades} closed trades)</span>` + board.rising.map(listingCard).join('') : ''}
+        ${!shown.length ? '<p class="meta">No agents listed yet. Publish one of yours from the agent list (Publish).</p>' : ''}
+      </div>`;
+  };
+  body.addEventListener('click', e => { const t = e.target.closest('[data-sort]'); if (t) load(t.dataset.sort); });
+  wireListings(body, () => shown, close);
+  await load(sort);
+}
+async function openCreator(handle) {
+  const { body, close } = sheet('@' + handle);
+  body.innerHTML = '<p class="meta">Loading…</p>';
+  let p;
+  try { p = await api('/api/creators/' + encodeURIComponent(handle)); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
+  const s = p.stats, own = myHandle && myHandle === p.handle;
+  const stat = (v, k) => `<div class="cstat"><b>${v}</b><span>${k}</span></div>`;
+  body.innerHTML = `<div class="creator-head"><div class="cbadge">${esc(p.badge)}</div><div>
+      <p style="margin:0">${p.bio ? esc(p.bio) : `<span class="meta">${own ? 'Add a bio so traders know your style.' : 'No bio yet.'}</span>`}</p>
+      <span class="meta">${p.creatorSince ? 'Creator since ' + new Date(p.creatorSince).toLocaleDateString() : ''}</span></div></div>
+    <div class="cstats">${stat(s.bestRank ? '#' + s.bestRank : '—', 'best rank')}${stat(s.bestReturnPct === null ? '—' : pctTxt(s.bestReturnPct), 'best return')}${stat(s.subscribers, 'subscribers')}${stat(s.winRatePct === null ? '—' : s.winRatePct + '%', `win rate · ${s.closedTrades} trades`)}${stat(s.listed, 'agents listed')}</div>
+    <div class="acts" style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" data-share>🔗 Copy profile link</button>${own ? '<button class="btn" type="button" data-bio>Edit bio</button>' : ''}<button class="btn" type="button" data-back>← Marketplace</button></div>
+    <div style="display:flex;flex-direction:column;gap:12px">${p.agents.length ? p.agents.map(listingCard).join('') : '<p class="meta">No agents listed right now.</p>'}</div>`;
+  body.addEventListener('click', async e => {
+    if (e.target.closest('[data-back]')) { close(); openMarket(); return; }
+    if (e.target.closest('[data-share]')) {
+      const url = `${location.origin}/creator.html?h=${encodeURIComponent(p.handle)}`;
+      try { await navigator.clipboard.writeText(url); toast('Link copied: ' + url); } catch { prompt('Share this link', url); }
+      return;
+    }
+    if (e.target.closest('[data-bio]')) {
+      const b = prompt('Your public bio (160 characters). Describe your style, not your recipe.', p.bio || '');
+      if (b === null) return;
+      try { await api('/api/me', { method: 'PATCH', body: { bio: b } }); close(); openCreator(p.handle); } catch (err) { toast(err.message); }
+    }
+  });
+  wireListings(body, () => p.agents, close);
 }
 async function openPublish(agentId, name) {
   if (!myHandle) { toast('First, choose the @handle shown on your listings'); if (!(await chooseHandle())) return; }
@@ -1177,6 +1244,10 @@ function connectEvents() {
     }
     if (!(await loadHistory())) welcome();
     loadChats(); refresh(); connectEvents();
+    // Deep links from shared pages: #creator=handle or #market
+    const hash = new URLSearchParams(location.hash.slice(1));
+    if (hash.get('creator')) openCreator(hash.get('creator'));
+    else if (location.hash === '#market') openMarket();
   } catch (e) { addAI(`<p>Could not start a session: ${esc(e.message)}</p>`); }
 })();
 </script>

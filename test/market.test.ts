@@ -99,3 +99,45 @@ describe("marketplace: handles and strategy updates", () => {
     expect(app.marketplace.updateFor(copy.id)!.available).toBe(false);
   });
 });
+
+describe("marketplace: leaderboard and creator profiles", () => {
+  it("ranks by return per unit of risk, keeps short records out, and shows public creator pages", async () => {
+    const app = createOutcry({ mode: "paper" } as never);
+    const mk = (badge: string, handle: string, name: string) => {
+      const u = app.users.create({ badge, jacket: "memes", residence: "CH" });
+      app.users.setHandle(u.id, handle);
+      const a = app.agents.propose(u.id, spec(name)).agent;
+      app.agents.deploy(u.id, a.id, { mode: "paper" });
+      return { u, l: app.marketplace.publish(u.id, a.id, {}) };
+    };
+    const steady = mk("STD", "steady", "STEADY");
+    const wild = mk("WLD", "wild", "WILD");
+    const fresh = mk("NEW", "fresh", "FRESH");
+    const day = 3_600_000 * 30;
+    const fake: Record<string, { pnlPct: number; drawdownPct: number; closedTrades: number; wins: number; t0: number }> = {
+      [steady.l.agentId]: { pnlPct: 20, drawdownPct: 4, closedTrades: 10, wins: 7, t0: Date.now() - day },
+      [wild.l.agentId]: { pnlPct: 25, drawdownPct: 60, closedTrades: 12, wins: 5, t0: Date.now() - day },
+      [fresh.l.agentId]: { pnlPct: 300, drawdownPct: 1, closedTrades: 1, wins: 1, t0: Date.now() - 600_000 },
+    };
+    app.agents.perf = ((id: string) => {
+      const f = fake[id]!;
+      return { pnlPct: f.pnlPct, drawdownPct: f.drawdownPct, closedTrades: f.closedTrades, wins: f.wins, startUsd: 100, history: [{ t: f.t0, v: 100 }, { t: Date.now(), v: 100 + f.pnlPct }] };
+    }) as never;
+
+    const b = app.marketplace.leaderboard("score");
+    expect(b.ranked.map((x) => x.creatorHandle)).toEqual(["steady", "wild"]); // 20/5=4 beats 25/60
+    expect(b.ranked[0]!.rank).toBe(1);
+    expect(b.rising.map((x) => x.creatorHandle)).toEqual(["fresh"]); // +300% in 10 minutes is not ranked
+    expect(app.marketplace.leaderboard("return").ranked[0]!.creatorHandle).toBe("wild");
+    expect(JSON.stringify(b)).not.toContain("minHolders");
+
+    app.users.setBio(steady.u.id, "  Slow and   steady.  ");
+    const p = app.marketplace.creatorProfile("@Steady")!;
+    expect(p.handle).toBe("steady");
+    expect(p.bio).toBe("Slow and steady.");
+    expect(p.stats.bestRank).toBe(1);
+    expect(p.stats.winRatePct).toBe(70);
+    expect(JSON.stringify(p)).not.toContain("earnings");
+    expect(app.marketplace.creatorProfile("nobody")).toBeUndefined();
+  });
+});
