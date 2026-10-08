@@ -116,6 +116,7 @@ export class AgentRuntime {
       cash: Object.entries(a.balances).filter(([k, v]) => v > 1e-9 && !positions.some((p) => p.symbol === k)).map(([asset, amount]) => ({ asset, amount })),
       fundedIn: Object.keys(a.balances)[0],
       watching: a.spec.kind === "sniper" ? this.watching(agentId) : [],
+      budget: this.budget(a),
       virtual: a.spec.mode === "paper",
       history: this.history.get(agentId) ?? [],
       trades: trades.slice(-100),
@@ -520,6 +521,20 @@ export class AgentRuntime {
     const best = this.watching(a.id)[0];
     const closest = best && a.spec.universe ? ` Closest: $${best.symbol} with ${best.holders}/${a.spec.universe.minHolders} holders at ${best.ageSeconds}s${best.holders >= a.spec.universe.minHolders ? `, held back by: ${best.reason}` : ""}.` : "";
     this.activity(a, `Checked ${st.checked} new launch${st.checked > 1 ? "es" : ""} in the last minute, none passed yet (${why}).${closest}`);
+  }
+
+  /** Today's spending against the daily limit (days are UTC: they reset at 00:00 UTC). */
+  budget(a: Agent) {
+    const dayStart = Date.parse(`${dayKey()}T00:00:00Z`);
+    const buys = (this.trades.get(a.id) ?? []).filter((t) => t.side === "buy" && t.t >= dayStart);
+    const spent = a.stats.dayKey === dayKey() ? a.stats.spentTodayUsd : 0;
+    return {
+      spentTodayUsd: spent,
+      maxPerDayUsd: a.spec.limits.maxPerDayUsd,
+      buysToday: buys.map((b) => ({ t: b.t, symbol: b.symbol, usd: b.usd })),
+      resetsAt: new Date(dayStart + 86_400_000).toISOString(),
+      reached: spent + a.spec.sizeUsd > a.spec.limits.maxPerDayUsd + 1e-9,
+    };
   }
 
   /** Launches the sniper is still re-checking, closest to passing first. */

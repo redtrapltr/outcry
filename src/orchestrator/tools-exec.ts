@@ -280,7 +280,9 @@ export class ToolExecutor {
             if (e.action === "exit") return `${t} sold ${e.symbol}: ${e.reason}`;
             return `${t} skipped ${e.symbol}: ${e.reason}`;
           };
-          return { ok: true, result: { summary: log.length ? `${a.spec.name}'s last decisions, from the audit log:\n${log.map(line).join("\n")}` : `${a.spec.name} hasn't made any decisions yet.`, decisions: log } };
+          const b = app.agents.budget(a);
+          const budgetLine = `Daily budget: $${b.spentTodayUsd.toFixed(2)} of $${b.maxPerDayUsd} spent today on ${b.buysToday.length} buy${b.buysToday.length === 1 ? "" : "s"}${b.buysToday.length ? ` (${b.buysToday.map((x) => `${new Date(x.t).toISOString().slice(11, 16)} UTC $${x.symbol} $${x.usd.toFixed(2)}`).join(", ")})` : ""}${b.reached ? "; LIMIT REACHED, no new buys" : ""}. Resets at 00:00 UTC (${b.resetsAt}).`;
+          return { ok: true, result: { summary: `${budgetLine}\n${log.length ? `${a.spec.name}'s last decisions, from the audit log:\n${log.map(line).join("\n")}` : `${a.spec.name} hasn't made any decisions yet.`}`, decisions: log, budget: b } };
         }
         default:
           return { ok: false, validationError: true, result: { error: `Unknown tool ${name}` } };

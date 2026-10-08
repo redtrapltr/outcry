@@ -873,6 +873,7 @@ function perfPanel(agentId) {
   el.innerHTML = `<div class="perf-top"><div><div class="eyebrow">Live performance · <span class="pv"></span></div><div class="perf-eq">$0</div></div><div class="perf-pnl"></div></div>
     <div class="perf-chart" data-id="${agentId}"></div>
     <div class="perf-pills"><div><b class="p-real"></b><span>REALIZED</span></div><div><b class="p-unr"></b><span>OPEN P&amp;L</span></div><div><b class="p-win"></b><span>WIN RATE</span></div><div><b class="p-dd"></b><span>DRAWDOWN</span><div class="dd-bar"><i></i></div></div></div>
+    <div class="perf-budget meta"></div>
     <div class="perf-pos"></div>
     <div class="perf-pos perf-trades"></div>
     <div class="perf-pos perf-watch"></div>`;
@@ -888,6 +889,12 @@ function perfPanel(agentId) {
     const lim = agent?.spec.limits.maxDrawdownPct ?? 50; const ratio = Math.min(1, perf.drawdownPct / lim);
     q('.p-dd').textContent = `−${perf.drawdownPct.toFixed(1)}% / −${lim}%`;
     const bar = q('.dd-bar i'); bar.style.width = (ratio * 100) + '%'; bar.style.background = ratio > .75 ? 'var(--down)' : ratio > .4 ? '#f5b642' : 'var(--up)';
+    if (perf.budget) {
+      const b = perf.budget, ms = Date.parse(b.resetsAt) - Date.now();
+      const left = ms > 0 ? `${Math.floor(ms / 3600000)}h ${Math.floor(ms / 60000) % 60}m` : 'soon';
+      const pct = Math.min(100, (b.spentTodayUsd / Math.max(1e-9, b.maxPerDayUsd)) * 100);
+      q('.perf-budget').innerHTML = `<div style="display:flex;justify-content:space-between;gap:8px"><span>Today: <b style="color:${b.reached ? 'var(--down)' : 'inherit'}">$${fmt(b.spentTodayUsd)} / $${fmt(b.maxPerDayUsd, 0)}</b> spent · ${b.buysToday.length} buy${b.buysToday.length === 1 ? '' : 's'}${b.reached ? ' · <b style="color:var(--down)">daily limit reached, no new buys</b>' : ''}</span><span>resets in ${left}</span></div><div class="dd-bar" style="margin-top:4px"><i style="width:${pct}%;background:${b.reached ? 'var(--down)' : 'var(--voice,#6b73ff)'}"></i></div>`;
+    }
     const cashTxt = (perf.cash || []).map(c => `${c.asset === 'USDC' ? fmt(c.amount) : amt(c.amount)} ${esc(c.asset)}`).join(' + ') || usd(perf.cashUsd);
     const solNote = perf.fundedIn && perf.fundedIn !== 'USDC' ? ` · value moves with ${esc(perf.fundedIn)}'s price` : '';
     q('.perf-pos').innerHTML = perf.positions.length
