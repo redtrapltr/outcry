@@ -246,8 +246,12 @@ export class AgentRuntime {
       const note = u.collapseCreatorWallets && risk.holders !== risk.holdersCollapsed ? ` (${risk.holders} before collapsing ${risk.creatorWallets.length} disclosed creator wallets)` : "";
       return `${holders} holders${note}, needs ${u.minHolders}`;
     }
-    if (risk.topWalletUnknown) return "top wallet share unknown";
-    if (risk.topWalletPct > u.maxTopWalletPct) return `top wallet holds ${risk.topWalletPct}%`;
+    // Unknown top wallet: if the top 10 together are under the limit, so is any single wallet.
+    // Otherwise, with an on-chain checker, it's measured right before buying; without one, skip.
+    if (risk.topWalletUnknown) {
+      const boundedByTop10 = risk.top10Pct !== undefined && risk.top10Pct <= u.maxTopWalletPct;
+      if (!boundedByTop10 && !this.verifyHolders) return "top wallet share unknown";
+    } else if (risk.topWalletPct > u.maxTopWalletPct) return `top wallet holds ${risk.topWalletPct}%`;
     if (u.maxTop10Pct !== undefined && (risk.top10Pct ?? 0) > u.maxTop10Pct) return `top 10 wallets hold ${(risk.top10Pct ?? 0).toFixed(1)}% (max ${u.maxTop10Pct}%)`;
     if (u.requireMintRevoked && !risk.mintRevoked) return "mint authority still active";
     if (!risk.freezeRevoked) return "freeze authority still active";
@@ -470,6 +474,10 @@ export class AgentRuntime {
           continue;
         }
         verified = true;
+      } else if (risk.topWalletUnknown && !(risk.top10Pct !== undefined && a.spec.universe && risk.top10Pct <= a.spec.universe.maxTopWalletPct)) {
+        // Couldn't measure the top wallet on-chain this time: don't buy blind, try again next tick.
+        waiting.set(l.mint, "top wallet not verified yet");
+        continue;
       }
       seen.add(l.mint);
       waiting.delete(l.mint);

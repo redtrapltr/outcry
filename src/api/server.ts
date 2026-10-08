@@ -12,6 +12,7 @@ import { RealHistory } from "../data/history.js";
 import { LiveFeeds } from "../data/live.js";
 import { PumpPortalFeed } from "../data/pumpfeed.js";
 import { TokenLookup } from "../data/lookup.js";
+import { JupiterHolderPoller } from "../data/jupholders.js";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
@@ -50,10 +51,12 @@ export async function buildServer(opts: ServerOptions = {}) {
     for (const a of app.agents.agents.values()) if (app.agents.positionsOf(a.id).some((p) => p.symbol === sym)) return true;
     return false;
   };
-  const pump = !opts.app && process.env.OUTCRY_PUMP_FEED === "pumpportal" ? new PumpPortalFeed(app.market, { isHeld: holds }).start() : undefined;
+  const pump = !opts.app && process.env.OUTCRY_PUMP_FEED === "pumpportal" ? new PumpPortalFeed(app.market, { isHeld: holds, apiKey: process.env.PUMPPORTAL_API_KEY }).start() : undefined;
   const router = opts.router ?? ModelRouter.fromEnv();
   const orch = new Orchestrator(app, router);
   const rpcUrl = process.env.SOLANA_RPC_URL ?? (process.env.HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}` : undefined);
+  // Holder counts for young launches (free trade data ended in May 2026).
+  const holderPoll = pump ? new JupiterHolderPoller(app.market, pump).start() : undefined;
   const lookup = live || pump ? new TokenLookup(app.market, { follow: (m) => pump?.follow(m), rpcUrl }) : undefined;
   if (lookup) {
     orch.tools.lookup = lookup;
@@ -86,7 +89,7 @@ export async function buildServer(opts: ServerOptions = {}) {
     marketMode: () => (live?.price("SOL") !== undefined || pump?.status().connected ? "real" : "simulated"),
     extraHealth: () => ({
       persistence: persistence?.status() ?? { store: "memory (data is lost on restart)" },
-      marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", solanaRpc: rpcStatus },
+      marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", holders: holderPoll ? holderPoll.status() : null, solanaRpc: rpcStatus },
     }),
   });
   const store = opts.store === null ? undefined : opts.store ?? (await storeFromEnv());
@@ -163,6 +166,7 @@ export async function buildServer(opts: ServerOptions = {}) {
     stop();
     live?.stop();
     pump?.stop();
+    holderPoll?.stop();
     await persistence?.stop();
   });
 

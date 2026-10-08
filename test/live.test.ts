@@ -200,3 +200,42 @@ describe("time exit", () => {
     expect(app.agents.explain(agent.id, 20).some((e) => String((e.data as { reason?: string }).reason).includes("time exit"))).toBe(true);
   });
 });
+
+describe("holders from Jupiter when pump.fun trade data is unavailable", () => {
+  it("updates holder counts in batches and lets a sniper buy after an on-chain check", async () => {
+    const { JupiterHolderPoller } = await import("../src/data/jupholders.js");
+    const app = createOutcry({ mode: "paper" } as never);
+    const sock = { readyState: 1, send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null } as never;
+    const feed = new PumpPortalFeed(app.market, { makeSocket: () => sock }).start();
+    const MINT = "5xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+    const urls: string[] = [];
+    let holders = 1;
+    const poller = new JupiterHolderPoller(app.market, feed, {
+      fetch: async (u) => (urls.push(u), ok([{ id: MINT, holderCount: holders, usdPrice: 0.00001, liquidity: 9000, audit: { topHoldersPercentage: 14.2 } }])),
+    });
+    app.agents.verifyHolders = async () => ({ topWalletPct: 3.1, top10Pct: 14.2, poolPct: 80 });
+    const u = app.users.create({ badge: "T", jacket: "memes", residence: "CH" });
+    const { agent } = app.agents.propose(u.id, {
+      name: "JUP", goal: "x", markets: ["memes"], kind: "sniper",
+      universe: { venue: "pumpfun", minHolders: 5, maxTopWalletPct: 25, maxAgeSeconds: 120 },
+      sizeUsd: 10, exit: { stopLossPct: 20, takeProfitPct: 30, maxHoldMinutes: 10 },
+      limits: { maxPerTradeUsd: 10, maxPerDayUsd: 100, maxOpenPositions: 5, maxDrawdownPct: 50 }, mode: "paper",
+    });
+    app.agents.deploy(u.id, agent.id, { mode: "paper" });
+    await app.agents.tick();
+    feed.handle({ mint: MINT, txType: "create", traderPublicKey: "c", initialBuy: 30_000_000, marketCapSol: 30, vSolInBondingCurve: 31, symbol: "JUPT" });
+    await poller.poll();
+    await app.agents.tick();
+    const entries = () => app.agents.explain(agent.id, 50).filter((e) => e.action.endsWith("entry"));
+    expect(entries()).toHaveLength(0); // 1 holder so far
+    holders = 12;
+    await poller.poll();
+    expect(urls.at(-1)).toContain(MINT);
+    expect(app.market.tokenRisk(MINT)!.holders).toBe(12);
+    await app.agents.tick();
+    expect(entries()).toHaveLength(1);
+    expect((entries()[0]!.data as { onChainVerified: boolean }).onChainVerified).toBe(true);
+    expect(poller.status().lastCoverage).toBe("1/1");
+    feed.stop();
+  });
+});
