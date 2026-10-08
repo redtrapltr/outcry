@@ -17,6 +17,7 @@ describe("agent marketplace", () => {
     const src = app.agents.propose(creator.id, spec("ALPHA")).agent;
     expect(() => app.marketplace.publish(creator.id, src.id, {})).toThrow(/Deploy the agent first/);
     app.agents.deploy(creator.id, src.id, { mode: "paper" });
+    app.users.setHandle(creator.id, "creator1");
     const l = app.marketplace.publish(creator.id, src.id, { creatorFeeBps: 50, performanceFeePct: 20, unlockUsd: 10, monthlyUsd: 5, description: "fast memes" });
     const listed = app.marketplace.list();
     expect(listed).toHaveLength(1);
@@ -67,5 +68,34 @@ describe("agent marketplace", () => {
     await app.agents.tick();
     expect(app.agents.positionsOf(copy.id).some((p) => p.symbol === "CRE8")).toBe(false);
     expect(app.agents.explain(copy.id, 20).some((e) => String((e.data as { reason?: string }).reason).includes("creator"))).toBe(true);
+  });
+});
+
+describe("marketplace: handles and strategy updates", () => {
+  it("needs a unique handle to publish, shows it, and lets subscribers accept a new version", async () => {
+    const app = createOutcry({ mode: "paper" } as never);
+    const creator = app.users.create({ badge: "CRE", jacket: "memes", residence: "CH" });
+    const other = app.users.create({ badge: "OTH", jacket: "memes", residence: "CH" });
+    const sub = app.users.create({ badge: "SUB", jacket: "memes", residence: "CH" });
+    const src = app.agents.propose(creator.id, spec("BETA")).agent;
+    app.agents.deploy(creator.id, src.id, { mode: "paper" });
+    expect(() => app.marketplace.publish(creator.id, src.id, {})).toThrow(/@handle/);
+    app.users.setHandle(creator.id, "@Thiago");
+    expect(() => app.users.setHandle(other.id, "thiago")).toThrow(/taken/);
+    expect(() => app.users.setHandle(other.id, "x")).toThrow(/3 to 16/);
+    const l = app.marketplace.publish(creator.id, src.id, {});
+    expect(app.marketplace.list()[0]!.creator).toBe("@thiago");
+
+    const { agent: copy } = app.marketplace.activate(sub.id, l.id, { budgetUsd: 50, sizeUsd: 10 });
+    expect(app.marketplace.updateFor(copy.id)!.available).toBe(false);
+    // Creator tightens the strategy.
+    app.agents.revise(creator.id, src.id, { universe: { venue: "pumpfun", minHolders: 99, maxTopWalletPct: 15 } } as never);
+    const u = app.marketplace.updateFor(copy.id)!;
+    expect(u.available).toBe(true);
+    const after = app.marketplace.applyUpdate(sub.id, copy.id);
+    expect(after.spec.universe?.minHolders).toBe(99);
+    expect(after.spec.sizeUsd).toBe(10); // subscriber's risk kept
+    expect(after.spec.limits.maxPerDayUsd).toBe(50);
+    expect(app.marketplace.updateFor(copy.id)!.available).toBe(false);
   });
 });

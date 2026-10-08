@@ -80,6 +80,7 @@ export class Marketplace {
     if ((a as AgentWithCopy).copyOf) throw new Error("You can't publish a copy of someone else's agent");
     if (a.state === "killed") throw new Error("This agent was killed");
     if (a.state === "draft" || a.state === "backtested") throw new Error("Deploy the agent first: listings show its live track record");
+    if (!this.d.users.get(userId).handle) throw new Error("Choose your public @handle first (it's shown on your listings)");
     const existing = [...this.listings.values()].find((l) => l.agentId === agentId);
     const t = this.cleanTerms({ title: a.spec.name, description: a.spec.goal, ...(existing ?? {}), ...terms });
     const now = nowIso();
@@ -139,7 +140,8 @@ export class Marketplace {
       id: l.id,
       title: l.title,
       description: l.description,
-      creator: l.creatorBadge,
+      creator: this.d.users.get(l.creatorUserId)?.handle ? `@${this.d.users.get(l.creatorUserId).handle}` : l.creatorBadge,
+      version: a?.version ?? 1,
       kind: a?.spec.kind ?? "sniper",
       mode: a?.spec.mode ?? "paper",
       status: l.status,
@@ -264,6 +266,44 @@ export class Marketplace {
     if (!l) return undefined;
     const reg = this.d.registry.get(mint);
     return reg && reg.creatorUserId === l.creatorUserId ? "launched by this agent's creator" : undefined;
+  }
+
+  /** For a copy: is a newer version of the creator's strategy available? */
+  updateFor(agentId: string): { available: boolean; version: number; current: number } | undefined {
+    const copy = this.d.agents.get(agentId) as AgentWithCopy | undefined;
+    const s = this.subFor(agentId);
+    const l = s && this.listings.get(s.listingId);
+    const src = l && this.d.agents.get(l.agentId);
+    if (!copy?.copyOf || !src) return undefined;
+    return { available: src.version > copy.copyOf.version, version: src.version, current: copy.copyOf.version };
+  }
+
+  /** The subscriber accepts the creator's latest strategy; their own risk settings stay. */
+  applyUpdate(userId: string, agentId: string) {
+    const copy = this.d.agents.get(agentId) as AgentWithCopy | undefined;
+    if (!copy || copy.userId !== userId || !copy.copyOf) throw new Error("Agent not found");
+    const l = this.listings.get(copy.copyOf.listingId);
+    const src = l && this.d.agents.get(l.agentId);
+    if (!l || !src) throw new Error("The creator's agent no longer exists");
+    if (src.version <= copy.copyOf.version) return copy;
+    // Strategy fields come from the creator; risk fields stay the subscriber's.
+    copy.spec = { ...copy.spec, kind: src.spec.kind, markets: src.spec.markets, universe: src.spec.universe, program: src.spec.program, exit: src.spec.exit, goal: src.spec.goal };
+    copy.copyOf.version = src.version;
+    copy.version += 1;
+    this.d.audit.append(`user:${userId}`, "market.copy_updated", { agentId, listingId: l.id, version: src.version });
+    this.d.bus.publish({ type: "agent.activity", userId, agentId, message: `${copy.spec.name} now runs the creator's v${src.version}` });
+    return copy;
+  }
+
+  /** Called when a creator edits a listed agent: tell every subscriber. */
+  onSourceUpdated(agentId: string) {
+    const l = this.listingFor(agentId);
+    const src = this.d.agents.get(agentId);
+    if (!l || !src) return;
+    for (const s of this.subs.values()) {
+      if (s.listingId !== l.id || s.status === "ended") continue;
+      this.d.bus.publish({ type: "agent.activity", userId: s.userId, agentId: s.agentId, message: `The creator of ${l.title} published v${src.version}. Update your copy from the agent list when you're ready.` });
+    }
   }
 
   /** Is this agent a marketplace copy? Its strategy is hidden from its owner. */

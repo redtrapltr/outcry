@@ -39,6 +39,17 @@ export class UserStore {
   }
 
   /** True if any user holds a balance of this asset (used to keep live tokens tracked). */
+  /** Set a unique public @handle: 3-16 letters, digits or underscores. */
+  setHandle(userId: string, raw: string) {
+    const h = String(raw).trim().replace(/^@/, "").toLowerCase();
+    if (!/^[a-z0-9_]{3,16}$/.test(h)) throw new Error("A handle is 3 to 16 letters, digits or underscores");
+    if (["outcry", "woodeng", "admin", "support", "official"].includes(h)) throw new Error(`@${h} is reserved`);
+    for (const u of this.users.values()) if (u.id !== userId && u.handle === h) throw new Error(`@${h} is taken`);
+    const u = this.get(userId);
+    u.handle = h;
+    return u;
+  }
+
   /** Every asset symbol any user holds a balance of. */
   heldSymbols(): Set<string> {
     const out = new Set<string>();

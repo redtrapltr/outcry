@@ -241,6 +241,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
     <div class="member"><span class="mbadge" id="badge">…</span><div><div style="font-weight:600;font-size:14px">Floor member</div><div class="mono" style="font-size:11px;color:var(--muted)" id="memberSub">connecting…</div></div></div>
     <div class="acct" id="acct" hidden>
       <span class="mono acct-st" id="acctState">Guest · saved in this browser only</span>
+      <button class="linkbtn" type="button" id="handleBtn">Choose your @handle</button>
       <button class="btn" type="button" id="secureBtn">Secure with a passkey</button>
       <button class="linkbtn" type="button" id="signInBtn">Sign in with a passkey</button>
       <button class="linkbtn" type="button" id="signOutBtn" hidden>Sign out</button>
@@ -339,7 +340,17 @@ function drawAccount(st) {
   $('acctState').className = 'mono acct-st' + (secured ? ' ok' : '');
   $('secureBtn').hidden = secured; $('signInBtn').hidden = secured; $('signOutBtn').hidden = !secured;
 }
-async function loadAccount() { try { drawAccount(await api('/api/auth/status')); } catch { /* ignore */ } }
+async function loadAccount() {
+  try { drawAccount(await api('/api/auth/status')); } catch { /* ignore */ }
+  try { const me = await api('/api/me'); myHandle = me.user.handle || null; $('handleBtn').textContent = myHandle ? `@${myHandle} · change` : 'Choose your @handle'; } catch {}
+}
+let myHandle = null;
+async function chooseHandle() {
+  const h = prompt('Your public @handle (3-16 letters, digits or _). It appears on agents you publish.', myHandle || '');
+  if (!h) return false;
+  try { const r = await api('/api/me', { method: 'PATCH', body: { handle: h } }); myHandle = r.user.handle; $('handleBtn').textContent = `@${myHandle} · change`; toast(`You're @${myHandle}`); return true; }
+  catch (e) { toast(e.message); return false; }
+}
 
 const shown = new Set();
 let token = null, sessionId = 'main-' + Date.now().toString(36), busy = false;
@@ -416,6 +427,7 @@ async function refresh() {
         a.state === 'paused' ? `<button type="button" data-act="resume" data-id="${a.id}">Resume</button>` : '',
         running || a.state === 'paused' ? `<button type="button" data-act="kill" data-id="${a.id}" title="Stop for good; unspent funds return to your main wallet">Kill</button>` : '',
         `<button type="button" data-act="rename" data-id="${a.id}" data-name="${esc(a.spec.name)}">Rename</button>`,
+        x.update?.available ? `<button type="button" data-act="update" data-id="${a.id}" data-name="${esc(a.spec.name)}" style="color:var(--up)">Update to v${x.update.version}</button>` : '',
         !a.hiddenStrategy && (running || a.state === 'paused') ? `<button type="button" data-act="publish" data-id="${a.id}" data-name="${esc(a.spec.name)}">${x.listing ? 'Listed ✓' : 'Publish'}</button>` : '',
         `<button type="button" class="del" data-act="delete" data-id="${a.id}" data-name="${esc(a.spec.name)}">Delete</button>`,
       ].join('');
@@ -813,6 +825,11 @@ $('chats').addEventListener('dblclick', async e => {
 });
 async function agentAction(id, act, name) {
   if (act === 'publish') return openPublish(id, name);
+  if (act === 'update') {
+    if (!confirm(`Switch ${name} to the creator's latest strategy? Your budget, trade size and risk settings stay the same.`)) return;
+    await api(`/api/agents/${id}/update-strategy`, { method: 'POST' });
+    feed(`${name} updated to the creator's latest version`); refresh(); return;
+  }
   if (act === 'rename') {
     const n = prompt('New name for ' + name + ' (max 18 characters)', name);
     if (!n || !n.trim() || n.trim().toUpperCase() === name) return;
@@ -1017,6 +1034,7 @@ async function openMarket() {
   });
 }
 async function openPublish(agentId, name) {
+  if (!myHandle) { toast('First, choose the @handle shown on your listings'); if (!(await chooseHandle())) return; }
   const { body, close } = sheet('Publish ' + name);
   let mine = [];
   try { mine = await api('/api/market/mine'); } catch {}
@@ -1044,6 +1062,7 @@ async function openPublish(agentId, name) {
   };
 }
 $('marketBtn').onclick = () => openMarket();
+$('handleBtn').onclick = () => chooseHandle();
 
 async function openRecap(agentId) {
   let data;

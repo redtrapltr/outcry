@@ -229,11 +229,13 @@ export class AgentRuntime {
         a.lastBacktest = { at: nowIso(), summary: `Replayed ${replay.scanned} recent launches: ${replay.matched} would have passed the filters.`, passed: true };
         this.d.audit.append(`user:${userId}`, "agent.revised", { agentId, version: a.version, spec: next });
         this.activity(a, `${a.spec.name} updated to v${a.version}`);
+        this.marketHooks?.onSourceUpdated?.(agentId);
         this.publishState(a);
         return { agent: a, replay, backtest: undefined as BacktestReport | undefined };
       }
       this.d.audit.append(`user:${userId}`, "agent.revised", { agentId, version: a.version, spec: next });
       this.publishState(a);
+      this.marketHooks?.onSourceUpdated?.(agentId);
       return { agent: a, replay: undefined as SniperReplay | undefined, backtest: undefined as BacktestReport | undefined };
     }
 
@@ -461,6 +463,7 @@ export class AgentRuntime {
     isCopy(agentId: string): boolean;
     blockedToken(agentId: string, mint: string): string | undefined;
     afterSell(agent: Agent, equityUsd: number, takeFromAgent: (usd: number) => number): void;
+    onSourceUpdated?(agentId: string): void;
   };
 
   /** On-chain holder check (Helius / Solana RPC), set by the server. */
