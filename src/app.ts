@@ -12,6 +12,7 @@ import { TicketDesk } from "./tickets/desk.js";
 import { CreatorRegistry, LaunchService } from "./launch/service.js";
 import { AgentRuntime } from "./agents/runtime.js";
 import { StrategyLab } from "./strategy/lab.js";
+import { Marketplace } from "./market/listings.js";
 import type { HistoryProvider } from "./data/history.js";
 import { DEFAULT_POLICY, type PolicyConfig } from "./policy/engine.js";
 
@@ -49,17 +50,26 @@ export function createOutcry(overrides: Partial<OutcryConfig> = {}) {
 
   // The desk needs agents and agents need the desk: resolve lazily.
   let agents!: AgentRuntime;
+  let marketplace!: Marketplace;
   const desk = new TicketDesk({
     market, users, signer, exec, audit, bus,
     platformFeeBps: config.platformFeeBps,
     policy: config.policy,
     getAgent: (id) => agents.get(id),
+    feeBpsForAgent: (id) => marketplace?.feeBpsFor(id),
+    onAgentFee: (id, usd) => marketplace?.onTradeFee(id, usd),
   });
   agents = new AgentRuntime({ users, market, desk, signer, audit, bus, registry, paperDaysBeforeAuto: config.paperDaysBeforeAuto });
   const launches = new LaunchService({ users, signer, desk, market, registry, audit, bus, mode: config.mode, launchFeeSol: config.launchFeeSol, policy: config.policy });
   const lab = new StrategyLab(market, audit, config.history);
+  marketplace = new Marketplace({ users, agents, registry, audit, bus });
+  agents.marketHooks = {
+    isCopy: (id) => marketplace.isCopy(id),
+    blockedToken: (id, mint) => marketplace.blockedToken(id, mint),
+    afterSell: (a, eq, take) => marketplace.chargePerformance(a, eq, take),
+  };
 
-  return { config, audit, bus, market, signer, users, exec, registry, desk, agents, launches, lab };
+  return { config, audit, bus, market, signer, users, exec, registry, desk, agents, launches, lab, marketplace };
 }
 
 export type Outcry = ReturnType<typeof createOutcry>;

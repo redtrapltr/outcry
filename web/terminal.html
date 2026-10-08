@@ -55,6 +55,21 @@ button,input{font:inherit;color:inherit}
 .pend:hover{background:var(--card2)}
 .pend b{font:600 12px var(--mono)}
 #pending{display:flex;flex-direction:column;gap:6px}
+.sheet{position:fixed;inset:0;z-index:45;background:rgba(6,7,24,.85);display:flex;align-items:flex-start;justify-content:center;overflow-y:auto;padding:40px 16px}
+.sheet-body{width:min(920px,100%);background:var(--bg);border:1px solid var(--line2);border-radius:18px;padding:22px;display:flex;flex-direction:column;gap:16px}
+.sheet-head{display:flex;justify-content:space-between;align-items:center;gap:12px}
+.sheet-head h2{margin:0;font:900 34px var(--display);letter-spacing:.02em}
+.lst{border:1px solid var(--line);border-radius:14px;padding:16px;display:grid;grid-template-columns:1fr 200px;gap:10px 16px;background:var(--card)}
+.lst h3{margin:0;font:800 26px var(--display);letter-spacing:.02em}
+.lst .ret{font:800 30px var(--display);text-align:right}
+.lst .row{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px 16px;font:12px var(--mono);color:var(--soft)}
+.lst .acts{grid-column:1/-1;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.lst svg{width:200px;height:56px}
+.form{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px}
+.form label{display:flex;flex-direction:column;gap:4px;font-size:13px;color:var(--soft)}
+.form input,.form textarea{background:var(--card);border:1px solid var(--line2);border-radius:8px;padding:9px 10px;color:var(--text)}
+.form .wide{grid-column:1/-1}
+@media (max-width:700px){.lst{grid-template-columns:1fr}.form{grid-template-columns:1fr}}
 .recap-btn{padding:6px 12px;font-size:13px}
 .recap-modal{position:fixed;inset:0;z-index:50;background:rgba(6,7,24,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px}
 .recap-modal canvas{max-height:calc(100dvh - 120px);max-width:100%;aspect-ratio:4/5;border-radius:18px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
@@ -231,6 +246,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
       <button class="linkbtn" type="button" id="signOutBtn" hidden>Sign out</button>
     </div>
     <button class="btn btn-primary" type="button" id="newSession">+ New chat</button>
+    <button class="btn" type="button" id="marketBtn">◆ Marketplace</button>
     <div class="list" id="chatsBox" hidden>
       <span class="eyebrow" style="padding:0 10px 6px">Chats</span>
       <div id="chats"></div>
@@ -393,13 +409,14 @@ async function refresh() {
   try {
     const list = await api('/api/agents');
     const rows = list.filter(x => x.agent.state !== 'killed');
-    $('agents').innerHTML = rows.map(({ agent: a }) => {
+    $('agents').innerHTML = rows.map((x) => { const a = x.agent;
       const running = a.state === 'live' || a.state === 'paper';
       const btns = [
         running ? `<button type="button" data-act="pause" data-id="${a.id}">Pause</button>` : '',
         a.state === 'paused' ? `<button type="button" data-act="resume" data-id="${a.id}">Resume</button>` : '',
         running || a.state === 'paused' ? `<button type="button" data-act="kill" data-id="${a.id}" title="Stop for good; unspent funds return to your main wallet">Kill</button>` : '',
         `<button type="button" data-act="rename" data-id="${a.id}" data-name="${esc(a.spec.name)}">Rename</button>`,
+        !a.hiddenStrategy && (running || a.state === 'paused') ? `<button type="button" data-act="publish" data-id="${a.id}" data-name="${esc(a.spec.name)}">${x.listing ? 'Listed ✓' : 'Publish'}</button>` : '',
         `<button type="button" class="del" data-act="delete" data-id="${a.id}" data-name="${esc(a.spec.name)}">Delete</button>`,
       ].join('');
       return `<div class="agent-row"><div class="item"><span style="display:flex;gap:8px;align-items:center;min-width:0"><span class="sq" style="background:${(J[a.spec.markets[0]] || J.strategies)[1]}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.spec.name)}</span></span><span class="status st-${a.state}">${a.state.toUpperCase()}${a.state === 'live' ? ' · ' + a.spec.mode.toUpperCase() : ''}</span></div><div class="a-ctl">${btns}</div></div>`;
@@ -552,17 +569,17 @@ async function agentCard(card, instant = false) {
   };
   const summaryHtml = () => {
     const s = a.spec; const trades = Math.max(1, Math.floor(s.limits.maxPerDayUsd / s.sizeUsd));
-    return `<b>${esc(s.name)}</b> risks <b>$${s.sizeUsd}</b> per trade and trades from a <b>$${s.limits.maxPerDayUsd}</b> wallet and reinvests what it sells, with up to <b>${s.limits.maxOpenPositions}</b> position${s.limits.maxOpenPositions > 1 ? 's' : ''} at once. Exits at <b>−${s.exit.stopLossPct}%</b> or <b>+${s.exit.takeProfitPct}%</b>; pauses itself at −${s.limits.maxDrawdownPct}% drawdown.<br><span class="meta">${esc(a.lastBacktest?.summary || '')}</span>`;
+    return `<b>${esc(s.name)}</b> risks <b>$${s.sizeUsd}</b> per trade and trades from a <b>$${s.limits.maxPerDayUsd}</b> wallet and reinvests what it sells, with up to <b>${s.limits.maxOpenPositions}</b> position${s.limits.maxOpenPositions > 1 ? 's' : ''} at once. ${a.hiddenStrategy ? 'Runs a marketplace strategy (hidden);' : `Exits at <b>−${s.exit.stopLossPct}%</b> or <b>+${s.exit.takeProfitPct}%</b>;`} pauses itself at −${s.limits.maxDrawdownPct}% drawdown.<br><span class="meta">${esc(a.lastBacktest?.summary || '')}</span>`;
   };
   const drawAdjust = () => {
     const s = a.spec;
     q('.adj-host').innerHTML = `<div class="adjust">
       <div class="ctl"><div class="ctl-top"><label for="sz-${a.id}">Size per trade</label><output class="o-sz">$${s.sizeUsd}</output></div><input type="range" id="sz-${a.id}" class="r-sz" min="5" max="500" step="5" value="${s.sizeUsd}"></div>
       <div class="ctl"><div class="ctl-top"><label for="cp-${a.id}">Agent wallet (budget)</label><output class="o-cp">$${s.limits.maxPerDayUsd}</output></div><input type="range" id="cp-${a.id}" class="r-cp" min="10" max="5000" step="10" value="${s.limits.maxPerDayUsd}"></div>
-      <div class="ctl"><div class="ctl-top"><label for="sl-${a.id}">Stop-loss</label><output class="o-sl">−${s.exit.stopLossPct}%</output></div><input type="range" id="sl-${a.id}" class="r-sl" min="3" max="90" step="1" value="${s.exit.stopLossPct}"></div>
+      ${a.hiddenStrategy ? '' : `<div class="ctl"><div class="ctl-top"><label for="sl-${a.id}">Stop-loss</label><output class="o-sl">−${s.exit.stopLossPct}%</output></div><input type="range" id="sl-${a.id}" class="r-sl" min="3" max="90" step="1" value="${s.exit.stopLossPct}"></div>`}
       <div class="ctl"><div class="ctl-top"><label for="dd-${a.id}">Pause at drawdown</label><output class="o-dd">−${s.limits.maxDrawdownPct}%</output></div><input type="range" id="dd-${a.id}" class="r-dd" min="5" max="90" step="1" value="${s.limits.maxDrawdownPct}"></div>
       <div class="ctl"><div class="ctl-top"><label for="mp-${a.id}">Max open positions</label><output class="o-mp">${s.limits.maxOpenPositions}</output></div><input type="range" id="mp-${a.id}" class="r-mp" min="1" max="50" step="1" value="${s.limits.maxOpenPositions}"></div>
-      <div class="ctl"><div class="ctl-top"><label for="tp-${a.id}">Take profit</label><output class="o-tp">+${s.exit.takeProfitPct}%</output></div><input type="range" id="tp-${a.id}" class="r-tp" min="5" max="400" step="5" value="${s.exit.takeProfitPct}"></div>
+      ${a.hiddenStrategy ? '<div class="ctl meta">Entries and exits are set by the creator and stay private.</div>' : `<div class="ctl"><div class="ctl-top"><label for="tp-${a.id}">Take profit</label><output class="o-tp">+${s.exit.takeProfitPct}%</output></div><input type="range" id="tp-${a.id}" class="r-tp" min="5" max="400" step="5" value="${s.exit.takeProfitPct}"></div>`}
       <div class="summary wide sumtxt">${summaryHtml()}</div>
       <label class="check wide"><input type="checkbox" class="ack"> I understand auto mode trades without asking me, inside these limits.</label>
       <div class="actions wide"><button class="btn btn-primary" type="button" data-mode="paper">Deploy · paper</button><button class="btn" type="button" data-mode="ask">Deploy · ask me</button><button class="btn" type="button" data-mode="auto">Deploy · auto</button></div>
@@ -573,8 +590,8 @@ async function agentCard(card, instant = false) {
     dd.oninput = () => { q('.o-dd').textContent = '−' + dd.value + '%'; patch({ limits: { maxDrawdownPct: +dd.value } }, 'risk'); };
     sz.oninput = () => { q('.o-sz').textContent = '$' + sz.value; patch({ sizeUsd: +sz.value, limits: { maxPerTradeUsd: +sz.value } }, 'risk'); };
     cp.oninput = () => { q('.o-cp').textContent = '$' + cp.value; patch({ limits: { maxPerDayUsd: +cp.value } }, 'risk'); };
-    sl.oninput = () => { q('.o-sl').textContent = '−' + sl.value + '%'; patch({ exit: { stopLossPct: +sl.value } }, 'risk'); };
-    tp.oninput = () => { q('.o-tp').textContent = '+' + tp.value + '%'; patch({ exit: { takeProfitPct: +tp.value } }, 'risk'); };
+    if (sl) sl.oninput = () => { q('.o-sl').textContent = '−' + sl.value + '%'; patch({ exit: { stopLossPct: +sl.value } }, 'risk'); };
+    if (tp) tp.oninput = () => { q('.o-tp').textContent = '+' + tp.value + '%'; patch({ exit: { takeProfitPct: +tp.value } }, 'risk'); };
     wrap.querySelectorAll('[data-mode]').forEach(b => b.onclick = async () => {
       const mode = b.dataset.mode;
       try {
@@ -795,6 +812,7 @@ $('chats').addEventListener('dblclick', async e => {
   try { await api(`/api/chat/${encodeURIComponent(row.dataset.id)}`, { method: 'PATCH', body: { title: t.trim() } }); loadChats(); } catch (err) { toast(err.message); }
 });
 async function agentAction(id, act, name) {
+  if (act === 'publish') return openPublish(id, name);
   if (act === 'rename') {
     const n = prompt('New name for ' + name + ' (max 18 characters)', name);
     if (!n || !n.trim() || n.trim().toUpperCase() === name) return;
@@ -931,6 +949,102 @@ function perfPanel(agentId) {
   liveCharts.set(agentId, update);
   return { el, update };
 }
+function sheet(title) {
+  const m = document.createElement('div'); m.className = 'sheet'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', title);
+  m.innerHTML = `<div class="sheet-body"><div class="sheet-head"><h2>${esc(title)}</h2><button class="btn" type="button" data-close>Close</button></div><div class="sheet-content"></div></div>`;
+  document.body.appendChild(m);
+  const close = () => m.remove();
+  m.addEventListener('click', e => { if (e.target === m || e.target.closest('[data-close]')) close(); });
+  return { m, body: m.querySelector('.sheet-content'), close };
+}
+const pctTxt = n => `${n >= 0 ? '+' : '−'}${Math.abs(n).toFixed(1)}%`;
+const feeTxt = f => [`${f.perTradePct.toFixed(2)}% per trade (${f.outcryPct}% Outcry + ${f.creatorPct}% creator)`, f.performanceFeePct ? `${f.performanceFeePct}% of profits` : '', f.unlockUsd ? `$${fmt(f.unlockUsd)} to unlock` : '', f.monthlyUsd ? `$${fmt(f.monthlyUsd)}/month` : ''].filter(Boolean).join(' · ');
+function sparkSvg(vals, start) {
+  if (!vals || vals.length < 2) return '<svg viewBox="0 0 200 56"></svg>';
+  const lo = Math.min(start, ...vals), hi = Math.max(start, ...vals), r = Math.max(1e-9, hi - lo);
+  const X = i => (i / (vals.length - 1)) * 200, Y = v => 52 - ((v - lo) / r) * 48;
+  const up = vals[vals.length - 1] >= start;
+  return `<svg viewBox="0 0 200 56" preserveAspectRatio="none" aria-hidden="true"><line x1="0" x2="200" y1="${Y(start)}" y2="${Y(start)}" stroke="rgba(150,150,180,.4)" stroke-dasharray="3 3"/><path d="${vals.map((v, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)} ${Y(v).toFixed(1)}`).join(' ')}" fill="none" stroke="${up ? 'var(--up)' : 'var(--down)'}" stroke-width="2"/></svg>`;
+}
+async function openMarket() {
+  const { body, close } = sheet('Marketplace');
+  body.innerHTML = '<p class="meta">Loading…</p>';
+  let list = [], mine = [];
+  try { [list, mine] = await Promise.all([api('/api/market'), api('/api/market/mine')]); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
+  const earn = mine.reduce((s, l) => s + l.earnings.tradeFees + l.earnings.performanceFees + l.earnings.unlocks + l.earnings.subscriptions, 0);
+  body.innerHTML = `<p class="meta" style="margin:0">Agents published by other traders. You see their results, never their strategy. Activating one runs your own copy, with your own budget.</p>
+    ${mine.length ? `<div class="summary"><b>Your listings</b>: ${mine.map(l => `${esc(l.title)} · ${l.subscribers} subscriber${l.subscribers === 1 ? '' : 's'}`).join(' · ')}<br><span class="meta">Earned so far: ${usd(earn)} (paper)</span></div>` : ''}
+    <div class="lists" style="display:flex;flex-direction:column;gap:12px">${list.length ? list.map(l => `<div class="lst" data-id="${l.id}">
+      <div><h3>${esc(l.title)}</h3><div class="meta">by ${esc(l.creator)} · ${l.kind === 'sniper' ? 'pump.fun sniper' : 'strategy agent'} · ${l.mode === 'paper' ? 'paper track record' : 'live'}</div>${l.description ? `<p style="margin:8px 0 0">${esc(l.description)}</p>` : ''}</div>
+      <div><div class="ret" style="color:${l.returnPct >= 0 ? 'var(--up)' : 'var(--down)'}">${pctTxt(l.returnPct)}</div>${sparkSvg(l.spark, l.startUsd)}</div>
+      <div class="row"><span>max drawdown −${l.drawdownPct.toFixed(1)}%</span><span>${l.closedTrades ? `win rate ${Math.round(l.wins / l.closedTrades * 100)}% (${l.wins}/${l.closedTrades})` : 'no closed trades yet'}</span><span>running since ${new Date(l.runningSince).toLocaleDateString()}</span><span>${l.subscribers} subscriber${l.subscribers === 1 ? '' : 's'}</span></div>
+      <div class="row"><span>${esc(feeTxt(l.fees))}</span></div>
+      <div class="acts"><button class="btn" type="button" data-recap="${l.id}">▶ Recap</button><button class="btn btn-primary" type="button" data-activate="${l.id}">Activate</button><span class="act-host"></span></div>
+    </div>`).join('') : '<p class="meta">No agents listed yet. Publish one of yours from the agent list (Publish).</p>'}</div>`;
+  body.addEventListener('click', async e => {
+    const rc = e.target.closest('[data-recap]');
+    if (rc) {
+      try {
+        const data = await api(`/api/market/${rc.dataset.recap}/recap`);
+        const m = document.createElement('div'); m.className = 'recap-modal'; m.innerHTML = '<canvas></canvas><div class="recap-bar"><button class="btn btn-primary" data-r="play">▶ Replay</button><button class="btn" data-r="close">Close</button></div>';
+        document.body.appendChild(m);
+        const r = OutcryRecap.mount(m.querySelector('canvas'), data, { sound: true }); r.play();
+        m.addEventListener('click', ev => { const b = ev.target.closest('[data-r]'); if (b?.dataset.r === 'play') r.play(); if (b?.dataset.r === 'close' || ev.target === m) { r.stop(); m.remove(); } });
+      } catch (err) { toast(err.message); }
+      return;
+    }
+    const ac = e.target.closest('[data-activate]');
+    if (ac) {
+      const l = list.find(x => x.id === ac.dataset.activate);
+      const host = ac.parentElement.querySelector('.act-host');
+      host.innerHTML = `<form class="form" style="grid-template-columns:repeat(3,minmax(0,1fr));align-items:end">
+        <label>Budget (agent wallet, $)<input name="budget" type="number" min="5" step="5" value="100" required></label>
+        <label>Per trade ($)<input name="size" type="number" min="1" step="1" value="10" required></label>
+        <button class="btn btn-primary" type="submit">Pay ${usd(l.fees.unlockUsd + l.fees.monthlyUsd)} & activate</button>
+        <span class="meta wide">Then ${esc(feeTxt(l.fees))}. Paper money for now.</span></form>`;
+      host.querySelector('form').onsubmit = async ev => {
+        ev.preventDefault();
+        const f = new FormData(ev.target);
+        try {
+          const r = await api(`/api/market/${l.id}/activate`, { method: 'POST', body: { budgetUsd: +f.get('budget'), sizeUsd: +f.get('size') } });
+          close();
+          const b = addAI(`<p><b>${esc(r.agent.spec.name)}</b> is running with your $${fmt(+f.get('budget'), 0)} budget. Its strategy stays private; you control the risk settings.</p>`);
+          b.appendChild(await agentCard({ agent: r.agent, blueprint: r.blueprint }));
+          refresh(); pollAgents(); scrollDown();
+        } catch (err) { toast(err.message); }
+      };
+    }
+  });
+}
+async function openPublish(agentId, name) {
+  const { body, close } = sheet('Publish ' + name);
+  let mine = [];
+  try { mine = await api('/api/market/mine'); } catch {}
+  body.innerHTML = `<p class="meta" style="margin:0">Other traders see this agent's results, never its filters or rules. They run their own copy and pay your fees.</p>
+    <form class="form">
+      <label class="wide">Title<input name="title" maxlength="18" value="${esc(name)}"></label>
+      <label class="wide">Description<textarea name="description" maxlength="280" rows="2" placeholder="What it does, in one or two lines (without giving away the recipe)"></textarea></label>
+      <label>Your fee per trade (%)<input name="fee" type="number" min="0" max="2" step="0.05" value="0.1"></label>
+      <label>Performance fee (% of new profits)<input name="perf" type="number" min="0" max="50" step="1" value="0"></label>
+      <label>Unlock price ($, one-time)<input name="unlock" type="number" min="0" step="1" value="0"></label>
+      <label>Monthly subscription ($)<input name="monthly" type="number" min="0" step="1" value="0"></label>
+      <div class="summary wide pub-sum"></div>
+      <div class="actions wide"><button class="btn btn-primary" type="submit">Publish</button></div>
+    </form>`;
+  const form = body.querySelector('form');
+  const sum = () => { const f = new FormData(form); const fee = +f.get('fee') || 0; form.querySelector('.pub-sum').innerHTML = `Subscribers pay <b>${(0.4 + fee).toFixed(2)}% per trade</b>: 0.4% to Outcry, <b>${fee}% to you</b>${+f.get('perf') ? `, plus <b>${+f.get('perf')}% of their new profits</b>` : ''}${+f.get('unlock') ? `, <b>$${+f.get('unlock')}</b> to unlock` : ''}${+f.get('monthly') ? `, <b>$${+f.get('monthly')}/month</b>` : ''}.`; };
+  form.oninput = sum; sum();
+  form.onsubmit = async ev => {
+    ev.preventDefault();
+    const f = new FormData(form);
+    try {
+      await api('/api/market', { method: 'POST', body: { agentId, title: String(f.get('title') || name), description: String(f.get('description') || ''), creatorFeePct: +f.get('fee') || 0, performanceFeePct: +f.get('perf') || 0, unlockUsd: +f.get('unlock') || 0, monthlyUsd: +f.get('monthly') || 0 } });
+      close(); toast(`${name} is listed on the marketplace`); feed(`${name} published on the marketplace`); refresh();
+    } catch (err) { toast(err.message); }
+  };
+}
+$('marketBtn').onclick = () => openMarket();
+
 async function openRecap(agentId) {
   let data;
   try { data = await api(`/api/agents/${agentId}/recap`); } catch (e) { return toast(e.message); }

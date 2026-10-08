@@ -9,6 +9,7 @@ import type { ModelRouter } from "../llm/router.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import type { AuthService, RequestMeta } from "./auth.js";
 import { blueprint } from "../orchestrator/tools-exec.js";
+import { redactAgent } from "../market/listings.js";
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -85,7 +86,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
       }
       if (card.type === "agent") {
         const a = app.agents.get((card.agent as { id: string }).id);
-        return a && a.userId === uid && a.state !== "killed" ? [{ ...card, agent: a, blueprint: blueprint(a), replay: undefined }] : [];
+        return a && a.userId === uid && a.state !== "killed" ? [{ ...card, agent: redactAgent(a), blueprint: blueprint(a), replay: undefined }] : [];
       }
       if (card.type === "agent_control") return [];
       return [card];
@@ -178,7 +179,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   });
 
   // --- agents ----------------------------------------------------------------------
-  route("GET", "/api/agents", ({ uid }) => app.agents.listForUser(uid).map((a) => ({ agent: a, positions: app.agents.positionsOf(a.id), blueprint: blueprint(a), perf: app.agents.perf(a.id) })));
+  route("GET", "/api/agents", ({ uid }) => app.agents.listForUser(uid).map((a) => ({ agent: redactAgent(a), positions: app.agents.positionsOf(a.id), blueprint: blueprint(a), perf: app.agents.perf(a.id), listing: app.marketplace.listingFor(a.id)?.id ?? null })));
   route("GET", "/api/agents/:id/perf", ({ uid, params }) => {
     own(app.agents.get(params.id!), uid, "Agent");
     return app.agents.perf(params.id!);
@@ -202,12 +203,13 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   });
   route("PATCH", "/api/agents/:id", ({ uid, params, body }) => {
     const res = app.agents.revise(uid, params.id!, (body ?? {}) as object);
-    return { agent: res.agent, blueprint: blueprint(res.agent), backtestSummary: res.agent.lastBacktest, replay: res.replay };
+    const hidden = app.marketplace.isCopy(res.agent.id);
+    return { agent: redactAgent(res.agent), blueprint: blueprint(res.agent), backtestSummary: hidden ? undefined : res.agent.lastBacktest, replay: hidden ? undefined : res.replay };
   });
   route("POST", "/api/agents/:id/deploy", ({ uid, params, body }) => {
     const b = z.object({ mode: z.enum(["paper", "ask", "auto"]), passkeyAssertion: z.string().optional(), riskAcknowledged: z.boolean().optional() }).parse(body);
     const a = app.agents.deploy(uid, params.id!, { mode: b.mode, userApproval: b.passkeyAssertion, riskAcknowledged: b.riskAcknowledged });
-    return { agent: a, blueprint: blueprint(a) };
+    return { agent: redactAgent(a), blueprint: blueprint(a) };
   });
   route("DELETE", "/api/agents/:id", ({ uid, params }) => {
     own(app.agents.get(params.id!), uid, "Agent");
@@ -227,6 +229,36 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     app.audit.append(`user:${uid}`, "agent.recap_shared", { agentId: params.id, recapId: id });
     return { id, path: `/recap.html?id=${id}` };
   });
+  // --- marketplace ------------------------------------------------------------------
+  route("GET", "/api/market", () => app.marketplace.list(), false);
+  route("GET", "/api/market/mine", ({ uid }) => app.marketplace.mineFor(uid));
+  route("POST", "/api/market", ({ uid, body }) => {
+    const b = z.object({
+      agentId: z.string(),
+      title: z.string().max(18).optional(),
+      description: z.string().max(280).optional(),
+      creatorFeePct: z.number().min(0).max(2).optional(),
+      performanceFeePct: z.number().min(0).max(50).optional(),
+      unlockUsd: z.number().min(0).optional(),
+      monthlyUsd: z.number().min(0).optional(),
+    }).parse(body);
+    const l = app.marketplace.publish(uid, b.agentId, { ...b, creatorFeeBps: b.creatorFeePct !== undefined ? Math.round(b.creatorFeePct * 100) : undefined });
+    return app.marketplace.publicView(l);
+  });
+  route("POST", "/api/market/:id/unlist", ({ uid, params }) => app.marketplace.publicView(app.marketplace.unlist(uid, params.id!)));
+  route("POST", "/api/market/:id/activate", ({ uid, body, params }) => {
+    const b = z.object({ budgetUsd: z.number().positive(), sizeUsd: z.number().positive().optional(), name: z.string().max(18).optional() }).parse(body);
+    const r = app.marketplace.activate(uid, params.id!, b);
+    return { agent: redactAgent(r.agent), blueprint: blueprint(r.agent), subscription: r.subscription };
+  });
+  route("GET", "/api/market/:id/recap", ({ params }) => {
+    const l = app.marketplace.listings.get(params.id!);
+    if (!l || l.status !== "listed") throw new HttpError(404, "Listing not found");
+    const d = recapData(l.agentId);
+    // Results only: token names are masked so the strategy can't be copied from the recap.
+    return { ...d, name: l.title, trades: d.trades.map((t) => ({ ...t, symbol: "•••" })) };
+  }, false);
+
   route("GET", "/api/recap/:id", ({ params }) => {
     const r = recaps.get(params.id!);
     if (!r) throw new HttpError(404, "This recap doesn't exist or has expired");
@@ -234,7 +266,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   }, false);
   route("POST", "/api/agents/:id/control", ({ uid, params, body }) => {
     const b = z.object({ action: z.enum(["pause", "resume", "kill"]) }).parse(body);
-    return app.agents.control(uid, params.id!, b.action);
+    return redactAgent(app.agents.control(uid, params.id!, b.action));
   });
   route("GET", "/api/agents/:id/explain", ({ uid, params }) => {
     own(app.agents.get(params.id!), uid, "Agent");
@@ -322,6 +354,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
 export function startLoops(app: Outcry, tickMs: number, simLaunchEveryMs: number): () => void {
   const timers: ReturnType<typeof setInterval>[] = [];
   if (tickMs > 0) timers.push(setInterval(() => void app.agents.tick(), tickMs));
+  if (tickMs > 0) timers.push(setInterval(() => app.marketplace.bill(), 60_000));
   if (simLaunchEveryMs > 0 && app.config.mode === "paper") {
     const names = ["CALL", "BID", "OFFR", "RING", "BELL", "TICK", "LOUD", "YELP", "HOLR", "ROAR"];
     let i = 0;
