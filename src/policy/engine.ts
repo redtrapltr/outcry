@@ -103,9 +103,8 @@ export function evaluateOrder(t: OrderTicket, ctx: OrderContext, market: MarketD
     if (t.totalUsd > lim.maxPerTradeUsd + 1e-9) {
       return { decision: "reject", reason: `Agent ${a.spec.name}: $${t.totalUsd.toFixed(2)} is over its per-trade limit of $${lim.maxPerTradeUsd}` };
     }
-    if (a.stats.spentTodayUsd + t.totalUsd > lim.maxPerDayUsd + 1e-9) {
-      return { decision: "reject", reason: `Agent ${a.spec.name}: daily limit of $${lim.maxPerDayUsd} reached` };
-    }
+    // No daily cap here: the agent trades its own funded wallet (its budget) and reinvests proceeds.
+    // The wallet balance, open-position limit and drawdown pause bound the risk; the signer keeps a runaway guard.
     const buys = t.legs.filter((l) => l.side === "buy").length;
     if (a.stats.openPositions + buys > lim.maxOpenPositions) {
       return { decision: "reject", reason: `Agent ${a.spec.name}: already at ${lim.maxOpenPositions} open positions` };

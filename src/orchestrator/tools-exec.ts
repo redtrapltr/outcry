@@ -91,7 +91,7 @@ export function blueprint(a: Agent): BlueprintNode[] {
     { key: "goal", label: "GOAL", lines: [s.goal || s.name] },
     { key: "markets", label: "MARKETS · JACKETS", lines: s.markets },
     { key: "signals", label: "SIGNALS · WHEN TO ACT", lines: signals },
-    { key: "risk", label: "RISK LIMITS", lines: [`$${s.sizeUsd} per trade · stop −${s.exit.stopLossPct}% · take profit +${s.exit.takeProfitPct}%${s.exit.maxHoldMinutes ? ` · sell after ${s.exit.maxHoldMinutes} min` : ""}`, `max $${s.limits.maxPerDayUsd} per day · ${s.limits.maxOpenPositions} open positions · pause at −${s.limits.maxDrawdownPct}% drawdown`] },
+    { key: "risk", label: "RISK LIMITS", lines: [`$${s.sizeUsd} per trade · stop −${s.exit.stopLossPct}% · take profit +${s.exit.takeProfitPct}%${s.exit.maxHoldMinutes ? ` · sell after ${s.exit.maxHoldMinutes} min` : ""}`, `$${s.limits.maxPerDayUsd} wallet, proceeds reinvested · ${s.limits.maxOpenPositions} open positions · pause at −${s.limits.maxDrawdownPct}% drawdown`] },
     { key: "execution", label: "EXECUTION", lines: [s.mode === "ask" ? "Proposes each trade, waits for your tap" : s.mode === "auto" ? "Trades automatically inside these limits" : "Paper trading: simulated fills, no real funds"] },
   ];
 }
@@ -281,7 +281,7 @@ export class ToolExecutor {
             return `${t} skipped ${e.symbol}: ${e.reason}`;
           };
           const b = app.agents.budget(a);
-          const budgetLine = `Daily budget: $${b.spentTodayUsd.toFixed(2)} of $${b.maxPerDayUsd} spent today on ${b.buysToday.length} buy${b.buysToday.length === 1 ? "" : "s"}${b.buysToday.length ? ` (${b.buysToday.map((x) => `${new Date(x.t).toISOString().slice(11, 16)} UTC $${x.symbol} $${x.usd.toFixed(2)}`).join(", ")})` : ""}${b.reached ? "; LIMIT REACHED, no new buys" : ""}. Resets at 00:00 UTC (${b.resetsAt}).`;
+          const budgetLine = `Wallet: $${b.cashUsd.toFixed(2)} free cash, $${b.inPositionsUsd.toFixed(2)} in open positions (budget $${b.budgetUsd}; sale proceeds are reinvested, no daily cap). ${b.buysToday.length} buy${b.buysToday.length === 1 ? "" : "s"} today${b.buysToday.length ? `: ${b.buysToday.map((x) => `${new Date(x.t).toISOString().slice(11, 16)} UTC $${x.symbol} $${x.usd.toFixed(2)}`).join(", ")}` : ""}.${b.outOfCash ? " No free cash: it buys again when a position is sold." : ""}`;
           return { ok: true, result: { summary: `${budgetLine}\n${log.length ? `${a.spec.name}'s last decisions, from the audit log:\n${log.map(line).join("\n")}` : `${a.spec.name} hasn't made any decisions yet.`}`, decisions: log, budget: b } };
         }
         default:

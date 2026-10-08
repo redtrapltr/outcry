@@ -65,6 +65,7 @@ export interface Signer {
   get(walletId: string): ManagedWallet | undefined;
   byAddress(address: string): ManagedWallet | undefined;
   sign(req: SignRequest): Signature;
+  updatePolicy(walletId: string, patch: Partial<WalletPolicy>): void;
 }
 
 const fakeAddress = (seed: string, chain: "solana" | "evm") => {
@@ -110,6 +111,12 @@ export class SimulatedTurnkeySigner implements Signer {
     return w;
   }
 
+  /** Change a sub-wallet's limits (e.g. the agent's budget was raised). */
+  updatePolicy(walletId: string, patch: Partial<WalletPolicy>) {
+    const w = this.wallets.get(walletId);
+    if (w?.policy) Object.assign(w.policy, patch);
+  }
+
   get(walletId: string) {
     return this.wallets.get(walletId);
   }
@@ -138,6 +145,12 @@ export class SimulatedTurnkeySigner implements Signer {
         }
       } else if (!p.allowedVenues.includes(req.venue)) {
         throw new PolicyDenied(`venue ${req.venue} not allowed for ${w.label}`);
+      }
+      if (req.kind === "trade" && req.side === "sell") {
+        // Sells return funds to the same sub-wallet: they free up the daily allowance (net, not gross).
+        const today = dayKey();
+        if (w.spentToday.day !== today) w.spentToday = { day: today, usd: 0 };
+        w.spentToday.usd = Math.max(0, w.spentToday.usd - req.usd);
       }
       if (req.kind !== "transfer" && req.side !== "sell") {
         if (req.usd > p.maxPerTxUsd + 1e-9) throw new PolicyDenied(`over per-transaction cap (${p.maxPerTxUsd} USD)`);
