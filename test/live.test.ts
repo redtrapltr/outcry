@@ -175,3 +175,28 @@ describe("on-chain holder check before a sniper buy", () => {
     }
   });
 });
+
+describe("time exit", () => {
+  it("sells a position after maxHoldMinutes even if the price never moves", async () => {
+    const app = createOutcry({ mode: "paper" } as never);
+    const u = app.users.create({ badge: "T", jacket: "memes", residence: "CH" });
+    const { agent } = app.agents.propose(u.id, {
+      name: "TIMED", goal: "x", markets: ["memes"], kind: "sniper",
+      universe: { venue: "pumpfun", minHolders: 1, maxTopWalletPct: 100, maxAgeSeconds: 300 },
+      sizeUsd: 10, exit: { stopLossPct: 90, takeProfitPct: 1000, maxHoldMinutes: 1 },
+      limits: { maxPerTradeUsd: 10, maxPerDayUsd: 50, maxOpenPositions: 3, maxDrawdownPct: 90 }, mode: "paper",
+    });
+    app.agents.deploy(u.id, agent.id, { mode: "paper" });
+    await app.agents.tick();
+    app.market.spawnMeme("TIMEX", { holders: 50, holdersCollapsed: 50 });
+    await app.agents.tick(); // buy
+    await app.agents.tick(); // reconcile
+    const pos = app.agents.positionsOf(agent.id).find((p) => p.symbol === "TIMEX")!;
+    expect(pos).toBeDefined();
+    pos.openedAt = new Date(Date.now() - 2 * 60_000).toISOString(); // pretend 2 minutes passed
+    await app.agents.tick(); // time exit
+    await app.agents.tick(); // reconcile
+    expect(app.agents.positionsOf(agent.id).some((p) => p.symbol === "TIMEX")).toBe(false);
+    expect(app.agents.explain(agent.id, 20).some((e) => String((e.data as { reason?: string }).reason).includes("time exit"))).toBe(true);
+  });
+});

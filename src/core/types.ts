@@ -270,6 +270,8 @@ export const AgentSpec = z.object({
   exit: z.object({
     stopLossPct: z.number().positive().max(95),
     takeProfitPct: z.number().positive().max(10_000),
+    /** Sell anyway after this many minutes (dead tokens stop trading and would be held forever). */
+    maxHoldMinutes: z.number().positive().max(10_080).optional(),
   }),
   limits: AgentLimits,
   mode: AgentMode.default("paper"),

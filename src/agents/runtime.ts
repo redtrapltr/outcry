@@ -538,6 +538,7 @@ export class AgentRuntime {
       let reason: string | null = null;
       if (chg <= -s.stopLossPct) reason = `stop −${s.stopLossPct}% hit (${chg.toFixed(1)}%)`;
       else if (chg >= s.takeProfitPct) reason = `take profit +${s.takeProfitPct}% hit (+${chg.toFixed(1)}%)`;
+      else if (s.maxHoldMinutes && Date.now() - Date.parse(p.openedAt) >= s.maxHoldMinutes * 60_000) reason = `held ${s.maxHoldMinutes} min, time exit (${chg >= 0 ? "+" : ""}${chg.toFixed(1)}%)`;
       else if (a.spec.kind === "rules") {
         const prog = a.spec.program!;
         const candles = this.d.market.candles(prog.asset, prog.timeframe, 400).slice(0, -1);

@@ -145,7 +145,7 @@ export const TOOLS: ToolDef[] = [
         },
         program,
         sizeUsd: { type: "number" },
-        exit: { type: "object", properties: { stopLossPct: { type: "number" }, takeProfitPct: { type: "number" } }, required: ["stopLossPct", "takeProfitPct"] },
+        exit: { type: "object", properties: { stopLossPct: { type: "number" }, takeProfitPct: { type: "number" }, maxHoldMinutes: { type: "number", description: "Sell after this many minutes whatever the price (\"sell after 10 minutes\" -> 10)" } }, required: ["stopLossPct", "takeProfitPct"] },
         limits: {
           type: "object",
           properties: { maxPerTradeUsd: { type: "number" }, maxPerDayUsd: { type: "number" }, maxOpenPositions: { type: "number" }, maxDrawdownPct: { type: "number" } },
@@ -167,7 +167,7 @@ export const TOOLS: ToolDef[] = [
         name: { type: "string" },
         universe: { type: "object", properties: universeProps },
         sizeUsd: { type: "number" },
-        exit: { type: "object", properties: { stopLossPct: { type: "number" }, takeProfitPct: { type: "number" } } },
+        exit: { type: "object", properties: { stopLossPct: { type: "number" }, takeProfitPct: { type: "number" }, maxHoldMinutes: { type: "number" } } },
         limits: { type: "object", properties: { maxPerTradeUsd: { type: "number" }, maxPerDayUsd: { type: "number" }, maxOpenPositions: { type: "number" }, maxDrawdownPct: { type: "number", description: "Pause the agent at this drawdown (e.g. 50 for -50%)" } } },
       },
       required: ["agent"],
