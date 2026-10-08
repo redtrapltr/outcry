@@ -264,3 +264,43 @@ describe("held tokens keep live prices", () => {
     feed.stop();
   });
 });
+
+describe("budget is the agent's wallet", () => {
+  it("keeps buying with sale proceeds beyond the budget in gross buys, stops only when cash is tied up", async () => {
+    const app = createOutcry({ mode: "paper" } as never);
+    const u = app.users.create({ badge: "T", jacket: "memes", residence: "CH" });
+    const { agent } = app.agents.propose(u.id, {
+      name: "RECYCLE", goal: "x", markets: ["memes"], kind: "sniper",
+      universe: { venue: "pumpfun", minHolders: 1, maxTopWalletPct: 100, maxAgeSeconds: 600 },
+      sizeUsd: 10, exit: { stopLossPct: 5, takeProfitPct: 5 },
+      limits: { maxPerTradeUsd: 10, maxPerDayUsd: 30, maxOpenPositions: 10, maxDrawdownPct: 95 }, mode: "paper",
+    });
+    app.agents.deploy(u.id, agent.id, { mode: "paper" });
+    await app.agents.tick();
+    const m = app.market as unknown as { memes: Map<string, { risk: { symbol: string }; price: number }> };
+    const bump = (sym: string, f: number) => { for (const x of m.memes.values()) if (x.risk.symbol === sym) x.price *= f; };
+    let bought = 0;
+    for (let round = 0; round < 3; round++) {
+      for (let i = 0; i < 3; i++) app.market.spawnMeme(`R${round}X${i}`, { holders: 50, holdersCollapsed: 50 });
+      await app.agents.tick(); // buys
+      await app.agents.tick(); // reconcile
+      const syms = app.agents.positionsOf(agent.id).map((p) => p.symbol);
+      bought += syms.length;
+      expect(syms.length).toBeGreaterThanOrEqual(2); // limited by cash, not a daily cap
+      syms.forEach((s) => bump(s, 1.2)); // take profit on all
+      await app.agents.tick(); // sells
+      await app.agents.tick(); // reconcile
+      expect(app.agents.positionsOf(agent.id)).toHaveLength(0);
+    }
+    expect(bought).toBeGreaterThanOrEqual(7); // well over $30 of buys in one day
+    // With cash tied up, it waits.
+    for (let i = 0; i < 10; i++) app.market.spawnMeme(`FULL${i}`, { holders: 50, holdersCollapsed: 50 });
+    await app.agents.tick();
+    await app.agents.tick();
+    const open = app.agents.positionsOf(agent.id).length;
+    expect(open).toBeGreaterThanOrEqual(3);
+    expect(open).toBeLessThan(10); // stopped by cash, not by the 10-position limit
+    const bud = app.agents.budget(app.agents.get(agent.id)!);
+    expect(bud.outOfCash).toBe(true);
+  });
+});

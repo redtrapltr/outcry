@@ -192,6 +192,18 @@ export class AgentRuntime {
 
     if (a.state === "paper" || a.state === "live" || a.state === "paused") {
       // Running agent: apply the new version in place, keep its wallet, funds and positions.
+      const oldBudget = a.spec.limits.maxPerDayUsd;
+      if (next.limits.maxPerDayUsd !== oldBudget) {
+        const fundAsset = a.spec.kind === "sniper" ? "SOL" : "USDC";
+        const diffUsd = next.limits.maxPerDayUsd - oldBudget;
+        if (a.spec.mode === "paper" && diffUsd > 0) {
+          // Paper: add the virtual difference so a bigger budget means a bigger wallet.
+          a.balances[fundAsset] = (a.balances[fundAsset] ?? 0) + diffUsd / this.d.market.priceUsd(fundAsset);
+          this.startUsd.set(agentId, (this.startUsd.get(agentId) ?? 0) + diffUsd);
+          this.activity(a, `${a.spec.name}'s wallet topped up by ${fmtUsd(diffUsd)} (virtual)`);
+        }
+        if (a.subWalletId) this.d.signer.updatePolicy(a.subWalletId, { maxPerDayUsd: next.limits.maxPerDayUsd * 50, maxPerTxUsd: next.limits.maxPerTradeUsd * 1.02 });
+      }
       a.spec = next;
       a.version += 1;
       if (next.kind === "sniper") {
@@ -295,7 +307,8 @@ export class AgentRuntime {
       const w = this.d.signer.createSubWallet(userId, "agent", `agent-${a.spec.name}`, {
         allowedVenues: [...venues],
         maxPerTxUsd: a.spec.limits.maxPerTradeUsd * 1.02,
-        maxPerDayUsd: a.spec.limits.maxPerDayUsd * 1.02,
+        // Runaway guard only (turnover per day); the budget itself is the wallet's balance.
+        maxPerDayUsd: a.spec.limits.maxPerDayUsd * 50,
         withdrawTo: user.mainWallet.solana,
       });
       a.subWalletId = w.id;
@@ -369,9 +382,17 @@ export class AgentRuntime {
   // -------------------------------------------------------------------------
 
   /** One scheduler tick. Production: Temporal workflows per agent. */
+  private migrated = new Set<string>();
+
   async tick(now = Date.now()) {
     for (const a of this.agents.values()) {
       if (a.state !== "live" && a.state !== "paper") continue;
+      // Agents created before "budget = wallet": widen their old daily signer cap to the runaway guard once.
+      if (!this.migrated.has(a.id) && a.subWalletId) {
+        this.migrated.add(a.id);
+        const w = this.d.signer.get(a.subWalletId);
+        if (w?.policy && w.policy.maxPerDayUsd < a.spec.limits.maxPerDayUsd * 50) this.d.signer.updatePolicy(a.subWalletId, { maxPerDayUsd: a.spec.limits.maxPerDayUsd * 50 });
+      }
       try {
         this.reconcile(a);
         if (a.stats.dayKey !== dayKey(new Date(now))) {
@@ -527,13 +548,19 @@ export class AgentRuntime {
   budget(a: Agent) {
     const dayStart = Date.parse(`${dayKey()}T00:00:00Z`);
     const buys = (this.trades.get(a.id) ?? []).filter((t) => t.side === "buy" && t.t >= dayStart);
-    const spent = a.stats.dayKey === dayKey() ? a.stats.spentTodayUsd : 0;
+    const fundAsset = a.spec.kind === "sniper" ? "SOL" : "USDC";
+    let cashUsd = 0;
+    try {
+      cashUsd = (a.balances[fundAsset] ?? 0) * this.d.market.priceUsd(fundAsset);
+    } catch {
+      /* ignore */
+    }
     return {
-      spentTodayUsd: spent,
-      maxPerDayUsd: a.spec.limits.maxPerDayUsd,
+      budgetUsd: a.spec.limits.maxPerDayUsd,
+      cashUsd,
+      inPositionsUsd: Math.max(0, a.stats.equityUsd - cashUsd),
       buysToday: buys.map((b) => ({ t: b.t, symbol: b.symbol, usd: b.usd })),
-      resetsAt: new Date(dayStart + 86_400_000).toISOString(),
-      reached: spent + a.spec.sizeUsd > a.spec.limits.maxPerDayUsd + 1e-9,
+      outOfCash: cashUsd < a.spec.sizeUsd * 0.9,
     };
   }
 
@@ -609,11 +636,13 @@ export class AgentRuntime {
     // Check 1 of 3: the runtime's own limits, before any ticket exists.
     // Proposals still waiting for the user's tap count against the cap too.
     const pendingUsd = [...this.pendingTickets].filter(([id, p]) => p.agentId === a.id && p.side === "buy" && ["needs_confirmation", "needs_second_confirmation", "approved", "submitted"].includes(this.d.desk.get(id).status)).reduce((s, [id]) => s + (this.d.desk.get(id) as OrderTicket).totalUsd, 0);
-    if (a.stats.spentTodayUsd + pendingUsd + a.spec.sizeUsd > lim.maxPerDayUsd + 1e-9) {
-      this.decision(a, "skip", { symbol, reason: "daily limit reached" });
-      if (this.limitNotified.get(a.id) !== a.stats.dayKey) {
-        this.limitNotified.set(a.id, a.stats.dayKey);
-        this.activity(a, `${a.spec.name} hit its daily limit of ${fmtUsd(lim.maxPerDayUsd)}; it resumes tomorrow`);
+    // The agent trades its own wallet: it can buy while it has cash (sale proceeds included).
+    const cashUsd = (a.balances[quote] ?? 0) * this.d.market.priceUsd(quote) - pendingUsd;
+    if (cashUsd < a.spec.sizeUsd * 0.9) {
+      this.decision(a, "skip", { symbol, reason: "no free cash (all funds in open positions)" });
+      if (this.limitNotified.get(a.id) !== `cash:${this.positionsOf(a.id).length}`) {
+        this.limitNotified.set(a.id, `cash:${this.positionsOf(a.id).length}`);
+        this.activity(a, `${a.spec.name} has ${fmtUsd(Math.max(0, cashUsd))} free; it buys again when a position is sold`);
       }
       return;
     }
@@ -622,7 +651,9 @@ export class AgentRuntime {
       this.activity(a, `Skipped ${symbol}: already at ${lim.maxOpenPositions} open positions`);
       return;
     }
-    const amount = a.spec.sizeUsd / this.d.market.priceUsd(quote);
+    // Spend the trade size, or what's left of the wallet after fees if that's a bit less.
+    const spendUsd = Math.min(a.spec.sizeUsd, cashUsd / 1.03);
+    const amount = spendUsd / this.d.market.priceUsd(quote);
     const t = await this.d.desk.proposeOrder({
       userId: a.userId,
       source: { type: "agent", agentId: a.id },
@@ -698,6 +729,8 @@ export class AgentRuntime {
             const proceedsUsd = fill.amountOut * this.d.market.priceUsd(leg.quoteAsset);
             const pnl = proceedsUsd - pos.qty * pos.entryPrice;
             a.stats.realizedPnlUsd += pnl;
+            // The budget is the agent's wallet: sale proceeds can be reinvested (net, not gross).
+            a.stats.spentTodayUsd = Math.max(0, a.stats.spentTodayUsd - proceedsUsd);
             list.splice(idx, 1);
             this.pushTrade(a.id, { t: Date.now(), side: "sell", symbol: p.symbol, usd: proceedsUsd, pnlUsd: pnl });
             this.activity(a, `${a.spec.mode === "paper" ? "PAPER · " : ""}SELL ${p.symbol} filled, P&L ${pnl >= 0 ? "+" : ""}${fmtUsd(pnl)}`);
