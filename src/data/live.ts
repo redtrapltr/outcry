@@ -43,7 +43,7 @@ export class LiveFeeds implements LiveOverlay {
   start() {
     void this.pollCrypto();
     void this.pollStocks();
-    this.timers.push(setInterval(() => void this.pollCrypto(), this.opts.cryptoEveryMs ?? 10_000));
+    this.timers.push(setInterval(() => void this.pollCrypto(), this.opts.cryptoEveryMs ?? 20_000));
     this.timers.push(setInterval(() => void this.pollStocks(), this.opts.stockEveryMs ?? 15 * 60_000));
     // Warm the candles agents and charts use most.
     for (const s of Object.keys(CRYPTO)) for (const tf of ["1h", "4h", "1d"] as Timeframe[]) void this.refreshCandles(s, "crypto", tf, 500);
@@ -97,7 +97,10 @@ export class LiveFeeds implements LiveOverlay {
     try {
       const symbols = encodeURIComponent(JSON.stringify(Object.values(CRYPTO)));
       const r = await this.f(`https://data-api.binance.vision/api/v3/ticker/price?symbols=${symbols}`);
-      if (!r.ok) throw new Error(`Binance ${r.status}`);
+      if (!r.ok) {
+        // Rate limited (shared cloud IPs): Jupiter covers SOL meanwhile.
+        throw new Error(`Binance ${r.status}`);
+      }
       const rows = (await r.json()) as { symbol: string; price: string }[];
       for (const [sym, pair] of Object.entries(CRYPTO)) {
         const row = rows.find((x) => x.symbol === pair);

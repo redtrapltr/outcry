@@ -82,6 +82,8 @@ export class PumpPortalFeed {
       isHeld?: (mint: string) => boolean;
       followMinutes?: number;
       batchMs?: number;
+      /** PumpPortal API key (paid trade data). Without it only launches stream, and trades aren't subscribed. */
+      apiKey?: string;
       maxTracked?: number;
       makeSocket?: (url: string) => WsLike;
     } = {},
@@ -116,8 +118,21 @@ export class PumpPortalFeed {
     };
   }
 
+  /** Mints launched within `maxAgeMs`, newest first (for holder polling). */
+  youngMints(maxAgeMs: number, limit = 100): string[] {
+    const now = Date.now();
+    return [...this.tracked.values()].filter((t) => !t.partial && now - t.createdAt <= maxAgeMs).sort((a, b) => b.createdAt - a.createdAt).slice(0, limit).map((t) => t.mint);
+  }
+
+  /** True while trade events actually arrive (paid PumpPortal key). Then holder stats come from the stream. */
+  tradesFlowing() {
+    return !!this.lastTradeAt && Date.now() - this.lastTradeAt < 60_000;
+  }
+
   private connect() {
-    const url = this.opts.url ?? "wss://pumpportal.fun/api/data";
+    // Trade data needs a PumpPortal API key since May 2026; new launches are free without one.
+    const base = this.opts.url ?? "wss://pumpportal.fun/api/data";
+    const url = this.opts.apiKey ? `${base}?api-key=${encodeURIComponent(this.opts.apiKey)}` : base;
     const make = this.opts.makeSocket ?? ((u: string) => new (globalThis as unknown as { WebSocket: new (u: string) => WsLike }).WebSocket(u));
     let ws: WsLike;
     try {
@@ -259,6 +274,7 @@ export class PumpPortalFeed {
 
   /** Subscriptions are batched (one message every 2s) instead of one message per launch. */
   private followMore(keys: string[]) {
+    if (!this.opts.apiKey && !this.opts.makeSocket) return; // no key: PumpPortal sends no trades
     this.queued.push(...keys);
     if (!this.flushTimer) {
       this.flushTimer = setInterval(() => this.flushSubscriptions(), this.opts.batchMs ?? 2_000);
