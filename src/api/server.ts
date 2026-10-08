@@ -109,7 +109,7 @@ export async function buildServer(opts: ServerOptions = {}) {
   });
   const store = opts.store === null ? undefined : opts.store ?? (await storeFromEnv());
   if (store) {
-    persistence = new Persistence(store, app, { router, orch, sessions: api.tokens, transcripts: api.transcripts, auth });
+    persistence = new Persistence(store, app, { router, orch, sessions: api.tokens, transcripts: api.transcripts, recaps: api.recaps, auth });
     const r = await persistence.restore();
     console.log(`[outcry] state store: ${store.kind}; restored ${r.users} users, ${r.agents} agents, ${r.auditEntries} audit entries`);
     persistence.start(Number(process.env.OUTCRY_SAVE_EVERY_MS ?? 5_000));

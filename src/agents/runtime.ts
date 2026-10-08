@@ -180,6 +180,13 @@ export class AgentRuntime {
   revise(userId: string, agentId: string, patch: Partial<AgentSpec>) {
     const a = this.mustOwn(userId, agentId);
     if (a.state === "killed") throw new Error(`${a.spec.name} was killed; build a new agent instead`);
+    if (patch.name !== undefined) {
+      const name = String(patch.name).trim().toUpperCase().slice(0, 18);
+      if (!name) throw new Error("The name can't be empty");
+      const taken = this.listForUser(userId).some((x) => x.id !== agentId && x.state !== "killed" && x.spec.name === name);
+      if (taken) throw new Error(`You already have an agent called ${name}`);
+      patch = { ...patch, name };
+    }
     const next = AgentSpec.parse({
       ...a.spec,
       ...patch,
