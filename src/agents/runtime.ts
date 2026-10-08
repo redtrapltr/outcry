@@ -180,6 +180,17 @@ export class AgentRuntime {
   revise(userId: string, agentId: string, patch: Partial<AgentSpec>) {
     const a = this.mustOwn(userId, agentId);
     if (a.state === "killed") throw new Error(`${a.spec.name} was killed; build a new agent instead`);
+    if (this.marketHooks?.isCopy(agentId)) {
+      // Marketplace copy: the strategy is the creator's and stays hidden; only risk settings change.
+      const allowed: Partial<AgentSpec> = {};
+      if (patch.name !== undefined) allowed.name = patch.name;
+      if (patch.sizeUsd !== undefined) allowed.sizeUsd = patch.sizeUsd;
+      if (patch.limits) allowed.limits = patch.limits as AgentSpec["limits"];
+      if (Object.keys(patch).some((k) => !["name", "sizeUsd", "limits"].includes(k))) {
+        if (!Object.keys(allowed).length) throw new Error("This agent's strategy belongs to its creator; you can change its name, trade size, budget, open positions and drawdown pause");
+      }
+      patch = allowed;
+    }
     if (patch.name !== undefined) {
       const name = String(patch.name).trim().toUpperCase().slice(0, 18);
       if (!name) throw new Error("The name can't be empty");
@@ -445,6 +456,13 @@ export class AgentRuntime {
     }
   }
 
+  /** Marketplace hooks (set by the app). */
+  marketHooks?: {
+    isCopy(agentId: string): boolean;
+    blockedToken(agentId: string, mint: string): string | undefined;
+    afterSell(agent: Agent, equityUsd: number, takeFromAgent: (usd: number) => number): void;
+  };
+
   /** On-chain holder check (Helius / Solana RPC), set by the server. */
   verifyHolders?: (mint: string) => Promise<{ topWalletPct: number; top10Pct: number; poolPct: number } | undefined>;
   private verifyCache = new Map<string, { at: number; v: Awaited<ReturnType<NonNullable<AgentRuntime["verifyHolders"]>>> }>();
@@ -491,6 +509,12 @@ export class AgentRuntime {
       if (reg && reg.creatorUserId === a.userId) {
         seen.add(l.mint);
         this.decision(a, "skip", { symbol: risk.symbol, reason: "your own launch" });
+        continue;
+      }
+      const blocked = this.marketHooks?.blockedToken(a.id, risk.mint);
+      if (blocked) {
+        seen.add(l.mint);
+        this.decision(a, "skip", { symbol: risk.symbol, reason: blocked });
         continue;
       }
       const reason = this.filterReason(a, risk);
@@ -558,6 +582,11 @@ export class AgentRuntime {
     this.skipStats.delete(a.id);
     const ranked = [...st.reasons.entries()].sort((x, y) => y[1] - x[1]);
     if (!ranked.length) return;
+    if (this.marketHooks?.isCopy(a.id)) {
+      // Don't reveal the creator's filters through the activity feed.
+      this.activity(a, `Checked ${st.checked} new launch${st.checked > 1 ? "es" : ""} in the last minute; none matched the strategy yet.`);
+      return;
+    }
     const why = ranked.slice(0, 2).map(([k, n]) => `${n} ${k}`).join(", ");
     const best = this.watching(a.id)[0];
     const closest = best && a.spec.universe ? ` Closest: $${best.symbol} with ${best.holders}/${a.spec.universe.minHolders} holders at ${best.ageSeconds}s${best.holders >= a.spec.universe.minHolders ? `, held back by: ${best.reason}` : ""}.` : "";
@@ -593,7 +622,8 @@ export class AgentRuntime {
     for (const [mint, reason] of w) {
       const r = this.d.market.tokenRisk(mint);
       if (!r) continue;
-      out.push({ symbol: r.symbol, mint, ageSeconds: Math.round(r.ageSeconds ?? r.ageMinutes * 60), holders: r.holdersCollapsed, top10Pct: r.top10Pct, reason: this.reasonKind(a, reason) });
+      const hidden = this.marketHooks?.isCopy(agentId);
+      out.push({ symbol: r.symbol, mint, ageSeconds: Math.round(r.ageSeconds ?? r.ageMinutes * 60), holders: r.holdersCollapsed, top10Pct: hidden ? undefined : r.top10Pct, reason: hidden ? "not matching the strategy yet" : this.reasonKind(a, reason) });
     }
     return out.sort((x, y) => y.holders - x.holders).slice(0, 8);
   }
@@ -668,7 +698,13 @@ export class AgentRuntime {
     }
     const pendingBuys = [...this.pendingTickets].filter(([id, p]) => p.agentId === a.id && p.side === "buy" && ["needs_confirmation", "needs_second_confirmation"].includes(this.d.desk.get(id).status)).length;
     if (this.positionsOf(a.id).length + pendingBuys >= lim.maxOpenPositions) {
-      this.activity(a, `Skipped ${symbol}: already at ${lim.maxOpenPositions} open positions`);
+      this.decision(a, "skip", { symbol, reason: `already at ${lim.maxOpenPositions} open positions` });
+      // One line until a position closes, not one per launch.
+      const key = `full:${this.positionsOf(a.id).length}:${lim.maxOpenPositions}`;
+      if (this.limitNotified.get(`${a.id}:full`) !== key) {
+        this.limitNotified.set(`${a.id}:full`, key);
+        this.activity(a, `${a.spec.name} is at its ${lim.maxOpenPositions} open positions; it buys again when one is sold`);
+      }
       return;
     }
     // Spend the trade size, or what's left of the wallet after fees if that's a bit less.
@@ -753,6 +789,18 @@ export class AgentRuntime {
             a.stats.spentTodayUsd = Math.max(0, a.stats.spentTodayUsd - proceedsUsd);
             list.splice(idx, 1);
             this.pushTrade(a.id, { t: Date.now(), side: "sell", symbol: p.symbol, usd: proceedsUsd, pnlUsd: pnl });
+            if (this.marketHooks) {
+              const asset = leg.quoteAsset;
+              this.marketHooks.afterSell(a, this.equityUsd(a), (usd) => {
+                const px = this.d.market.priceUsd(asset);
+                const have = (a.balances[asset] ?? 0) * px;
+                const take = Math.min(usd, have);
+                if (take <= 0) return 0;
+                a.balances[asset] = (a.balances[asset] ?? 0) - take / px;
+                this.activity(a, `Performance fee to the creator: ${fmtUsd(take)}`);
+                return take;
+              });
+            }
             this.activity(a, `${a.spec.mode === "paper" ? "PAPER · " : ""}SELL ${p.symbol} filled, P&L ${pnl >= 0 ? "+" : ""}${fmtUsd(pnl)}`);
           }
         }

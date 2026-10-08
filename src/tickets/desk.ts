@@ -22,6 +22,10 @@ export interface DeskDeps {
   policy?: PolicyConfig;
   /** Resolves an agent by id (provided by the agent runtime). */
   getAgent?: (agentId: string) => Agent | undefined;
+  /** Marketplace copies pay Outcry + creator fee instead of the normal fee (bps). */
+  feeBpsForAgent?: (agentId: string) => number | undefined;
+  /** Called with the platform fee of each filled agent trade (creator payouts). */
+  onAgentFee?: (agentId: string, platformFeeUsd: number) => void;
 }
 
 export interface ApproveOptions {
@@ -104,7 +108,8 @@ export class TicketDesk {
       for (const raw of input.legs) {
         const venue = this.d.exec.venueFor(raw);
         const adapter = this.d.exec.adapterFor(venue);
-        const q: QuotedLeg = await adapter.quote({ ...raw, venue }, { userId: input.userId, platformFeeBps: this.d.platformFeeBps });
+        const agentFee = source.type === "agent" ? this.d.feeBpsForAgent?.(source.agentId) : undefined;
+        const q: QuotedLeg = await adapter.quote({ ...raw, venue }, { userId: input.userId, platformFeeBps: agentFee ?? this.d.platformFeeBps });
         const sim = await adapter.simulate(q, running);
         if (!sim.ok) throw new Error(sim.error ?? "Simulation failed");
         for (const [k, v] of Object.entries(sim.deltas)) running[k] = (running[k] ?? 0) + v;
@@ -184,6 +189,7 @@ export class TicketDesk {
           else this.d.users.recordSell(t.userId, leg.asset, fill.amountIn);
         }
         t.fills.push({ legIndex: i, txId: fill.txId, amountIn: fill.amountIn, amountOut: fill.amountOut, price: fill.price, at: nowIso() });
+        if (isAgent) this.d.onAgentFee?.((t.source as { agentId: string }).agentId, leg.platformFeeUsd);
         this.d.bus.publish({
           type: "fill",
           userId: t.userId,

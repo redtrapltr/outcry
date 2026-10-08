@@ -10,6 +10,7 @@ import { estimateDevShare } from "../policy/engine.js";
 import * as ind from "../strategy/indicators.js";
 import type { BacktestReport } from "../strategy/backtest.js";
 import type { SavedStrategy } from "../strategy/lab.js";
+import { redactAgent, type AgentWithCopy } from "../market/listings.js";
 import type { SniperReplay } from "../agents/runtime.js";
 
 export type Card =
@@ -77,6 +78,16 @@ const summarizeReport = (r: BacktestReport, summary: string): BacktestSummary =>
 
 export function blueprint(a: Agent): BlueprintNode[] {
   const s = a.spec;
+  const copy = (a as AgentWithCopy).copyOf;
+  if (copy) {
+    return [
+      { key: "goal", label: "GOAL", lines: [`Marketplace agent: ${s.name}`] },
+      { key: "markets", label: "MARKETS · JACKETS", lines: s.markets },
+      { key: "signals", label: "SIGNALS · WHEN TO ACT", lines: ["Strategy set by its creator (hidden)", "Copies never buy tokens launched by the creator"] },
+      { key: "risk", label: "YOUR RISK SETTINGS", lines: [`$${s.sizeUsd} per trade · exits set by the creator`, `$${s.limits.maxPerDayUsd} wallet, proceeds reinvested · ${s.limits.maxOpenPositions} open positions · pause at −${s.limits.maxDrawdownPct}% drawdown`] },
+      { key: "execution", label: "EXECUTION", lines: [s.mode === "paper" ? "Paper trading: simulated fills, no real funds" : "Trades automatically inside these limits"] },
+    ];
+  }
   const signals: string[] = [];
   if (s.kind === "sniper" && s.universe) {
     signals.push(`New pump.fun tokens, ${s.universe.minHolders}+ holders (disclosed creator wallets count as one)`);
@@ -273,7 +284,14 @@ export class ToolExecutor {
         case "explain_agent": {
           const a = this.findAgent(userId, String(i.agent ?? ""));
           if (!a) return { ok: false, result: { error: "No matching agent" } };
-          const log = app.agents.explain(a.id, 8).map((e) => ({ at: e.at, action: e.action.replace("agent.decision.", ""), ...(e.data as Record<string, unknown>) }));
+          const hiddenStrategy = app.marketplace.isCopy(a.id);
+          const log = app.agents.explain(a.id, 8).map((e) => {
+            const d = { at: e.at, action: e.action.replace("agent.decision.", ""), ...(e.data as Record<string, unknown>) } as Record<string, unknown>;
+            // Marketplace copy: the creator's filters stay private.
+            if (hiddenStrategy && d.action === "skip") d.reason = "didn't match the strategy";
+            if (hiddenStrategy) { delete d.holders; delete d.topWalletPct; delete d.top10Pct; }
+            return d;
+          });
           const line = (e: Record<string, unknown>) => {
             const t = String(e.at).slice(11, 19);
             if (e.action === "entry") return `${t} entry signal on ${e.symbol ?? e.asset}${e.holders ? ` (${e.holders} holders, top wallet ${e.topWalletPct}%)` : e.close ? ` at ${Number(e.close).toFixed(2)}` : ""}`;
