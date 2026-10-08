@@ -49,6 +49,26 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   /** What the user saw in each chat (text + cards), keyed `${userId}:${sessionId}`. Persisted. */
   type Line = { role: "user" | "ai"; text: string; at: string; cards?: unknown[]; meta?: unknown };
   const transcripts = new Map<string, Line[]>();
+  /** Public recap snapshots (shareable links). No user ids or wallet addresses inside. Persisted. */
+  const recaps = new Map<string, Record<string, unknown>>();
+  const recapData = (agentId: string) => {
+    const a = app.agents.get(agentId)!;
+    const perf = app.agents.perf(agentId)!;
+    const h = perf.history;
+    const step = Math.max(1, Math.ceil(h.length / 400));
+    const history = h.filter((_, i) => i % step === 0 || i === h.length - 1);
+    return {
+      name: a.spec.name,
+      kind: a.spec.kind,
+      mode: a.spec.mode === "paper" ? "paper" : "live",
+      startUsd: perf.startUsd,
+      endUsd: perf.equityUsd,
+      from: history[0]?.t ?? Date.now(),
+      to: history.at(-1)?.t ?? Date.now(),
+      history,
+      trades: perf.trades.slice(-200).map((t) => ({ t: t.t, side: t.side, symbol: t.symbol, usd: t.usd, ...(t.pnlUsd !== undefined ? { pnlUsd: t.pnlUsd } : {}) })),
+    };
+  };
   const pushLine = (key: string, line: Line) => {
     const l = transcripts.get(key) ?? [];
     l.push(line);
@@ -194,6 +214,24 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     app.agents.remove(uid, params.id!);
     return { ok: true, deleted: params.id };
   });
+  route("GET", "/api/agents/:id/recap", ({ uid, params }) => {
+    own(app.agents.get(params.id!), uid, "Agent");
+    return recapData(params.id!);
+  });
+  route("POST", "/api/agents/:id/recap", ({ uid, params }) => {
+    own(app.agents.get(params.id!), uid, "Agent");
+    const data = recapData(params.id!);
+    const id = newToken().replace(/[^A-Za-z0-9]/g, "").slice(0, 12);
+    recaps.set(id, { ...data, createdAt: new Date().toISOString() });
+    if (recaps.size > 5_000) recaps.delete(recaps.keys().next().value!);
+    app.audit.append(`user:${uid}`, "agent.recap_shared", { agentId: params.id, recapId: id });
+    return { id, path: `/recap.html?id=${id}` };
+  });
+  route("GET", "/api/recap/:id", ({ params }) => {
+    const r = recaps.get(params.id!);
+    if (!r) throw new HttpError(404, "This recap doesn't exist or has expired");
+    return r;
+  }, false);
   route("POST", "/api/agents/:id/control", ({ uid, params, body }) => {
     const b = z.object({ action: z.enum(["pause", "resume", "kill"]) }).parse(body);
     return app.agents.control(uid, params.id!, b.action);
@@ -253,6 +291,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   return {
     tokens,
     transcripts,
+    recaps,
     userFor(token: string | undefined) {
       return token ? tokens.get(token) : undefined;
     },

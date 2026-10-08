@@ -338,3 +338,24 @@ describe("realistic paper fills", () => {
     feed.stop();
   });
 });
+
+describe("renaming agents", () => {
+  it("renames a running agent in place and refuses duplicate names", () => {
+    const app = createOutcry({ mode: "paper" } as never);
+    const u = app.users.create({ badge: "T", jacket: "memes", residence: "CH" });
+    const spec = (name: string) => ({
+      name, goal: "x", markets: ["memes"], kind: "sniper",
+      universe: { venue: "pumpfun", minHolders: 10, maxTopWalletPct: 20 },
+      sizeUsd: 10, exit: { stopLossPct: 20, takeProfitPct: 30 },
+      limits: { maxPerTradeUsd: 10, maxPerDayUsd: 100, maxOpenPositions: 5, maxDrawdownPct: 50 }, mode: "paper",
+    });
+    const a = app.agents.propose(u.id, spec("ALPHA")).agent;
+    app.agents.propose(u.id, spec("BETA"));
+    app.agents.deploy(u.id, a.id, { mode: "paper" });
+    const r = app.agents.revise(u.id, a.id, { name: "moon hunter" } as never);
+    expect(r.agent.id).toBe(a.id);
+    expect(r.agent.spec.name).toBe("MOON HUNTER");
+    expect(r.agent.state).toBe("paper");
+    expect(() => app.agents.revise(u.id, a.id, { name: "beta" } as never)).toThrow(/already have an agent called BETA/);
+  });
+});

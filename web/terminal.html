@@ -55,6 +55,11 @@ button,input{font:inherit;color:inherit}
 .pend:hover{background:var(--card2)}
 .pend b{font:600 12px var(--mono)}
 #pending{display:flex;flex-direction:column;gap:6px}
+.recap-btn{padding:6px 12px;font-size:13px}
+.recap-modal{position:fixed;inset:0;z-index:50;background:rgba(6,7,24,.92);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px;padding:16px}
+.recap-modal canvas{max-height:calc(100dvh - 120px);max-width:100%;aspect-ratio:4/5;border-radius:18px;box-shadow:0 30px 80px rgba(0,0,0,.6)}
+.recap-bar{display:flex;gap:8px;flex-wrap:wrap;justify-content:center}
+.recap-bar .btn{padding:8px 14px;font-size:14px}
 .perf{display:flex;flex-direction:column;gap:10px;border:1px solid var(--line,rgba(127,127,127,.25));border-radius:12px;padding:12px}
 .perf-top{display:flex;justify-content:space-between;align-items:baseline;gap:10px;flex-wrap:wrap}
 .perf-eq{font:600 26px var(--mono)}
@@ -209,6 +214,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
 @media (max-width:820px){.app{grid-template-columns:minmax(0,1fr)}.side{display:none}.chat-head h1{font-size:20px}}
 @media (prefers-reduced-motion: reduce){.hand,.thinking span{animation:none}.node,.spine{transition:none}.stamp,.ev{animation:none}}
 </style>
+<script src="recap.js" defer></script>
 </head>
 <body>
 <div class="app">
@@ -393,6 +399,7 @@ async function refresh() {
         running ? `<button type="button" data-act="pause" data-id="${a.id}">Pause</button>` : '',
         a.state === 'paused' ? `<button type="button" data-act="resume" data-id="${a.id}">Resume</button>` : '',
         running || a.state === 'paused' ? `<button type="button" data-act="kill" data-id="${a.id}" title="Stop for good; unspent funds return to your main wallet">Kill</button>` : '',
+        `<button type="button" data-act="rename" data-id="${a.id}" data-name="${esc(a.spec.name)}">Rename</button>`,
         `<button type="button" class="del" data-act="delete" data-id="${a.id}" data-name="${esc(a.spec.name)}">Delete</button>`,
       ].join('');
       return `<div class="agent-row"><div class="item"><span style="display:flex;gap:8px;align-items:center;min-width:0"><span class="sq" style="background:${(J[a.spec.markets[0]] || J.strategies)[1]}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.spec.name)}</span></span><span class="status st-${a.state}">${a.state.toUpperCase()}${a.state === 'live' ? ' · ' + a.spec.mode.toUpperCase() : ''}</span></div><div class="a-ctl">${btns}</div></div>`;
@@ -788,6 +795,15 @@ $('chats').addEventListener('dblclick', async e => {
   try { await api(`/api/chat/${encodeURIComponent(row.dataset.id)}`, { method: 'PATCH', body: { title: t.trim() } }); loadChats(); } catch (err) { toast(err.message); }
 });
 async function agentAction(id, act, name) {
+  if (act === 'rename') {
+    const n = prompt('New name for ' + name + ' (max 18 characters)', name);
+    if (!n || !n.trim() || n.trim().toUpperCase() === name) return;
+    const r = await api(`/api/agents/${id}`, { method: 'PATCH', body: { name: n.trim() } });
+    feed(`${name} renamed to ${r.agent.spec.name}`);
+    document.querySelectorAll('.builder .aname').forEach(el => { if (el.textContent === name) el.textContent = r.agent.spec.name; });
+    refresh(); pollAgents();
+    return;
+  }
   if (act === 'delete') {
     if (!confirm(`Delete ${name}? It stops trading, open positions stay in your wallet and unspent funds go back to your main wallet.`)) return;
     await api(`/api/agents/${id}`, { method: 'DELETE' });
@@ -801,7 +817,8 @@ async function agentAction(id, act, name) {
 $('agents').addEventListener('click', async (e) => {
   const b = e.target.closest('button[data-act]'); if (!b) return;
   b.disabled = true;
-  try { await agentAction(b.dataset.id, b.dataset.act, b.dataset.name || 'Agent'); } catch (err) { toast(err.message); b.disabled = false; }
+  try { await agentAction(b.dataset.id, b.dataset.act, b.dataset.name || 'Agent'); } catch (err) { toast(err.message); }
+  b.disabled = false;
 });
 $('panic').onclick = async () => { try { await api('/api/panic', { method: 'POST' }); feed('All agents paused'); refresh(); } catch (e) { toast(e.message); } };
 
@@ -870,7 +887,7 @@ function drawPerfChart(box, perf) {
 }
 function perfPanel(agentId) {
   const el = document.createElement('div'); el.className = 'perf';
-  el.innerHTML = `<div class="perf-top"><div><div class="eyebrow">Live performance · <span class="pv"></span></div><div class="perf-eq">$0</div></div><div class="perf-pnl"></div></div>
+  el.innerHTML = `<div class="perf-top"><div><div class="eyebrow">Live performance · <span class="pv"></span></div><div class="perf-eq">$0</div></div><div style="display:flex;flex-direction:column;align-items:flex-end;gap:6px"><div class="perf-pnl"></div><button class="btn recap-btn" type="button">▶ Recap</button></div></div>
     <div class="perf-chart" data-id="${agentId}"></div>
     <div class="perf-pills"><div><b class="p-real"></b><span>REALIZED</span></div><div><b class="p-unr"></b><span>OPEN P&amp;L</span></div><div><b class="p-win"></b><span>WIN RATE</span></div><div><b class="p-dd"></b><span>DRAWDOWN</span><div class="dd-bar"><i></i></div></div></div>
     <div class="perf-budget meta"></div>
@@ -878,6 +895,7 @@ function perfPanel(agentId) {
     <div class="perf-pos perf-trades"></div>
     <div class="perf-pos perf-watch"></div>`;
   const q = s => el.querySelector(s);
+  el.querySelector('.recap-btn').onclick = () => openRecap(agentId);
   const update = (perf, agent) => {
     if (!perf) return;
     q('.pv').textContent = perf.virtual ? 'paper money' : 'real funds';
@@ -913,6 +931,46 @@ function perfPanel(agentId) {
   liveCharts.set(agentId, update);
   return { el, update };
 }
+async function openRecap(agentId) {
+  let data;
+  try { data = await api(`/api/agents/${agentId}/recap`); } catch (e) { return toast(e.message); }
+  if (!window.OutcryRecap) return toast('Recap player is still loading, try again');
+  const m = document.createElement('div'); m.className = 'recap-modal'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-label', 'Agent recap');
+  m.innerHTML = `<canvas aria-label="Animated recap of ${esc(data.name)}"></canvas>
+    <div class="recap-bar"><button class="btn btn-primary" data-r="play">▶ Replay</button><button class="btn" data-r="sound">🔊 Sound on</button><button class="btn" data-r="video">⬇ Download video</button><button class="btn" data-r="share">🔗 Copy share link</button><button class="btn" data-r="close">Close</button></div>`;
+  document.body.appendChild(m);
+  let sound = true;
+  const r = OutcryRecap.mount(m.querySelector('canvas'), data, { sound });
+  r.play();
+  const close = () => { r.stop(); m.remove(); };
+  m.addEventListener('click', async (e) => {
+    const b = e.target.closest('[data-r]'); if (!b) { if (e.target === m) close(); return; }
+    const a = b.dataset.r;
+    if (a === 'close') close();
+    if (a === 'play') r.play();
+    if (a === 'sound') { sound = !sound; r.setSound(sound); b.textContent = sound ? '🔊 Sound on' : '🔇 Sound off'; }
+    if (a === 'video') {
+      b.disabled = true; b.textContent = 'Recording… (15s)';
+      try {
+        const blob = await r.record();
+        const ext = blob.type.includes('mp4') ? 'mp4' : 'webm';
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a'); link.href = url; link.download = `outcry-${data.name.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-recap.${ext}`; link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      } catch (err) { toast('Video recording is not supported in this browser'); }
+      b.disabled = false; b.textContent = '⬇ Download video';
+    }
+    if (a === 'share') {
+      try {
+        const s = await api(`/api/agents/${agentId}/recap`, { method: 'POST' });
+        const url = location.origin + s.path;
+        try { await navigator.clipboard.writeText(url); toast('Link copied: ' + url); } catch { prompt('Share this link', url); }
+      } catch (err) { toast(err.message); }
+    }
+  });
+  document.addEventListener('keydown', function onKey(e) { if (e.key === 'Escape') { close(); document.removeEventListener('keydown', onKey); } });
+}
+
 let polling = false;
 async function pollAgents() {
   if (polling || !token) return; polling = true;

@@ -28,11 +28,13 @@ export interface NetworkFees {
   base: number;
   ethereum: number;
 }
+// `process` doesn't exist in the in-browser demo build.
+const env: Record<string, string | undefined> = typeof process !== "undefined" ? process.env : {};
 export const DEFAULT_NETWORK_FEES: NetworkFees = {
-  pumpfun: Number(process.env.OUTCRY_NETFEE_PUMP_USD ?? 0.15),
-  solana: Number(process.env.OUTCRY_NETFEE_SOLANA_USD ?? 0.01),
-  base: Number(process.env.OUTCRY_NETFEE_BASE_USD ?? 0.02),
-  ethereum: Number(process.env.OUTCRY_NETFEE_ETH_USD ?? 0.5),
+  pumpfun: Number(env.OUTCRY_NETFEE_PUMP_USD ?? 0.15),
+  solana: Number(env.OUTCRY_NETFEE_SOLANA_USD ?? 0.01),
+  base: Number(env.OUTCRY_NETFEE_BASE_USD ?? 0.02),
+  ethereum: Number(env.OUTCRY_NETFEE_ETH_USD ?? 0.5),
 };
 
 export class PaperAdapter implements ExecutionAdapter {
