@@ -67,6 +67,7 @@ export function createOutcry(overrides: Partial<OutcryConfig> = {}) {
     isCopy: (id) => marketplace.isCopy(id),
     blockedToken: (id, mint) => marketplace.blockedToken(id, mint),
     afterSell: (a, eq, take) => marketplace.chargePerformance(a, eq, take),
+    onSourceUpdated: (id) => marketplace.onSourceUpdated(id),
   };
 
   return { config, audit, bus, market, signer, users, exec, registry, desk, agents, launches, lab, marketplace };

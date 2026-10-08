@@ -179,7 +179,15 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   });
 
   // --- agents ----------------------------------------------------------------------
-  route("GET", "/api/agents", ({ uid }) => app.agents.listForUser(uid).map((a) => ({ agent: redactAgent(a), positions: app.agents.positionsOf(a.id), blueprint: blueprint(a), perf: app.agents.perf(a.id), listing: app.marketplace.listingFor(a.id)?.id ?? null })));
+  route("GET", "/api/agents", ({ uid }) => app.agents.listForUser(uid).map((a) => ({ agent: redactAgent(a), positions: app.agents.positionsOf(a.id), blueprint: blueprint(a), perf: app.agents.perf(a.id), listing: app.marketplace.listingFor(a.id)?.id ?? null, update: app.marketplace.updateFor(a.id) ?? null })));
+  route("POST", "/api/agents/:id/update-strategy", ({ uid, params }) => {
+    const a = app.marketplace.applyUpdate(uid, params.id!);
+    return { agent: redactAgent(a), blueprint: blueprint(a) };
+  });
+  route("PATCH", "/api/me", ({ uid, body }) => {
+    const b = z.object({ handle: z.string().max(17) }).parse(body);
+    return { user: app.users.setHandle(uid, b.handle) };
+  });
   route("GET", "/api/agents/:id/perf", ({ uid, params }) => {
     own(app.agents.get(params.id!), uid, "Agent");
     return app.agents.perf(params.id!);

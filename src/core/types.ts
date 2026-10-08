@@ -315,6 +315,8 @@ export interface UserProfile {
   badge: string;
   jacket: Jacket;
   residence: string; // ISO country code, used for geofencing
+  /** Public @handle (unique), shown on marketplace listings. */
+  handle?: string;
   mainWallet: { solana: string; evm: string };
   balances: WalletBalance;
   /** Median order size in USD, used by the amount-sanity check. */
