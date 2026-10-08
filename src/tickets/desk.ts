@@ -9,6 +9,7 @@ import type { UserStore } from "../core/users.js";
 import type { MarketData } from "../data/market.js";
 import type { ExecutionRouter } from "../adapters/router.js";
 import { evaluateOrder, DEFAULT_POLICY, type PolicyConfig } from "../policy/engine.js";
+import { usMarketStatus } from "../data/stocks.js";
 import { PolicyDenied, type Signer } from "../wallet/signer.js";
 
 export interface DeskDeps {
@@ -129,6 +130,17 @@ export class TicketDesk {
       } else {
         ticket.warnings = verdict.warnings;
         ticket.notes = verdict.notes;
+        // Tokenized stocks trade 24/7 on Solana: say whether the US market is open and how far the token is from Nasdaq.
+        for (const leg of ticket.legs) {
+          const info = (this.d.market as { stockInfo?: (s: string) => { ticker: string; issuer: string; onchainUsd?: number; nasdaqUsd?: number; gapPct?: number } | undefined }).stockInfo?.(leg.asset);
+          if (!info) continue;
+          const st = usMarketStatus();
+          const gap = info.gapPct !== undefined ? ` (${info.gapPct >= 0 ? "+" : ""}${info.gapPct.toFixed(2)}% vs last Nasdaq $${info.nasdaqUsd!.toFixed(2)})` : "";
+          ticket.notes.unshift(`${st.label}: ${info.ticker} (${info.issuer}) trades 24/7 on Solana${info.onchainUsd ? ` at $${info.onchainUsd.toFixed(2)} on-chain` : ""}${gap}`);
+          if (info.gapPct !== undefined && Math.abs(info.gapPct) >= 1) {
+            ticket.warnings.push(`${info.ticker} token is ${Math.abs(info.gapPct).toFixed(1)}% ${info.gapPct > 0 ? "above" : "below"} the last Nasdaq price${st.open ? "" : " while the US market is closed"}`);
+          }
+        }
         if (verdict.decision === "second_confirmation") {
           ticket.warnings.unshift(verdict.reason);
           this.setStatus(ticket, "needs_second_confirmation");

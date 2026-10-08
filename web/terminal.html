@@ -449,6 +449,7 @@ function orderCard(t) {
   wrap.innerHTML = `<div class="ticket"><div class="t-head" style="background:${j[1]};color:${j[2]}"><span>ORDER TICKET · ${j[0].toUpperCase()}</span><span>${t.source.type === 'agent' ? 'AGENT' : 'YOU'}</span></div>
     ${t.rejection ? `<div class="t-reject"><b>Rejected.</b> ${esc(t.rejection)}</div>` : ''}
     ${(t.warnings || []).map(w => `<div class="t-warn">${esc(w)}</div>`).join('')}
+    ${(t.notes || []).filter(n => /^US (market|pre-market|after-hours)/.test(n)).map(n => `<div class="t-row"><span class="t-muted" style="font-size:12px">${/open:/.test(n) ? '🟢' : '🌙'} ${esc(n)}</span></div>`).join('')}
     ${legs}
     ${t.legs.length ? `<div class="t-row"><span class="t-muted">Total · fees (venue + Outcry + network)</span><b>$${fmt(t.totalUsd)} · $${fmt(fees)}</b></div>` : ''}
   </div><div class="actions"></div>`;

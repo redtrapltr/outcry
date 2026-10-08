@@ -29,7 +29,10 @@ const TWELVE_TF: Record<Timeframe, string> = { "1m": "1min", "5m": "5min", "15m"
 const TOKENIZED: Record<string, string> = { AAPLX: "AAPL", TSLAX: "TSLA", NVDAON: "NVDA", SPYON: "SPY" };
 function stockSymbol(s: string) {
   const up = s.toUpperCase();
-  return TOKENIZED[up] ?? up.replace(/\.ONDO$/, "");
+  if (TOKENIZED[up]) return TOKENIZED[up]!;
+  // xStocks "MSFTx" / Ondo "MSFTon" -> MSFT
+  const m = s.match(/^([A-Z.]{1,6})(x|on)$/);
+  return m ? m[1]! : up.replace(/\.ONDO$/, "");
 }
 
 export class RealHistory implements HistoryProvider {
