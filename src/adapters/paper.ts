@@ -17,34 +17,67 @@ import {
   type SubmitResult,
 } from "./types.js";
 
+/**
+ * Estimated network cost per transaction in USD (base fee + priority fee / tip),
+ * so paper results match what real money pays. Sniping fresh pump.fun tokens
+ * means racing other bots, which costs the most.
+ */
+export interface NetworkFees {
+  pumpfun: number;
+  solana: number;
+  base: number;
+  ethereum: number;
+}
+export const DEFAULT_NETWORK_FEES: NetworkFees = {
+  pumpfun: Number(process.env.OUTCRY_NETFEE_PUMP_USD ?? 0.15),
+  solana: Number(process.env.OUTCRY_NETFEE_SOLANA_USD ?? 0.01),
+  base: Number(process.env.OUTCRY_NETFEE_BASE_USD ?? 0.02),
+  ethereum: Number(process.env.OUTCRY_NETFEE_ETH_USD ?? 0.5),
+};
+
 export class PaperAdapter implements ExecutionAdapter {
   readonly venue: Venue = "paper";
   readonly chain = "solana" as const;
   private quotes = new Map<string, number>(); // route -> quote time
 
-  constructor(private market: MarketData) {}
+  constructor(
+    private market: MarketData,
+    private opts: {
+      networkFees?: NetworkFees;
+      /** Fill at the next price update after the order (max wait), like a real transaction landing a moment later. */
+      fillDelayMaxMs?: number;
+    } = {},
+  ) {}
+
+  private networkFeeUsd(venue: Venue, chain: string) {
+    const f = this.opts.networkFees ?? DEFAULT_NETWORK_FEES;
+    if (venue === "pumpfun") return f.pumpfun;
+    if (chain === "ethereum") return f.ethereum;
+    if (chain === "base") return f.base;
+    return f.solana;
+  }
 
   /** Output of a swap for a given input, after venue fee, Outcry fee and price impact. */
-  private swapOut(amountIn: number, side: "buy" | "sell", px: number, qpx: number, feeBps: number, platformBps: number, liquidity: number) {
+  private swapOut(amountIn: number, side: "buy" | "sell", px: number, qpx: number, feeBps: number, platformBps: number, liquidity: number, networkUsd = 0) {
     const notionalUsd = side === "buy" ? amountIn * qpx : amountIn * px;
     // Price impact: sqrt model against pool liquidity (memes) or deep books (majors)
     const impactBps = Math.min(3_000, Math.max(1, Math.round(10_000 * 0.1 * Math.sqrt(notionalUsd / liquidity))));
     const venueFeeUsd = (notionalUsd * feeBps) / 10_000;
     const platformFeeUsd = (notionalUsd * platformBps) / 10_000;
-    const netUsd = notionalUsd - venueFeeUsd - platformFeeUsd;
+    const netUsd = Math.max(0, notionalUsd - venueFeeUsd - platformFeeUsd - networkUsd);
     const impactMult = 1 - impactBps / 10_000;
     const out = side === "buy" ? (netUsd / px) * impactMult : (netUsd / qpx) * impactMult;
     return { out, impactBps, venueFeeUsd, platformFeeUsd };
   }
 
   /** Smallest input that yields `target` output (the curve is monotonic, so bisection is exact enough). */
-  private inputFor(target: number, px: number, qpx: number, feeBps: number, platformBps: number, liquidity: number) {
+  private inputFor(target: number, px: number, qpx: number, feeBps: number, platformBps: number, liquidity: number, networkUsd = 0) {
     let lo = 0;
-    let hi = ((target * px) / qpx) * 2 + 1e-9;
-    while (this.swapOut(hi, "buy", px, qpx, feeBps, platformBps, liquidity).out < target) hi *= 2;
+    let hi = ((target * px) / qpx) * 2 + networkUsd / qpx + 1e-9;
+    while (this.swapOut(hi, "buy", px, qpx, feeBps, platformBps, liquidity, networkUsd).out < target) hi *= 2;
     for (let i = 0; i < 60; i++) {
       const mid = (lo + hi) / 2;
-      if (this.swapOut(mid, "buy", px, qpx, feeBps, platformBps, liquidity).out >= target) hi = mid;
+      if (this.swapOut(mid, "buy", px, qpx, feeBps, platformBps, liquidity, networkUsd).out >= target) hi = mid;
       else lo = mid;
     }
     return Math.ceil(hi * 1e6) / 1e6; // round up to the quote token's precision
@@ -61,6 +94,7 @@ export class PaperAdapter implements ExecutionAdapter {
     return {
       asset,
       quote,
+      networkUsd: this.networkFeeUsd(leg.venue, asset.chain),
       px: this.market.priceUsd(asset.symbol),
       qpx: this.market.priceUsd(quote.symbol),
       feeBps,
@@ -73,10 +107,10 @@ export class PaperAdapter implements ExecutionAdapter {
     let amount = leg.amount;
     if (leg.receiveExact !== undefined) {
       if (leg.side !== "buy") throw new Error("Exact-output only applies to buys; for sells, the amount is what you sell");
-      amount = this.inputFor(leg.receiveExact, c.px, c.qpx, c.feeBps, ctx.platformFeeBps, c.liquidity);
+      amount = this.inputFor(leg.receiveExact, c.px, c.qpx, c.feeBps, ctx.platformFeeBps, c.liquidity, c.networkUsd);
     }
     if (!(amount > 0)) throw new Error("Amount must be positive");
-    const q = this.swapOut(amount, leg.side, c.px, c.qpx, c.feeBps, ctx.platformFeeBps, c.liquidity);
+    const q = this.swapOut(amount, leg.side, c.px, c.qpx, c.feeBps, ctx.platformFeeBps, c.liquidity, c.networkUsd);
     const route = `${leg.venue}:${c.quote.symbol}->${c.asset.symbol}`;
     this.quotes.set(route, Date.now());
     return {
@@ -89,6 +123,7 @@ export class PaperAdapter implements ExecutionAdapter {
       priceImpactBps: q.impactBps,
       venueFeeUsd: q.venueFeeUsd,
       platformFeeUsd: q.platformFeeUsd,
+      networkFeeUsd: c.networkUsd,
       route,
     };
   }
@@ -110,18 +145,29 @@ export class PaperAdapter implements ExecutionAdapter {
   }
 
   async submit(leg: QuotedLeg, _sig: Signature): Promise<SubmitResult> {
+    // A real transaction lands a moment after the decision. For live memecoins, wait for the
+    // next price update and fill at that price, not the (older) price the decision was based on.
+    const updatedAt = (this.market as { priceUpdatedAt?: (s: string) => number | undefined }).priceUpdatedAt;
+    const maxWait = this.opts.fillDelayMaxMs ?? 0;
+    if (maxWait > 0 && updatedAt) {
+      const t0 = Date.now();
+      const first = updatedAt.call(this.market, leg.asset);
+      if (first !== undefined) {
+        while (Date.now() - t0 < maxWait && (updatedAt.call(this.market, leg.asset) ?? 0) <= t0) await new Promise((r) => setTimeout(r, 200));
+      }
+    }
     // Fill at a fresh price, bounded by the ticket's max slippage.
     const c = this.context(leg);
     const platformBps = leg.amount > 0 ? Math.round((leg.platformFeeUsd / (leg.side === "buy" ? leg.amount * c.qpx : leg.amount * c.px)) * 10_000) : 0;
     const txId = `paper_${newId("tx")}_${nowIso().slice(11, 19).replace(/:/g, "")}`;
     if (leg.receiveExact !== undefined) {
       // Exact output: receive exactly the requested quantity; the input may move within slippage.
-      const need = this.inputFor(leg.receiveExact, c.px, c.qpx, c.feeBps, platformBps, c.liquidity);
+      const need = this.inputFor(leg.receiveExact, c.px, c.qpx, c.feeBps, platformBps, c.liquidity, c.networkUsd);
       const maxIn = leg.amount * (1 + leg.maxSlippageBps / 10_000);
       if (need > maxIn) throw new Error(`Price moved beyond max slippage (${leg.maxSlippageBps} bps); nothing was filled`);
       return { txId, amountIn: need, amountOut: leg.receiveExact, price: need / leg.receiveExact };
     }
-    let out = this.swapOut(leg.amount, leg.side, c.px, c.qpx, c.feeBps, platformBps, c.liquidity).out;
+    let out = this.swapOut(leg.amount, leg.side, c.px, c.qpx, c.feeBps, platformBps, c.liquidity, c.networkUsd).out;
     const minOut = leg.expectedOut * (1 - leg.maxSlippageBps / 10_000);
     if (out < minOut) {
       throw new Error(`Price moved beyond max slippage (${leg.maxSlippageBps} bps); nothing was filled`);

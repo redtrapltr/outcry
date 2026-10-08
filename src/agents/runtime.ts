@@ -384,7 +384,20 @@ export class AgentRuntime {
   /** One scheduler tick. Production: Temporal workflows per agent. */
   private migrated = new Set<string>();
 
+  private ticking = false;
+
   async tick(now = Date.now()) {
+    // Fills can wait for the next price (a few seconds): never run two ticks at once.
+    if (this.ticking) return;
+    this.ticking = true;
+    try {
+      await this.tickAll(now);
+    } finally {
+      this.ticking = false;
+    }
+  }
+
+  private async tickAll(now: number) {
     for (const a of this.agents.values()) {
       if (a.state !== "live" && a.state !== "paper") continue;
       // Agents created before "budget = wallet": widen their old daily signer cap to the runaway guard once.
