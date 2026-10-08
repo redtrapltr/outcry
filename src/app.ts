@@ -22,6 +22,8 @@ export interface OutcryConfig {
   paperDaysBeforeAuto: number;
   policy: PolicyConfig;
   marketSeed: number;
+  /** Paper fills of live memecoins wait for the next price update (ms, 0 = fill at once). */
+  paperFillDelayMs?: number;
   /** Real historical candles for backtests; undefined = simulated only. */
   history?: HistoryProvider;
 }
@@ -42,7 +44,7 @@ export function createOutcry(overrides: Partial<OutcryConfig> = {}) {
   const market = new SimulatedMarket(config.marketSeed);
   const signer = new SimulatedTurnkeySigner();
   const users = new UserStore(signer, market);
-  const exec = new ExecutionRouter(market, new PaperAdapter(market), {}, config.mode);
+  const exec = new ExecutionRouter(market, new PaperAdapter(market, { fillDelayMaxMs: config.paperFillDelayMs ?? 0 }), {}, config.mode);
   const registry = new CreatorRegistry();
 
   // The desk needs agents and agents need the desk: resolve lazily.

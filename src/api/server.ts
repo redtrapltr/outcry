@@ -39,7 +39,12 @@ export interface ServerOptions {
 
 export async function buildServer(opts: ServerOptions = {}) {
   const history = process.env.OUTCRY_REAL_HISTORY === "0" ? undefined : new RealHistory({ twelveDataKey: process.env.TWELVEDATA_API_KEY });
-  const app = opts.app ?? createOutcry({ mode: (process.env.OUTCRY_MODE as "paper" | "live") ?? "paper", history });
+  const app = opts.app ?? createOutcry({
+    mode: (process.env.OUTCRY_MODE as "paper" | "live") ?? "paper",
+    history,
+    // With real prices on, paper fills of live memecoins wait for the next price (as a real transaction would).
+    paperFillDelayMs: process.env.OUTCRY_LIVE_PRICES === "1" ? Number(process.env.OUTCRY_PAPER_FILL_DELAY_MS ?? 7_000) : 0,
+  });
 
   // "Paper money, real market": real prices/candles and the live pump.fun launch stream.
   const live = !opts.app && process.env.OUTCRY_LIVE_PRICES === "1" ? new LiveFeeds({ history, twelveDataKey: process.env.TWELVEDATA_API_KEY }).start() : undefined;

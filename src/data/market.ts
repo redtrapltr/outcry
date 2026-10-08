@@ -128,7 +128,13 @@ export function normalizeSymbol(s: string): string {
  * Memecoins launched through Outcry are registered at runtime.
  */
 export class SimulatedMarket implements MarketData {
-  private memes = new Map<string, { risk: TokenRisk; price: number; live?: boolean }>();
+  private memes = new Map<string, { risk: TokenRisk; price: number; live?: boolean; updatedAt?: number }>();
+
+  /** When a live token's price last changed (undefined for simulated tokens). */
+  priceUpdatedAt(symbolOrMint: string): number | undefined {
+    const m = this.findMeme(normalizeSymbol(symbolOrMint), symbolOrMint);
+    return m?.live ? m.updatedAt ?? 0 : undefined;
+  }
   private live?: LiveOverlay;
 
   /** Real prices and candles on top of the simulation (see data/live.ts). */
@@ -294,7 +300,10 @@ export class SimulatedMarket implements MarketData {
     const m = this.memes.get(mint);
     if (!m) return;
     Object.assign(m.risk, patch);
-    if (priceUsd !== undefined && Number.isFinite(priceUsd) && priceUsd > 0) m.price = priceUsd;
+    if (priceUsd !== undefined && Number.isFinite(priceUsd) && priceUsd > 0) {
+      m.price = priceUsd;
+      m.updatedAt = Date.now();
+    }
   }
 
   hasSymbol(symbol: string) {

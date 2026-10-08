@@ -304,3 +304,37 @@ describe("budget is the agent's wallet", () => {
     expect(bud.outOfCash).toBe(true);
   });
 });
+
+describe("realistic paper fills", () => {
+  const MINT = "3xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+  const setup = (delayMs: number) => {
+    const app = createOutcry({ mode: "paper", paperFillDelayMs: delayMs } as never);
+    const sock = { readyState: 1, send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null } as never;
+    const feed = new PumpPortalFeed(app.market, { makeSocket: () => sock }).start();
+    feed.handle({ mint: MINT, txType: "create", traderPublicKey: "c", initialBuy: 1e7, marketCapSol: 30, vSolInBondingCurve: 300, symbol: "REAL1" });
+    const u = app.users.create({ badge: "T", jacket: "memes", residence: "CH" });
+    return { app, feed, u };
+  };
+
+  it("charges an estimated network fee on top of venue and Outcry fees", async () => {
+    const { app, feed, u } = setup(0);
+    const t = await app.desk.proposeOrder({ userId: u.id, source: { type: "user" }, jacket: "memes", legs: [{ side: "buy", asset: MINT, quoteAsset: "SOL", amount: 0.2, maxSlippageBps: 1000 }] } as never);
+    const leg = (t as { legs: { networkFeeUsd?: number; venue: string; venueFeeUsd: number }[] }).legs[0]!;
+    expect(leg.venue).toBe("pumpfun");
+    expect(leg.networkFeeUsd).toBeCloseTo(0.15, 6);
+    feed.stop();
+  });
+
+  it("fills a live memecoin at the next price update, not the stale one", async () => {
+    const { app, feed, u } = setup(3_000);
+    const t = await app.desk.proposeOrder({ userId: u.id, source: { type: "user" }, jacket: "memes", legs: [{ side: "buy", asset: MINT, quoteAsset: "SOL", amount: 0.2, maxSlippageBps: 1500 }] } as never);
+    const quoted = (t as { legs: { expectedOut: number }[] }).legs[0]!.expectedOut;
+    const pending = app.desk.approve(t.id, { userApproval: "tap" });
+    // 300ms later the token is 10% more expensive: a real buy would land at that price.
+    setTimeout(() => app.market.updateMeme(MINT, {}, app.market.priceUsd(MINT) * 1.1), 300);
+    const filled = (await pending) as { status: string; fills: { amountOut: number }[] };
+    expect(filled.status).toBe("filled");
+    expect(filled.fills[0]!.amountOut).toBeLessThan(quoted * 0.93);
+    feed.stop();
+  });
+});

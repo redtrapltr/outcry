@@ -409,12 +409,12 @@ function orderCard(t) {
   const legs = t.legs.map(l => l.receiveExact != null
     ? `<div class="t-row"><span><b>BUY · ${esc(l.asset)}</b><small>${esc(l.venue)} · ${esc(l.chain)} · impact ${(l.priceImpactBps / 100).toFixed(2)}% · max slip ${(l.maxSlippageBps / 100).toFixed(1)}%</small></span><span style="text-align:right">receive exactly ${amt(l.receiveExact)} ${esc(l.asset)}<small>pay ≈ ${amt(l.amount)} ${esc(l.quoteAsset)} (max ${amt(l.amount * (1 + l.maxSlippageBps / 10000))})</small></span></div>`
     : `<div class="t-row"><span><b>${l.side.toUpperCase()} · ${esc(l.asset)}</b><small>${esc(l.venue)} · ${esc(l.chain)} · impact ${(l.priceImpactBps / 100).toFixed(2)}% · max slip ${(l.maxSlippageBps / 100).toFixed(1)}%</small></span><span style="text-align:right">${amt(l.amount)} ${esc(l.side === 'buy' ? l.quoteAsset : l.asset)}<small>≈ ${amt(l.expectedOut)} ${esc(l.side === 'buy' ? l.asset : l.quoteAsset)}</small></span></div>`).join('');
-  const fees = t.legs.reduce((s, l) => s + l.venueFeeUsd + l.platformFeeUsd, 0);
+  const fees = t.legs.reduce((s, l) => s + l.venueFeeUsd + l.platformFeeUsd + (l.networkFeeUsd || 0), 0);
   wrap.innerHTML = `<div class="ticket"><div class="t-head" style="background:${j[1]};color:${j[2]}"><span>ORDER TICKET · ${j[0].toUpperCase()}</span><span>${t.source.type === 'agent' ? 'AGENT' : 'YOU'}</span></div>
     ${t.rejection ? `<div class="t-reject"><b>Rejected.</b> ${esc(t.rejection)}</div>` : ''}
     ${(t.warnings || []).map(w => `<div class="t-warn">${esc(w)}</div>`).join('')}
     ${legs}
-    ${t.legs.length ? `<div class="t-row"><span class="t-muted">Total · fees (venue + Outcry)</span><b>$${fmt(t.totalUsd)} · $${fmt(fees)}</b></div>` : ''}
+    ${t.legs.length ? `<div class="t-row"><span class="t-muted">Total · fees (venue + Outcry + network)</span><b>$${fmt(t.totalUsd)} · $${fmt(fees)}</b></div>` : ''}
   </div><div class="actions"></div>`;
   const acts = wrap.querySelector('.actions'); const tk = wrap.querySelector('.ticket');
   const draw = (t) => {

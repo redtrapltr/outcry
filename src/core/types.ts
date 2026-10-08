@@ -73,6 +73,8 @@ export interface QuotedLeg extends OrderLeg {
   priceImpactBps: number;
   venueFeeUsd: number;
   platformFeeUsd: number;
+  /** Estimated blockchain cost of the transaction (base + priority fee / tip), simulated in paper mode. */
+  networkFeeUsd?: number;
   route: string;
 }
 
