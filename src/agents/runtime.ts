@@ -518,7 +518,7 @@ export class AgentRuntime {
     if (!ranked.length) return;
     const why = ranked.slice(0, 2).map(([k, n]) => `${n} ${k}`).join(", ");
     const best = this.watching(a.id)[0];
-    const closest = best && a.spec.universe ? ` Closest: $${best.symbol} with ${best.holders}/${a.spec.universe.minHolders} holders at ${best.ageSeconds}s.` : "";
+    const closest = best && a.spec.universe ? ` Closest: $${best.symbol} with ${best.holders}/${a.spec.universe.minHolders} holders at ${best.ageSeconds}s${best.holders >= a.spec.universe.minHolders ? `, held back by: ${best.reason}` : ""}.` : "";
     this.activity(a, `Checked ${st.checked} new launch${st.checked > 1 ? "es" : ""} in the last minute, none passed yet (${why}).${closest}`);
   }
 
