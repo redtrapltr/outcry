@@ -13,7 +13,8 @@ export function chooseVenue(leg: OrderLeg, market: MarketData): Venue {
   const asset = market.asset(leg.asset);
   if (!asset) throw new Error(`Unknown asset "${leg.asset}"`);
   if (asset.kind === "tokenized_stock") {
-    return asset.chain === "solana" ? "xstocks" : "ondo";
+    // Ondo Global Markets tokens end in "on", xStocks in "x"; both trade on Solana.
+    return asset.symbol.endsWith("on") ? "ondo" : "xstocks";
   }
   const risk = market.tokenRisk(asset.symbol);
   if (risk) {

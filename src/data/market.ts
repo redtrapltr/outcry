@@ -103,8 +103,8 @@ const ASSETS: SimAsset[] = [
   { symbol: "SOL", chain: "solana", kind: "native", decimals: 9, basePrice: 150, annualVol: 0.75, drift: 0.2 },
   { symbol: "ETH", chain: "base", kind: "native", decimals: 18, basePrice: 3200, annualVol: 0.6, drift: 0.15 },
   { symbol: "BTC", chain: "ethereum", kind: "token", decimals: 8, basePrice: 90000, annualVol: 0.5, drift: 0.2 },
-  { symbol: "NVDAon", chain: "ethereum", kind: "tokenized_stock", decimals: 18, basePrice: 180, annualVol: 0.45, drift: 0.25 },
-  { symbol: "SPYon", chain: "ethereum", kind: "tokenized_stock", decimals: 18, basePrice: 640, annualVol: 0.18, drift: 0.09 },
+  { symbol: "NVDAon", chain: "solana", kind: "tokenized_stock", decimals: 9, basePrice: 180, annualVol: 0.45, drift: 0.25 },
+  { symbol: "SPYon", chain: "solana", kind: "tokenized_stock", decimals: 9, basePrice: 640, annualVol: 0.18, drift: 0.09 },
   { symbol: "TSLAx", chain: "solana", kind: "tokenized_stock", decimals: 8, basePrice: 420, annualVol: 0.6, drift: 0.1 },
   { symbol: "AAPLx", chain: "solana", kind: "tokenized_stock", decimals: 8, basePrice: 240, annualVol: 0.28, drift: 0.1 },
 ];
@@ -114,9 +114,14 @@ const ALIASES: Record<string, string> = {
   SOLANA: "SOL", ETHER: "ETH", ETHEREUM: "ETH", BITCOIN: "BTC", USD: "USDC",
 };
 
+/** Filled at runtime by the stock catalog: ticker / company name -> token symbol. */
+const DYN_ALIASES = new Map<string, string>();
+
 export function normalizeSymbol(s: string): string {
   const up = s.replace(/^\$/, "").trim();
   const key = up.toUpperCase();
+  const dyn = DYN_ALIASES.get(key);
+  if (dyn) return dyn;
   if (ALIASES[key]) return ALIASES[key]!;
   const hit = ASSETS.find((a) => a.symbol.toUpperCase() === key);
   return hit ? hit.symbol : up.toUpperCase();
@@ -129,6 +134,56 @@ export function normalizeSymbol(s: string): string {
  */
 export class SimulatedMarket implements MarketData {
   private memes = new Map<string, { risk: TokenRisk; price: number; live?: boolean; updatedAt?: number }>();
+  /** Tokenized stocks resolved at runtime (xStocks / Ondo on Solana). */
+  private stocks = new Map<string, { asset: Asset; ticker: string; name: string; issuer: string; price?: number; at?: number; ref?: number; refAt?: number }>();
+
+  registerStock(s: { symbol: string; ticker: string; name: string; issuer: string; mint: string; decimals: number }, priceUsd?: number) {
+    const prev = this.stocks.get(s.symbol);
+    // "msfton" / "MSFTON" -> "MSFTon"
+    DYN_ALIASES.set(s.symbol.toUpperCase(), s.symbol);
+    this.stocks.set(s.symbol, {
+      ...(prev ?? {}),
+      asset: { symbol: s.symbol, chain: "solana", kind: "tokenized_stock", decimals: s.decimals, address: s.mint },
+      ticker: s.ticker,
+      name: s.name,
+      issuer: s.issuer,
+      ...(priceUsd ? { price: priceUsd, at: Date.now() } : {}),
+    });
+  }
+
+  updateStockPrice(symbol: string, usd: number) {
+    const e = this.stocks.get(symbol);
+    if (e && usd > 0) Object.assign(e, { price: usd, at: Date.now() });
+  }
+
+  updateStockRef(symbol: string, usd: number) {
+    const e = this.stocks.get(symbol);
+    if (e && usd > 0) Object.assign(e, { ref: usd, refAt: Date.now() });
+  }
+
+  /** "MSFT", "microsoft" -> "MSFTx" (preferred token for the ticker). */
+  setStockAlias(ticker: string, symbol: string, names: string[] = []) {
+    DYN_ALIASES.set(ticker.toUpperCase(), symbol);
+    DYN_ALIASES.set(ticker.toUpperCase().replace(".", ""), symbol);
+    for (const n of names) DYN_ALIASES.set(n.toUpperCase(), symbol);
+  }
+
+  /** Tradable info for a tokenized stock: on-chain price, Nasdaq reference, gap, market status. */
+  stockInfo(symbol: string) {
+    const s = normalizeSymbol(symbol);
+    const e = this.stocks.get(s);
+    const staticRef = ASSETS.find((a) => a.symbol === s && a.kind === "tokenized_stock");
+    if (!e && !staticRef) return undefined;
+    const onchain = e?.price !== undefined && Date.now() - (e.at ?? 0) < 10 * 60_000 ? e.price : undefined;
+    let ref = e?.ref;
+    if (ref === undefined && this.live) ref = this.live.price(s);
+    const gapPct = onchain !== undefined && ref ? ((onchain - ref) / ref) * 100 : undefined;
+    return { symbol: s, ticker: e?.ticker ?? s.replace(/(x|on)$/, ""), name: e?.name ?? s, issuer: e?.issuer ?? (s.endsWith("on") ? "Ondo" : "xStocks"), onchainUsd: onchain, nasdaqUsd: ref, gapPct };
+  }
+
+  listStocks() {
+    return [...this.stocks.values()].map((e) => ({ symbol: e.asset.symbol, ticker: e.ticker, name: e.name, issuer: e.issuer, priceUsd: e.price }));
+  }
 
   /** When a live token's price last changed (undefined for simulated tokens). */
   priceUpdatedAt(symbolOrMint: string): number | undefined {
@@ -178,7 +233,12 @@ export class SimulatedMarket implements MarketData {
   asset(symbol: string): Asset | undefined {
     const s = normalizeSymbol(symbol);
     const a = ASSETS.find((x) => x.symbol === s);
-    if (a) return { symbol: a.symbol, chain: a.chain, kind: a.kind, decimals: a.decimals, address: a.address };
+    if (a) {
+      const dyn = this.stocks.get(a.symbol);
+      return { symbol: a.symbol, chain: a.chain, kind: a.kind, decimals: dyn?.asset.decimals ?? a.decimals, address: dyn?.asset.address ?? a.address };
+    }
+    const st = this.stocks.get(s);
+    if (st) return { ...st.asset };
     const m = this.findMeme(s, symbol);
     if (m) return { symbol: m.risk.symbol, chain: "solana", kind: "token", decimals: 6, address: m.risk.mint };
     return undefined;
@@ -193,8 +253,14 @@ export class SimulatedMarket implements MarketData {
       const r = rng(hashStr(s) ^ Math.floor(atMs / 60_000));
       return meme.price * (0.7 + r() * 0.9);
     }
+    // Tokenized stocks: the on-chain price is what a trade pays (they trade 24/7).
+    const st = this.stocks.get(s);
+    if (st?.price !== undefined && Date.now() - (st.at ?? 0) < 10 * 60_000 && Date.now() - atMs < 120_000) return st.price;
     const a = ASSETS.find((x) => x.symbol === s);
-    if (!a) throw new Error(`unknown asset ${symbol}`);
+    if (!a) {
+      if (st?.price !== undefined) return st.price;
+      throw new Error(`unknown asset ${symbol}`);
+    }
     if (a.annualVol === 0) return a.basePrice;
     if (this.live && Date.now() - atMs < 120_000) {
       const p = this.live.price(s);
@@ -207,7 +273,15 @@ export class SimulatedMarket implements MarketData {
   candles(symbol: string, tf: Timeframe, count: number, endMs = Date.now()): Candle[] {
     const s = normalizeSymbol(symbol);
     const a = ASSETS.find((x) => x.symbol === s);
-    if (!a) throw new Error(`no candles for ${symbol}`);
+    if (!a) {
+      // Runtime-resolved stocks only have real candles (no simulation).
+      if (this.stocks.has(s) && this.live) {
+        const real = this.live.candles(s, "stock", tf, count);
+        if (real) return real;
+        throw new Error(`Price history for ${s} is still loading; try again in a few seconds`);
+      }
+      throw new Error(`no candles for ${symbol}`);
+    }
     if (this.live && Date.now() - endMs < 120_000) {
       const real = this.live.candles(s, a.kind === "tokenized_stock" ? "stock" : "crypto", tf, count);
       if (real) return real;

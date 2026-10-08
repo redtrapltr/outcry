@@ -44,7 +44,7 @@ export class LiveFeeds implements LiveOverlay {
     void this.pollCrypto();
     void this.pollStocks();
     this.timers.push(setInterval(() => void this.pollCrypto(), this.opts.cryptoEveryMs ?? 20_000));
-    this.timers.push(setInterval(() => void this.pollStocks(), this.opts.stockEveryMs ?? 15 * 60_000));
+    this.timers.push(setInterval(() => void this.pollStocks(), this.opts.stockEveryMs ?? 30 * 60_000));
     // Warm the candles agents and charts use most.
     for (const s of Object.keys(CRYPTO)) for (const tf of ["1h", "4h", "1d"] as Timeframe[]) void this.refreshCandles(s, "crypto", tf, 500);
     for (const t of this.timers) t.unref?.();
@@ -65,7 +65,7 @@ export class LiveFeeds implements LiveOverlay {
   }
 
   candles(symbol: string, kind: "crypto" | "stock", tf: Timeframe, count: number): Candle[] | undefined {
-    if (!(symbol in CRYPTO) && !(symbol in STOCKS)) return undefined;
+    if (!(symbol in CRYPTO) && !(symbol in STOCKS) && kind !== "stock") return undefined;
     const key = `${symbol}:${tf}`;
     const hit = this.bars.get(key);
     const stale = !hit || Date.now() - hit.at > TTL[tf];
@@ -146,7 +146,8 @@ export class LiveFeeds implements LiveOverlay {
     if (!this.opts.history || this.inflight.has(key)) return;
     this.inflight.add(key);
     try {
-      const r = await this.opts.history.fetch(kind === "crypto" ? symbol : STOCKS[symbol] ?? symbol, kind, tf, Math.min(count, 1_000));
+      const ticker = STOCKS[symbol] ?? symbol.replace(/^([A-Z.]{1,6})(x|on)$/, "$1");
+      const r = await this.opts.history.fetch(kind === "crypto" ? symbol : ticker, kind, tf, Math.min(count, 1_000));
       if (r?.candles.length) this.bars.set(key, { at: Date.now(), candles: r.candles });
     } catch (e) {
       this.lastError = `candles ${key}: ${(e as Error).message}`;

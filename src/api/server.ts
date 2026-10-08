@@ -13,6 +13,7 @@ import { LiveFeeds } from "../data/live.js";
 import { PumpPortalFeed } from "../data/pumpfeed.js";
 import { TokenLookup } from "../data/lookup.js";
 import { JupiterHolderPoller } from "../data/jupholders.js";
+import { StockCatalog } from "../data/stocks.js";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
 import fastifyWebsocket from "@fastify/websocket";
@@ -72,6 +73,9 @@ export async function buildServer(opts: ServerOptions = {}) {
     return out;
   };
   const holderPoll = pump ? new JupiterHolderPoller(app.market, pump, { heldMints }).start() : undefined;
+  // Tokenized stocks: real Solana tokens (xStocks / Ondo) with on-chain prices.
+  const stocks = live ? new StockCatalog(app.market, { twelveDataKey: process.env.TWELVEDATA_API_KEY }).start() : undefined;
+  if (stocks) orch.tools.stocks = stocks;
   const lookup = live || pump ? new TokenLookup(app.market, { follow: (m) => pump?.follow(m), rpcUrl }) : undefined;
   if (lookup) {
     orch.tools.lookup = lookup;
@@ -104,7 +108,7 @@ export async function buildServer(opts: ServerOptions = {}) {
     marketMode: () => (live?.price("SOL") !== undefined || pump?.status().connected ? "real" : "simulated"),
     extraHealth: () => ({
       persistence: persistence?.status() ?? { store: "memory (data is lost on restart)" },
-      marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", holders: holderPoll ? holderPoll.status() : null, solanaRpc: rpcStatus },
+      marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", holders: holderPoll ? holderPoll.status() : null, stocks: stocks ? stocks.status() : null, solanaRpc: rpcStatus },
     }),
   });
   const store = opts.store === null ? undefined : opts.store ?? (await storeFromEnv());
@@ -182,6 +186,7 @@ export async function buildServer(opts: ServerOptions = {}) {
     live?.stop();
     pump?.stop();
     holderPoll?.stop();
+    stocks?.stop();
     await persistence?.stop();
   });
 

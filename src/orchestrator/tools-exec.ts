@@ -11,6 +11,7 @@ import * as ind from "../strategy/indicators.js";
 import type { BacktestReport } from "../strategy/backtest.js";
 import type { SavedStrategy } from "../strategy/lab.js";
 import { redactAgent, type AgentWithCopy } from "../market/listings.js";
+import { usMarketStatus } from "../data/stocks.js";
 import type { SniperReplay } from "../agents/runtime.js";
 
 export type Card =
@@ -112,6 +113,8 @@ const untrusted = (o: unknown) => `<untrusted_data>${JSON.stringify(o)}</untrust
 export class ToolExecutor {
   /** Resolves Solana mints found in tool input (set by the server when live data is on). */
   lookup?: { ensureFrom(text: string): Promise<string[]> };
+  /** Resolves stock tickers / company names to tradable tokens (server, live data on). */
+  stocks?: { ensureFrom(text: string): Promise<string[]> };
   constructor(private app: Outcry) {}
 
   wrapForModel(name: string, outcome: ToolOutcome): string {
@@ -125,11 +128,18 @@ export class ToolExecutor {
     const { app } = this;
     try {
       if (this.lookup) await this.lookup.ensureFrom(JSON.stringify(input ?? {}));
+      if (this.stocks) await this.stocks.ensureFrom(JSON.stringify(input ?? {}));
       switch (name) {
         case "get_portfolio": {
           const data = app.users.portfolio(userId);
           const top = data.positions.map((p) => `${p.symbol} $${p.valueUsd.toFixed(2)}`).join(", ") || "no open positions";
           return { ok: true, result: { summary: `Wallet value $${data.walletUsd.toFixed(2)}. Positions: ${top}.`, ...data }, card: { type: "portfolio", data } };
+        }
+        case "list_stocks": {
+          const q = String(i.query ?? "").toLowerCase();
+          const all = app.market.listStocks().filter((x) => !q || x.ticker.toLowerCase().includes(q) || x.name.toLowerCase().includes(q));
+          const st = usMarketStatus();
+          return { ok: true, result: { summary: `${st.label}. ${all.length} tokenized stocks ready to trade${q ? ` matching "${q}"` : ""}: ${all.slice(0, 60).map((x) => `${x.ticker} (${x.symbol}${x.priceUsd ? ` $${x.priceUsd.toFixed(2)}` : ""})`).join(", ")}. Others resolve on request by ticker.`, stocks: all.slice(0, 100) } };
         }
         case "get_quote": {
           const exact = i.receive_exact !== undefined && i.receive_exact !== null ? Number(i.receive_exact) : undefined;
@@ -139,7 +149,9 @@ export class ToolExecutor {
           const summary = exact !== undefined
             ? `${exact} ${q.asset} costs ${fmt(q.amount)} ${q.quoteAsset} via ${q.venue} (fees included, impact ${(q.priceImpactBps / 100).toFixed(2)}%).`
             : `${leg.side} with ${fmt(q.amount)} ${leg.side === "buy" ? q.quoteAsset : q.asset} via ${q.venue}: about ${fmt(q.expectedOut)} ${leg.side === "buy" ? q.asset : q.quoteAsset} out, impact ${(q.priceImpactBps / 100).toFixed(2)}%.`;
-          return { ok: true, result: { summary, quote: q } };
+          const info = app.market.stockInfo(q.asset);
+          const stockLine = info ? ` ${usMarketStatus().label}; ${info.ticker} (${info.issuer} token) trades 24/7 on Solana${info.onchainUsd ? ` at $${info.onchainUsd.toFixed(2)}` : ""}${info.gapPct !== undefined ? `, ${info.gapPct >= 0 ? "+" : ""}${info.gapPct.toFixed(2)}% vs last Nasdaq $${info.nasdaqUsd!.toFixed(2)}` : ""}.` : "";
+          return { ok: true, result: { summary: summary + stockLine, quote: q, ...(info ? { stock: info } : {}) } };
         }
         case "get_token_risk": {
           const r = app.market.tokenRisk(String(i.token));
