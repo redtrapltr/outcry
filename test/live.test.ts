@@ -239,3 +239,28 @@ describe("holders from Jupiter when pump.fun trade data is unavailable", () => {
     feed.stop();
   });
 });
+
+describe("held tokens keep live prices", () => {
+  it("refreshes the price of a token held past the young-launch window, so stops can fire", async () => {
+    const { JupiterHolderPoller } = await import("../src/data/jupholders.js");
+    const app = createOutcry({ mode: "paper" } as never);
+    const sock = { readyState: 1, send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null } as never;
+    const feed = new PumpPortalFeed(app.market, { makeSocket: () => sock }).start();
+    const MINT = "4xKXtg2CW87d97TXJSDpbD5jBkheTqA83TZRuJosgAsU";
+    feed.handle({ mint: MINT, txType: "create", traderPublicKey: "c", initialBuy: 1e7, marketCapSol: 30, vSolInBondingCurve: 31, symbol: "OLDHELD" });
+    app.market.updateMeme(MINT, { createdAtMs: Date.now() - 60 * 60_000 }); // an hour old: outside the young window
+    let price = 0.00002;
+    const urls: string[] = [];
+    const poller = new JupiterHolderPoller(app.market, feed, {
+      heldMints: () => [MINT],
+      fetch: async (u) => (urls.push(u), ok([{ id: MINT, holderCount: 80, usdPrice: price }])),
+    });
+    await poller.poll();
+    expect(app.market.priceUsd(MINT)).toBeCloseTo(0.00002, 12);
+    price = 0.000005;
+    await poller.poll();
+    expect(urls.at(-1)).toContain(MINT);
+    expect(app.market.priceUsd(MINT)).toBeCloseTo(0.000005, 12);
+    feed.stop();
+  });
+});

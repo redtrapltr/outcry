@@ -39,6 +39,13 @@ export class UserStore {
   }
 
   /** True if any user holds a balance of this asset (used to keep live tokens tracked). */
+  /** Every asset symbol any user holds a balance of. */
+  heldSymbols(): Set<string> {
+    const out = new Set<string>();
+    for (const u of this.users.values()) for (const [k, v] of Object.entries(u.balances)) if (v > 0) out.add(k);
+    return out;
+  }
+
   anyHolds(symbol: string) {
     for (const u of this.users.values()) if ((u.balances[symbol] ?? 0) > 0) return true;
     return false;

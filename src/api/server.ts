@@ -56,7 +56,17 @@ export async function buildServer(opts: ServerOptions = {}) {
   const orch = new Orchestrator(app, router);
   const rpcUrl = process.env.SOLANA_RPC_URL ?? (process.env.HELIUS_API_KEY ? `https://mainnet.helius-rpc.com/?api-key=${process.env.HELIUS_API_KEY}` : undefined);
   // Holder counts for young launches (free trade data ended in May 2026).
-  const holderPoll = pump ? new JupiterHolderPoller(app.market, pump).start() : undefined;
+  const heldMints = () => {
+    const syms = app.users.heldSymbols();
+    for (const a of app.agents.agents.values()) for (const p of app.agents.positionsOf(a.id)) syms.add(p.symbol);
+    const out: string[] = [];
+    for (const s of syms) {
+      const r = app.market.tokenRisk(s);
+      if (r && (r.flags.includes("live") || r.flags.includes("looked-up"))) out.push(r.mint);
+    }
+    return out;
+  };
+  const holderPoll = pump ? new JupiterHolderPoller(app.market, pump, { heldMints }).start() : undefined;
   const lookup = live || pump ? new TokenLookup(app.market, { follow: (m) => pump?.follow(m), rpcUrl }) : undefined;
   if (lookup) {
     orch.tools.lookup = lookup;
