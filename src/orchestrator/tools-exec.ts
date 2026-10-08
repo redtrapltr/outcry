@@ -91,7 +91,7 @@ export function blueprint(a: Agent): BlueprintNode[] {
     { key: "goal", label: "GOAL", lines: [s.goal || s.name] },
     { key: "markets", label: "MARKETS · JACKETS", lines: s.markets },
     { key: "signals", label: "SIGNALS · WHEN TO ACT", lines: signals },
-    { key: "risk", label: "RISK LIMITS", lines: [`$${s.sizeUsd} per trade · stop −${s.exit.stopLossPct}% · take profit +${s.exit.takeProfitPct}%`, `max $${s.limits.maxPerDayUsd} per day · ${s.limits.maxOpenPositions} open positions · pause at −${s.limits.maxDrawdownPct}% drawdown`] },
+    { key: "risk", label: "RISK LIMITS", lines: [`$${s.sizeUsd} per trade · stop −${s.exit.stopLossPct}% · take profit +${s.exit.takeProfitPct}%${s.exit.maxHoldMinutes ? ` · sell after ${s.exit.maxHoldMinutes} min` : ""}`, `max $${s.limits.maxPerDayUsd} per day · ${s.limits.maxOpenPositions} open positions · pause at −${s.limits.maxDrawdownPct}% drawdown`] },
     { key: "execution", label: "EXECUTION", lines: [s.mode === "ask" ? "Proposes each trade, waits for your tap" : s.mode === "auto" ? "Trades automatically inside these limits" : "Paper trading: simulated fills, no real funds"] },
   ];
 }
