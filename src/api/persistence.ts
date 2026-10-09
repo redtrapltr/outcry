@@ -7,6 +7,7 @@ import { decode, encode, restore, snapshot, type StateStore } from "../core/pers
 import type { ModelRouter } from "../llm/router.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import type { AuthService } from "./auth.js";
+import type { LivePilot } from "../live/pilot.js";
 
 export class Persistence {
   private lastState = "";
@@ -23,7 +24,7 @@ export class Persistence {
   constructor(
     readonly store: StateStore,
     private app: Outcry,
-    private parts: { router: ModelRouter; orch: Orchestrator; sessions: Map<string, string>; transcripts?: Map<string, unknown>; recaps?: Map<string, unknown>; auth?: AuthService },
+    private parts: { router: ModelRouter; orch: Orchestrator; sessions: Map<string, string>; transcripts?: Map<string, unknown>; recaps?: Map<string, unknown>; auth?: AuthService; live?: LivePilot },
   ) {}
 
   private holders() {
@@ -44,6 +45,7 @@ export class Persistence {
       ...(this.parts.transcripts ? { transcripts: { obj: { lines: this.parts.transcripts }, fields: ["lines"] } } : {}),
       ...(this.parts.recaps ? { recaps: { obj: { items: this.parts.recaps }, fields: ["items"] } } : {}),
       ...(this.parts.auth ? { auth: { obj: this.parts.auth, fields: ["credentials"] } } : {}),
+      ...(this.parts.live ? { live: { obj: this.parts.live, fields: ["trades"] }, liveWallets: { obj: this.parts.live.wallets, fields: ["wallets"] } } : {}),
     };
   }
 

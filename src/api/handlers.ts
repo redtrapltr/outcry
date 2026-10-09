@@ -7,6 +7,7 @@ import type { Outcry } from "../app.js";
 import { Jacket } from "../core/types.js";
 import type { ModelRouter } from "../llm/router.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
+import type { LivePilot } from "../live/pilot.js";
 import type { AuthService, RequestMeta } from "./auth.js";
 import { blueprint } from "../orchestrator/tools-exec.js";
 import { redactAgent } from "../market/listings.js";
@@ -42,6 +43,8 @@ export interface HandlerOptions {
   extraHealth?: () => Record<string, unknown>;
   /** "real" when live prices / launches feed the paper market. */
   marketMode?: () => "real" | "simulated";
+  /** Real-money pilot (Turnkey wallets + Jupiter), when configured. */
+  live?: LivePilot;
 }
 
 export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRouter, newToken: () => string, opts: HandlerOptions = {}) {
@@ -328,6 +331,39 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   route("POST", "/api/auth/logout", ({ token }) => {
     if (token) tokens.delete(token);
     return { ok: true };
+  });
+
+  // --- live trading pilot (real money) -----------------------------------------------
+  const live = () => {
+    if (!opts.live) throw new HttpError(501, "Live trading isn't set up on this server yet (Turnkey keys missing)");
+    return opts.live;
+  };
+  const secured = (uid: string) => !!auth?.hasPasskey(uid);
+  route("GET", "/api/live", async ({ uid }) => {
+    if (!opts.live) return { enabled: false, eligible: false, reason: "Live trading isn't set up on this server yet", wallet: null };
+    const st = opts.live.status(uid, secured(uid));
+    let portfolio = null, portfolioError: string | null = null;
+    if (st.wallet) {
+      try { portfolio = await opts.live.portfolio(uid); } catch (e) { portfolioError = (e as Error).message; }
+    }
+    return { ...st, portfolio, portfolioError, trades: opts.live.history(uid).slice(0, 30) };
+  });
+  route("POST", "/api/live/wallet", ({ uid }) => live().createWallet(uid, secured(uid)));
+  route("POST", "/api/live/quote", ({ uid, body }) => {
+    const b = z.object({ side: z.enum(["buy", "sell"]), token: z.string().min(2).max(64), usd: z.number().positive().optional(), pct: z.number().min(1).max(100).optional() }).parse(body);
+    return live().quote(uid, secured(uid), b);
+  });
+  route("POST", "/api/live/quote/:id/challenge", async ({ uid, params, meta }) => {
+    const q = live().quoteFor(uid, params.id!);
+    return needAuth().approvalOptions(uid, q.id, JSON.stringify({ side: q.side, mint: q.mint, inAmount: q.inAmount }), meta);
+  });
+  route("POST", "/api/live/quote/:id/execute", async ({ uid, params, body, meta }) => {
+    const b = z.object({ passkeyResponse: z.unknown() }).parse(body ?? {});
+    const p = live();
+    const q = p.quoteFor(uid, params.id!);
+    if (!b.passkeyResponse) throw new HttpError(401, "Confirm with your passkey to sign");
+    await needAuth().verifyApproval(uid, q.id, b.passkeyResponse, meta);
+    return p.execute(uid, secured(uid), q.id, `webauthn:${q.id}`);
   });
 
   // --- public --------------------------------------------------------------------------

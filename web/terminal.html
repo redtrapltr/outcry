@@ -71,6 +71,16 @@ button,input{font:inherit;color:inherit}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
 .tabs .chip{border:1px solid var(--line2);background:transparent;color:inherit;border-radius:999px;padding:7px 14px;font:13px var(--mono);cursor:pointer}
 .tabs .chip.on{background:var(--voice);border-color:var(--voice);color:#fff}
+.lw-head{display:grid;grid-template-columns:auto 1fr;gap:16px 28px;align-items:start}
+.lw-total{font:900 44px var(--display)}
+.lw-addr{display:flex;flex-direction:column;gap:8px;min-width:0}
+.lw-addr code{font:12px var(--mono);word-break:break-all;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.lw-toks,.lw-hist{display:flex;flex-direction:column;gap:6px;font:13px var(--mono)}
+.lw-toks>div,.lw-hist>div{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:6px 0}
+.lw-hist a{color:var(--voice-text)}
+.lw-qbody{display:flex;justify-content:space-between;gap:12px;padding:14px;flex-wrap:wrap}
+#liveBtn{border-color:#ff5a5a;color:#ffb3b3}
+@media (max-width:640px){.lw-head{grid-template-columns:1fr}}
 .creator-head{display:flex;gap:16px;align-items:center}
 .cbadge{width:64px;height:64px;flex:none;border-radius:14px;display:grid;place-items:center;background:#ff5fa2;color:#1a0f2a;font:900 22px var(--display)}
 .cstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
@@ -261,6 +271,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
     </div>
     <button class="btn btn-primary" type="button" id="newSession">+ New chat</button>
     <button class="btn" type="button" id="marketBtn">◆ Marketplace</button>
+    <button class="btn" type="button" id="liveBtn">● Real wallet <span class="mono" style="font-size:10px;opacity:.7">PILOT</span></button>
     <div class="list" id="chatsBox" hidden>
       <span class="eyebrow" style="padding:0 10px 6px">Chats</span>
       <div id="chats"></div>
@@ -1129,7 +1140,95 @@ async function openPublish(agentId, name) {
     } catch (err) { toast(err.message); }
   };
 }
+async function openLive() {
+  const { body, close } = sheet('Real wallet');
+  let quote = null, timer = null;
+  const stop = () => { if (timer) clearInterval(timer); timer = null; };
+  const render = async () => {
+    stop();
+    body.innerHTML = '<p class="meta">Loading…</p>';
+    let s;
+    try { s = await api('/api/live'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
+    const intro = `<p class="meta" style="margin:0">Real money on Solana. Pilot: up to $${s.limits?.maxOrderUsd ?? 25} per buy, $${s.limits?.maxDailyUsd ?? 100} of buys a day, every trade signed with your passkey. Keys are held by Turnkey; in this pilot Outcry's server can sign after your approval.</p>`;
+    if (!s.eligible) {
+      body.innerHTML = intro + `<div class="summary"><b>Not available yet.</b> ${esc(s.reason || '')}</div>${/passkey/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-secure>Secure with a passkey</button>' : ''}${/handle/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-handle>Choose your @handle</button>' : ''}`;
+      return;
+    }
+    if (!s.wallet) {
+      body.innerHTML = intro + `<div class="summary">You don't have a real wallet yet. Outcry creates one Solana wallet for you on Turnkey; you fund it by sending SOL to its address.</div><div><button class="btn btn-primary" type="button" data-create>Create my real wallet</button></div>`;
+      return;
+    }
+    const p = s.portfolio;
+    const toks = p?.tokens || [];
+    body.innerHTML = intro + `
+      <div class="lw-head"><div><span class="eyebrow">Balance</span><div class="lw-total">${p ? usd(p.totalUsd) : '—'}</div><span class="meta">${p ? `${p.sol.toFixed(4)} SOL (${usd(p.solUsd)})` : esc(s.portfolioError || 'Balance unavailable')}</span></div>
+        <div class="lw-addr"><span class="eyebrow">Deposit SOL to</span><code>${esc(s.wallet.address)}</code><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" data-copy>Copy address</button><a class="btn" href="https://solscan.io/account/${esc(s.wallet.address)}" target="_blank" rel="noopener">Solscan ↗</a><button class="btn" type="button" data-reload>↻ Refresh</button></div></div></div>
+      ${toks.length ? `<div class="lw-toks"><span class="eyebrow">Tokens</span>${toks.map(t => `<div><span>${esc(t.symbol)} <span class="meta">${fmt(t.amount, 4)}</span></span><span>${t.usd === null ? '—' : usd(t.usd)} <button class="linkbtn" type="button" data-sellmint="${esc(t.mint)}">sell</button></span></div>`).join('')}</div>` : ''}
+      <form class="form lw-form">
+        <div class="tabs wide"><button class="chip on" type="button" data-side="buy">Buy</button><button class="chip" type="button" data-side="sell">Sell</button></div>
+        <label class="wide">Token mint address<input name="token" placeholder="e.g. a pump.fun mint, or USDC" required autocomplete="off"></label>
+        <label class="lw-buy">Spend (USD of SOL)<input name="usd" type="number" min="1" max="${s.limits.maxOrderUsd}" step="1" value="5"></label>
+        <label class="lw-sell" hidden>Sell share of holding (%)<input name="pct" type="number" min="1" max="100" step="1" value="100"></label>
+        <div class="actions"><button class="btn btn-primary" type="submit">Get real quote</button></div>
+      </form>
+      <div class="lw-quote"></div>
+      <div class="lw-hist"><span class="eyebrow">Real trades</span>${s.trades.length ? s.trades.map(t => `<div><span>${new Date(t.at).toLocaleString()} · ${t.side === 'buy' ? 'Bought' : 'Sold'} ${esc(t.symbol)} · ${usd(t.usd)}</span><span class="${t.status === 'confirmed' ? 'up' : 'down'}">${t.status === 'confirmed' ? 'confirmed' : 'failed: ' + esc(t.error || '')}${t.explorer ? ` <a href="${esc(t.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}</span></div>`).join('') : '<p class="meta">None yet.</p>'}</div>`;
+    const form = body.querySelector('.lw-form');
+    let side = 'buy';
+    const setSide = v => { side = v; form.querySelectorAll('[data-side]').forEach(b => b.classList.toggle('on', b.dataset.side === v)); form.querySelector('.lw-buy').hidden = v !== 'buy'; form.querySelector('.lw-sell').hidden = v !== 'sell'; };
+    form.addEventListener('click', e => { const b = e.target.closest('[data-side]'); if (b) setSide(b.dataset.side); });
+    body.querySelectorAll('[data-sellmint]').forEach(b => b.onclick = () => { setSide('sell'); form.token.value = b.dataset.sellmint; form.scrollIntoView({ behavior: 'smooth' }); });
+    form.onsubmit = async ev => {
+      ev.preventDefault();
+      const f = new FormData(form);
+      const host = body.querySelector('.lw-quote');
+      host.innerHTML = '<p class="meta">Asking Jupiter for a real price…</p>';
+      try {
+        quote = await api('/api/live/quote', { method: 'POST', body: side === 'buy' ? { side, token: String(f.get('token')).trim(), usd: +f.get('usd') } : { side, token: String(f.get('token')).trim(), pct: +f.get('pct') } });
+      } catch (e) { host.innerHTML = `<p class="meta down">${esc(e.message)}</p>`; return; }
+      host.innerHTML = `<div class="ticket"><div class="t-head" style="background:#ff5a5a;color:#1a0f2a"><span>REAL ORDER · SOLANA</span><span class="lw-ttl"></span></div>
+        <div class="lw-qbody"><div><b>${quote.side.toUpperCase()} · ${esc(quote.symbol)}</b><div class="meta">jupiter${quote.router ? ' · ' + esc(quote.router) : ''}${quote.feeBps !== undefined ? ` · fee ${(quote.feeBps / 100).toFixed(2)}%` : ''}</div></div>
+        <div style="text-align:right">pay ${fmt(quote.payAmount, quote.payAmount >= 1000 ? 2 : 6)} ${esc(quote.payAsset)}<br>receive ≈ ${fmt(quote.receiveAmount, quote.receiveAmount >= 1000 ? 2 : 6)} ${esc(quote.receiveAsset)}<br><b>≈ ${usd(quote.usd)}</b></div></div></div>
+        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-primary" type="button" data-sign>Sign with passkey & send</button><button class="btn" type="button" data-cancel>Cancel</button></div>`;
+      const ttl = host.querySelector('.lw-ttl');
+      stop();
+      timer = setInterval(() => { const left = Math.max(0, Math.round((quote.expiresAt - Date.now()) / 1000)); ttl.textContent = left ? `expires in ${left}s` : 'expired, get a new quote'; if (!left) { stop(); host.querySelector('[data-sign]').disabled = true; } }, 250);
+    };
+  };
+  body.addEventListener('click', async e => {
+    const t = e.target;
+    if (t.closest('[data-secure]')) { close(); $('secureBtn')?.click(); return; }
+    if (t.closest('[data-handle]')) { if (await chooseHandle()) render(); return; }
+    if (t.closest('[data-reload]')) { render(); return; }
+    if (t.closest('[data-copy]')) { const a = body.querySelector('.lw-addr code').textContent; try { await navigator.clipboard.writeText(a); toast('Address copied'); } catch { prompt('Your wallet address', a); } return; }
+    if (t.closest('[data-cancel]')) { stop(); quote = null; body.querySelector('.lw-quote').innerHTML = ''; return; }
+    if (t.closest('[data-create]')) {
+      t.disabled = true; t.textContent = 'Creating on Turnkey…';
+      try { const w = await api('/api/live/wallet', { method: 'POST' }); toast('Real wallet created: ' + w.address.slice(0, 6) + '…'); render(); } catch (err) { toast(err.message); t.disabled = false; t.textContent = 'Create my real wallet'; }
+      return;
+    }
+    const sg = t.closest('[data-sign]');
+    if (sg && quote) {
+      sg.disabled = true; sg.textContent = 'Waiting for your passkey…';
+      try {
+        const opts = await api(`/api/live/quote/${quote.id}/challenge`, { method: 'POST' });
+        const { startAuthentication } = await webauthn();
+        const passkeyResponse = await startAuthentication({ optionsJSON: opts });
+        sg.textContent = 'Sending to Solana…';
+        const r = await api(`/api/live/quote/${quote.id}/execute`, { method: 'POST', body: { passkeyResponse } });
+        stop();
+        if (r.status === 'confirmed') { toast(`Confirmed: ${r.side === 'buy' ? 'bought' : 'sold'} ${r.symbol}`); feed(`REAL ${r.side} ${r.symbol} ${usd(r.usd)} confirmed`); }
+        else toast('Trade failed: ' + (r.error || 'unknown'));
+        render();
+      } catch (err) { toast(err.message); sg.disabled = false; sg.textContent = 'Sign with passkey & send'; }
+    }
+  });
+  const obs = new MutationObserver(() => { if (!document.body.contains(body)) { stop(); obs.disconnect(); } });
+  obs.observe(document.body, { childList: true });
+  await render();
+}
 $('marketBtn').onclick = () => openMarket();
+$('liveBtn').onclick = () => openLive();
 $('handleBtn').onclick = () => chooseHandle();
 
 async function openRecap(agentId) {

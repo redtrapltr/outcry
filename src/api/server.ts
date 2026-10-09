@@ -12,6 +12,22 @@ import { RealHistory } from "../data/history.js";
 import { LiveFeeds } from "../data/live.js";
 import { PumpPortalFeed } from "../data/pumpfeed.js";
 import { TokenLookup } from "../data/lookup.js";
+import { turnkeyFromEnv } from "../wallet/turnkey.js";
+import { LivePilot, pilotConfigFromEnv, type TokenInfo } from "../live/pilot.js";
+import { JupiterSwap, SolanaRpc } from "../live/chain.js";
+
+/** Symbol, decimals and USD price for mints, from Jupiter's free token search. */
+async function jupiterTokenInfo(mints: string[]): Promise<Record<string, TokenInfo>> {
+  const out: Record<string, TokenInfo> = {};
+  for (let i = 0; i < mints.length; i += 100) {
+    const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${mints.slice(i, i + 100).join(",")}`, { signal: AbortSignal.timeout(8_000) });
+    if (!r.ok) continue;
+    for (const t of (await r.json()) as { id: string; symbol?: string; name?: string; decimals?: number; usdPrice?: number }[]) {
+      out[t.id] = { symbol: t.symbol ?? t.id.slice(0, 4), name: t.name, decimals: t.decimals, usdPrice: t.usdPrice };
+    }
+  }
+  return out;
+}
 import { JupiterHolderPoller } from "../data/jupholders.js";
 import { StockCatalog } from "../data/stocks.js";
 import Fastify from "fastify";
@@ -100,20 +116,42 @@ export async function buildServer(opts: ServerOptions = {}) {
     void checkRpc();
     setInterval(() => void checkRpc(), 5 * 60_000).unref();
   }
+  // Real-money pilot: Turnkey wallets + Jupiter swaps (only when the keys are set).
+  const turnkey = turnkeyFromEnv(process.env);
+  const pilotCfg = pilotConfigFromEnv(process.env);
+  const livePilot = turnkey && process.env.JUPITER_API_KEY
+    ? new LivePilot(pilotCfg, {
+        users: app.users,
+        wallets: turnkey,
+        jupiter: new JupiterSwap({ apiKey: process.env.JUPITER_API_KEY }),
+        rpc: new SolanaRpc(rpcUrl ?? "https://api.mainnet-beta.solana.com"),
+        audit: app.audit,
+        solUsd: () => { try { return app.market.priceUsd("SOL"); } catch { return 0; } },
+        tokenInfo: jupiterTokenInfo,
+      })
+    : undefined;
+  let liveStatus: Record<string, unknown> = { configured: false, missing: [!turnkey && "TURNKEY_ORGANIZATION_ID / TURNKEY_API_PUBLIC_KEY / TURNKEY_API_PRIVATE_KEY", !process.env.JUPITER_API_KEY && "JUPITER_API_KEY"].filter(Boolean) };
+  if (livePilot && turnkey) {
+    const refresh = async () => { liveStatus = { configured: true, enabled: pilotCfg.enabled, allowlist: pilotCfg.allowlist.length, maxOrderUsd: pilotCfg.maxOrderUsd, maxDailyUsd: pilotCfg.maxDailyUsd, turnkey: await turnkey.status() }; };
+    void refresh();
+    setInterval(() => void refresh(), 5 * 60_000).unref();
+  }
   const auth = new AuthService();
   let persistence: Persistence | undefined;
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
     auth,
+    live: livePilot,
     // Only claim a real market while real data is actually arriving.
     marketMode: () => (live?.price("SOL") !== undefined || pump?.status().connected ? "real" : "simulated"),
     extraHealth: () => ({
       persistence: persistence?.status() ?? { store: "memory (data is lost on restart)" },
       marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", holders: holderPoll ? holderPoll.status() : null, stocks: stocks ? stocks.status() : null, solanaRpc: rpcStatus },
+      liveTrading: liveStatus,
     }),
   });
   const store = opts.store === null ? undefined : opts.store ?? (await storeFromEnv());
   if (store) {
-    persistence = new Persistence(store, app, { router, orch, sessions: api.tokens, transcripts: api.transcripts, recaps: api.recaps, auth });
+    persistence = new Persistence(store, app, { router, orch, sessions: api.tokens, transcripts: api.transcripts, recaps: api.recaps, auth, live: livePilot });
     const r = await persistence.restore();
     console.log(`[outcry] state store: ${store.kind}; restored ${r.users} users, ${r.agents} agents, ${r.auditEntries} audit entries`);
     persistence.start(Number(process.env.OUTCRY_SAVE_EVERY_MS ?? 5_000));

@@ -42,6 +42,17 @@ services:
       # Helius: Solana RPC for on-chain holder checks (set in the dashboard, never in git).
       - key: HELIUS_API_KEY
         sync: false
+      # Live trading pilot: set these in the dashboard (secrets, never in git).
+      - key: TURNKEY_ORGANIZATION_ID
+        sync: false
+      - key: TURNKEY_API_PUBLIC_KEY
+        sync: false
+      - key: TURNKEY_API_PRIVATE_KEY
+        sync: false
+      - key: JUPITER_API_KEY
+        sync: false
+      - key: OUTCRY_LIVE_ALLOWLIST
+        sync: false
       # Free key from twelvedata.com: real stock history for backtests (crypto works without it).
       - key: TWELVEDATA_API_KEY
         sync: false
