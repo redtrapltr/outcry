@@ -390,6 +390,39 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     await needAuth().verifyApproval(uid, wd.id, b.passkeyResponse, meta);
     return p.executeWithdrawal(uid, secured(uid), wd.id, `webauthn:${wd.id}`);
   });
+  // Real-money agents: own on-chain account, funded by a (passkey-signed) transfer from the real wallet.
+  const maxAgentUsd = Number((typeof process !== "undefined" ? process.env.OUTCRY_LIVE_AGENT_MAX_USD : undefined) ?? 50);
+  route("POST", "/api/agents/:id/real/prepare", async ({ uid, params, body }) => {
+    const b = z.object({ budgetUsd: z.number().min(5) }).parse(body);
+    const a = own(app.agents.get(params.id!), uid, "Agent");
+    if (app.marketplace.isCopy(a.id)) throw new HttpError(400, "Real money for copied agents comes later");
+    if (a.real) throw new HttpError(400, `${a.spec.name} already trades real money`);
+    if (b.budgetUsd > maxAgentUsd) throw new HttpError(400, `Pilot limit: $${maxAgentUsd} per agent`);
+    const p = live();
+    const address = await p.agentAddress(uid, secured(uid), a.id);
+    const sol = b.budgetUsd / app.market.priceUsd("SOL");
+    const withdrawal = await p.prepareWithdrawal(uid, secured(uid), { to: address, token: "SOL", amount: Number(sol.toFixed(6)) });
+    return { address, withdrawal };
+  });
+  route("POST", "/api/agents/:id/real/start", async ({ uid, params }) => {
+    const a = own(app.agents.get(params.id!), uid, "Agent");
+    const p = live();
+    const address = await p.agentAddress(uid, secured(uid), a.id);
+    const sol = await p.agentSolBalance(address);
+    if (sol < 0.02) throw new HttpError(400, `The agent wallet holds ${sol.toFixed(4)} SOL: fund it first`);
+    return redactAgent(app.agents.goReal(uid, a.id, address, sol));
+  });
+  route("POST", "/api/agents/:id/real/stop", async ({ uid, params }) => {
+    const a = own(app.agents.get(params.id!), uid, "Agent");
+    if (!a.real) throw new HttpError(400, `${a.spec.name} isn't trading real money`);
+    if (a.state === "live") app.agents.control(uid, a.id, "pause");
+    const left = await app.agents.closeAllReal(uid, a.id);
+    if (left) throw new HttpError(409, `${left} position(s) couldn't be sold yet; try again in a moment`);
+    const r = await live().sweepAgent(uid, a.real.address);
+    a.real = undefined;
+    app.audit.append(`user:${uid}`, "agent.real_stopped", { agentId: a.id, returnedSol: r.sent });
+    return r;
+  });
   // Self-custody: enrol a wallet passkey at Turnkey, prove it works, then hand it root.
   route("POST", "/api/live/custody/options", async ({ uid, meta }) => {
     const p = live();

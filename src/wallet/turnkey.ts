@@ -29,6 +29,7 @@ export interface TurnkeyApi {
   createUsers(input: Record<string, unknown>): Promise<{ userIds: string[] }>;
   createPolicy(input: Record<string, unknown>): Promise<{ policyId: string }>;
   updateRootQuorum(input: { organizationId: string; threshold: number; userIds: string[] }): Promise<unknown>;
+  createWalletAccounts(input: { organizationId: string; walletId: string; accounts: Record<string, unknown>[] }): Promise<{ addresses: string[] }>;
 }
 
 /** Posts a request that the user's passkey stamped in the browser; the server only relays it. */
@@ -46,6 +47,8 @@ export interface RealWallet {
   serverUserId?: string;
   credentialId?: string;
   policyIds?: string[];
+  /** One Solana account per real-money agent (same seed, path m/44'/501'/n'/0'). */
+  agentAccounts?: { agentId: string; address: string; path: string; createdAt: string }[];
 }
 
 export const SOLANA_PATH = "m/44'/501'/0'/0'";
@@ -206,13 +209,32 @@ export class TurnkeyWallets {
     return Buffer.from(signed, "hex").toString("base64");
   }
 
-  /** Sign a serialized Solana transaction (base64 in, base64 out). */
-  async signSolana(userId: string, base64Tx: string): Promise<string> {
+  /** A separate account for an agent's real-money trading (created once per agent). */
+  async agentAccount(userId: string, agentId: string): Promise<string> {
+    const w = this.wallets.get(userId);
+    if (!w) throw new Error("Create your real wallet first");
+    const have = w.agentAccounts?.find((x) => x.agentId === agentId);
+    if (have) return have.address;
+    const path = `m/44'/501'/${(w.agentAccounts?.length ?? 0) + 1}'/0'`;
+    const r = await this.api.createWalletAccounts({
+      organizationId: w.subOrgId,
+      walletId: w.walletId,
+      accounts: [{ curve: "CURVE_ED25519", pathFormat: "PATH_FORMAT_BIP32", path, addressFormat: "ADDRESS_FORMAT_SOLANA" }],
+    });
+    const address = r.addresses[0];
+    if (!address) throw new Error("Turnkey didn't return the agent account");
+    (w.agentAccounts ??= []).push({ agentId, address, path, createdAt: new Date().toISOString() });
+    return address;
+  }
+
+  /** Sign a serialized Solana transaction (base64 in, base64 out), with the main account or one of its agent accounts. */
+  async signSolana(userId: string, base64Tx: string, signWith?: string): Promise<string> {
     const w = this.wallets.get(userId);
     if (!w) throw new Error("No real wallet for this account");
+    if (signWith && signWith !== w.address && !w.agentAccounts?.some((x) => x.address === signWith)) throw new Error("Not an account of this wallet");
     const r = await this.api.signTransaction({
       organizationId: w.subOrgId,
-      signWith: w.address,
+      signWith: signWith ?? w.address,
       unsignedTransaction: Buffer.from(base64Tx, "base64").toString("hex"),
       type: "TRANSACTION_TYPE_SOLANA",
     });

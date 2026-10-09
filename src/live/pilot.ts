@@ -42,6 +42,8 @@ export interface PilotConfig {
   maxDailyUsd: number;
   /** SOL kept back for fees and rent. */
   reserveSol: number;
+  /** Max budget for one real-money agent. */
+  maxAgentUsd?: number;
 }
 
 export interface TokenInfo {
@@ -157,7 +159,7 @@ export class LivePilot {
       eligible: !reason,
       reason: reason ?? null,
       wallet: w ? { address: w.address, createdAt: w.createdAt } : null,
-      limits: { maxOrderUsd: this.cfg.maxOrderUsd, maxDailyUsd: this.cfg.maxDailyUsd, spentTodayUsd: this.spentToday(userId), reserveSol: this.cfg.reserveSol },
+      limits: { maxOrderUsd: this.cfg.maxOrderUsd, maxDailyUsd: this.cfg.maxDailyUsd, spentTodayUsd: this.spentToday(userId), reserveSol: this.cfg.reserveSol, maxAgentUsd: this.cfg.maxAgentUsd ?? 50 },
       custody: w?.custody ?? (w ? "server" : null),
       // An enrolment that wasn't confirmed yet can be finished with the same passkey.
       custodyResume: w?.custody === "enrolled" ? { whoamiBody: JSON.stringify({ organizationId: w.subOrgId }), credentialId: w.credentialId } : null,
@@ -567,6 +569,64 @@ export class LivePilot {
 
   private symbolCache = new Map<string, string>();
 
+  // --- real-money agents --------------------------------------------------------------
+  async agentAddress(userId: string, hasPasskey: boolean, agentId: string) {
+    this.must(userId, hasPasskey);
+    if (!this.d.wallets.get(userId)) throw new Error("Create your real wallet first");
+    return this.d.wallets.agentAccount(userId, agentId);
+  }
+
+  agentSolBalance(address: string) {
+    return this.d.rpc.solBalance(address);
+  }
+
+  /** One real swap for an agent, from its own account, signed by the server within the agent's limits. */
+  async agentSwap(userId: string, address: string, side: "buy" | "sell", mint: string, size: { usd?: number; pct?: number }) {
+    const solUsd = this.d.solUsd();
+    if (!(solUsd > 0)) return { ok: false, error: "no SOL price" };
+    try {
+      let amount: bigint;
+      if (side === "buy") {
+        const sol = (size.usd ?? 0) / solUsd;
+        amount = BigInt(Math.floor(sol * 1e9));
+      } else {
+        const held = (await this.d.rpc.tokens(address)).find((t) => t.mint === mint);
+        if (!held) return { ok: false, error: "nothing to sell" };
+        const pct = Math.min(100, Math.max(1, size.pct ?? 100));
+        amount = pct >= 100 ? BigInt(held.raw) : (BigInt(held.raw) * BigInt(Math.round(pct * 100))) / 10_000n;
+      }
+      const order = await this.d.jupiter.order({ inputMint: side === "buy" ? SOL_MINT : mint, outputMint: side === "buy" ? mint : SOL_MINT, amount, taker: address });
+      const signed = await this.d.wallets.signSolana(userId, order.transaction!, address);
+      const r = await this.d.jupiter.execute(signed, order.requestId);
+      if (r.status !== "Success") return { ok: false, error: r.error ?? `Jupiter code ${r.code}`, signature: r.signature };
+      const out = Number(r.totalOutputAmount ?? order.outAmount);
+      if (side === "buy") {
+        const decimals = (await this.d.tokenInfo([mint]).catch(() => ({} as Record<string, TokenInfo>)))[mint]?.decimals ?? 6;
+        return { ok: true, signature: r.signature, tokenAmount: out / 10 ** decimals, solAmount: Number(amount) / 1e9 };
+      }
+      return { ok: true, signature: r.signature, solAmount: out / 1e9 };
+    } catch (e) {
+      return { ok: false, error: (e as Error).message.slice(0, 200) };
+    }
+  }
+
+  /** Send an agent's SOL back to the main wallet (after its positions are sold). */
+  async sweepAgent(userId: string, address: string) {
+    const w = this.d.wallets.get(userId);
+    if (!w) throw new Error("No real wallet");
+    const sol = await this.d.rpc.solBalance(address);
+    const amount = sol - WITHDRAW_FEE_SOL - 0.000001;
+    if (amount <= 0) return { sent: 0 };
+    const { blockhash } = await this.d.rpc.latestBlockhash();
+    const tx = buildSolTransfer({ from: address, to: w.address, lamports: BigInt(Math.floor(amount * 1e9)), blockhash });
+    const signed = await this.d.wallets.signSolana(userId, tx, address);
+    const signature = await this.d.rpc.send(signed);
+    const err = await this.d.rpc.confirm(signature);
+    this.d.audit.append(`user:${userId}`, "live.agent_swept", { from: address, amount, signature, error: err });
+    if (err) throw new Error(err);
+    return { sent: amount, signature, explorer: `https://solscan.io/tx/${signature}` };
+  }
+
   history(userId: string) {
     return [...(this.trades.get(userId) ?? [])].reverse().map((t) => ({ ...t, explorer: t.signature ? `https://solscan.io/tx/${t.signature}` : null }));
   }
@@ -579,5 +639,6 @@ export function pilotConfigFromEnv(env: Record<string, string | undefined>): Pil
     maxOrderUsd: Number(env.OUTCRY_LIVE_MAX_ORDER_USD ?? 25),
     maxDailyUsd: Number(env.OUTCRY_LIVE_MAX_DAILY_USD ?? 100),
     reserveSol: Number(env.OUTCRY_LIVE_RESERVE_SOL ?? 0.01),
+    maxAgentUsd: Number(env.OUTCRY_LIVE_AGENT_MAX_USD ?? 50),
   };
 }

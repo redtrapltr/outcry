@@ -300,6 +300,8 @@ export interface Agent {
     equityUsd: number;
   };
   lastBacktest?: { at: string; summary: string; passed: boolean };
+  /** Real money: the agent trades its own on-chain account (Turnkey), funded by the user. */
+  real?: { address: string; startedAt: string; fundedUsd: number };
 }
 
 // ---------------------------------------------------------------------------

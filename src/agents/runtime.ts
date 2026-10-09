@@ -427,6 +427,7 @@ export class AgentRuntime {
         if (w?.policy && w.policy.maxPerDayUsd < a.spec.limits.maxPerDayUsd * 50) this.d.signer.updatePolicy(a.subWalletId, { maxPerDayUsd: a.spec.limits.maxPerDayUsd * 50 });
       }
       try {
+        await this.refreshReal(a);
         this.reconcile(a);
         if (a.stats.dayKey !== dayKey(new Date(now))) {
           a.stats.dayKey = dayKey(new Date(now));
@@ -456,6 +457,107 @@ export class AgentRuntime {
       this.decision(a, "entry", { asset: p.asset, close: closed[i]!.close });
       await this.buy(a, p.asset, "USDC");
     }
+  }
+
+  /**
+   * Real-money execution (set by the server when live trading is configured).
+   * Real agents swap on-chain from their own account instead of going through the paper desk.
+   */
+  realExec?: {
+    swap(a: Agent, side: "buy" | "sell", mint: string, size: { usd?: number; pct?: number }): Promise<{ ok: boolean; error?: string; signature?: string; tokenAmount?: number; solAmount?: number }>;
+    solBalance(a: Agent): Promise<number>;
+  };
+  private realRefreshed = new Map<string, number>();
+
+  /** Switch an agent to real money once its account is funded (called by the server). */
+  goReal(userId: string, agentId: string, address: string, fundedSol: number) {
+    const a = this.mustOwn(userId, agentId);
+    if (a.state === "killed") throw new Error(`${a.spec.name} was killed`);
+    if (this.positionsOf(a.id).length) throw new Error(`Close ${a.spec.name}'s paper positions first (pause it and wait, or kill and rebuild)`);
+    const solPx = this.d.market.priceUsd("SOL");
+    a.real = { address, startedAt: new Date().toISOString(), fundedUsd: fundedSol * solPx };
+    a.balances = { SOL: fundedSol };
+    a.spec.mode = "auto";
+    a.state = "live";
+    a.stats = { ...a.stats, spentTodayUsd: 0, openPositions: 0, realizedPnlUsd: 0, equityUsd: fundedSol * solPx, peakEquityUsd: fundedSol * solPx };
+    this.startUsd.set(a.id, fundedSol * solPx);
+    this.history.set(a.id, []);
+    this.trades.set(a.id, []);
+    this.sample(a);
+    this.d.audit.append(`user:${userId}`, "agent.real_started", { agentId, address, fundedSol });
+    this.activity(a, `${a.spec.name} now trades REAL money from its own wallet (${fmtUsd(fundedSol * solPx)})`);
+    this.publishState(a);
+    return a;
+  }
+
+  private async refreshReal(a: Agent) {
+    if (!a.real || !this.realExec) return;
+    const last = this.realRefreshed.get(a.id) ?? 0;
+    if (Date.now() - last < 20_000) return;
+    this.realRefreshed.set(a.id, Date.now());
+    const sol = await this.realExec.solBalance(a).catch(() => undefined);
+    if (sol !== undefined) a.balances.SOL = sol;
+  }
+
+  private mintOf(symbol: string) {
+    const m = this.d.market.tokenRisk(symbol)?.mint ?? this.d.market.asset(symbol)?.address;
+    return m && !m.startsWith("sim") ? m : undefined;
+  }
+
+  private async realBuy(a: Agent, symbol: string, usd: number) {
+    const mint = this.mintOf(symbol);
+    if (!mint) {
+      this.decision(a, "skip", { symbol, reason: "not a real on-chain token" });
+      return;
+    }
+    const r = await this.realExec!.swap(a, "buy", mint, { usd });
+    if (!r.ok || !r.tokenAmount) {
+      this.activity(a, `REAL · BUY ${symbol} failed: ${r.error ?? "no fill"}`);
+      return;
+    }
+    const spentSol = r.solAmount ?? usd / this.d.market.priceUsd("SOL");
+    a.balances.SOL = Math.max(0, (a.balances.SOL ?? 0) - spentSol);
+    a.balances[symbol] = (a.balances[symbol] ?? 0) + r.tokenAmount;
+    const price = usd / r.tokenAmount;
+    const list = this.positions.get(a.id) ?? [];
+    list.push({ symbol, qty: r.tokenAmount, entryPrice: price, peakPrice: price, openedAt: new Date().toISOString(), ticketId: r.signature ?? "real" });
+    this.positions.set(a.id, list);
+    a.stats.spentTodayUsd += usd;
+    a.stats.openPositions = list.length;
+    this.pushTrade(a.id, { t: Date.now(), side: "buy", symbol, usd });
+    this.d.audit.append(`agent:${a.id}`, "agent.fill", { real: true, side: "buy", symbol, usd, signature: r.signature });
+    this.activity(a, `REAL · BUY ${symbol} ${fmtUsd(usd)} confirmed`);
+    this.realRefreshed.delete(a.id);
+  }
+
+  private async realSell(a: Agent, p: AgentPosition, reason: string) {
+    const mint = this.mintOf(p.symbol);
+    if (!mint) return;
+    const r = await this.realExec!.swap(a, "sell", mint, { pct: 100 });
+    if (!r.ok) {
+      this.activity(a, `REAL · SELL ${p.symbol} failed (${reason}): ${r.error ?? "no fill"}`);
+      return;
+    }
+    const proceedsUsd = (r.solAmount ?? 0) * this.d.market.priceUsd("SOL");
+    const pnl = proceedsUsd - p.qty * p.entryPrice;
+    a.balances.SOL = (a.balances.SOL ?? 0) + (r.solAmount ?? 0);
+    delete a.balances[p.symbol];
+    a.stats.realizedPnlUsd += pnl;
+    a.stats.spentTodayUsd = Math.max(0, a.stats.spentTodayUsd - proceedsUsd);
+    const list = (this.positions.get(a.id) ?? []).filter((x) => x !== p);
+    this.positions.set(a.id, list);
+    a.stats.openPositions = list.length;
+    this.pushTrade(a.id, { t: Date.now(), side: "sell", symbol: p.symbol, usd: proceedsUsd, pnlUsd: pnl });
+    this.d.audit.append(`agent:${a.id}`, "agent.fill", { real: true, side: "sell", symbol: p.symbol, usd: proceedsUsd, pnl, reason, signature: r.signature });
+    this.activity(a, `REAL · SELL ${p.symbol} confirmed (${reason}), P&L ${pnl >= 0 ? "+" : ""}${fmtUsd(pnl)}`);
+    this.realRefreshed.delete(a.id);
+  }
+
+  /** Sell every real position (used when stopping a real agent). */
+  async closeAllReal(userId: string, agentId: string) {
+    const a = this.mustOwn(userId, agentId);
+    for (const p of [...this.positionsOf(a.id)]) await this.realSell(a, p, "agent stopped");
+    return this.positionsOf(a.id).length;
   }
 
   /** Marketplace hooks (set by the app). */
@@ -690,7 +792,9 @@ export class AgentRuntime {
     // Proposals still waiting for the user's tap count against the cap too.
     const pendingUsd = [...this.pendingTickets].filter(([id, p]) => p.agentId === a.id && p.side === "buy" && ["needs_confirmation", "needs_second_confirmation", "approved", "submitted"].includes(this.d.desk.get(id).status)).reduce((s, [id]) => s + (this.d.desk.get(id) as OrderTicket).totalUsd, 0);
     // The agent trades its own wallet: it can buy while it has cash (sale proceeds included).
-    const cashUsd = (a.balances[quote] ?? 0) * this.d.market.priceUsd(quote) - pendingUsd;
+    // Real agents always hold their cash in SOL (their own on-chain account).
+    const cashAsset = a.real ? "SOL" : quote;
+    const cashUsd = (a.balances[cashAsset] ?? 0) * this.d.market.priceUsd(cashAsset) - pendingUsd;
     if (cashUsd < a.spec.sizeUsd * 0.9) {
       this.decision(a, "skip", { symbol, reason: "no free cash (all funds in open positions)" });
       if (this.limitNotified.get(a.id) !== `cash:${this.positionsOf(a.id).length}`) {
@@ -712,6 +816,14 @@ export class AgentRuntime {
     }
     // Spend the trade size, or what's left of the wallet after fees if that's a bit less.
     const spendUsd = Math.min(a.spec.sizeUsd, cashUsd / 1.03);
+    if (a.real && !this.realExec) return this.decision(a, "skip", { symbol, reason: "real trading is unavailable on this server right now" });
+    if (a.real && this.realExec) {
+      // Keep ~0.01 SOL in the agent's account for network fees and token-account deposits.
+      const reserveUsd = 0.01 * this.d.market.priceUsd("SOL");
+      const usd = Math.min(spendUsd, cashUsd - reserveUsd);
+      if (usd < 1) return this.decision(a, "skip", { symbol, reason: "not enough SOL left after the fee reserve" });
+      return this.realBuy(a, symbol, usd);
+    }
     const amount = spendUsd / this.d.market.priceUsd(quote);
     const t = await this.d.desk.proposeOrder({
       userId: a.userId,
@@ -723,6 +835,10 @@ export class AgentRuntime {
   }
 
   private async sell(a: Agent, p: AgentPosition, reason: string) {
+    if (a.real) {
+      if (!this.realExec) return this.activity(a, `REAL · SELL ${p.symbol} waiting: real trading unavailable right now`);
+      return this.realSell(a, p, reason);
+    }
     const t = await this.d.desk.proposeOrder({
       userId: a.userId,
       source: { type: "agent", agentId: a.id },

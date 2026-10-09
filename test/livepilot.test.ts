@@ -19,6 +19,7 @@ function setup(over: Partial<{ allow: string[]; sol: number; tokenRaw: string; e
     createUsers: async (i) => (calls.users.push(i), { userIds: ["owner_user"] }),
     createPolicy: async (i) => (calls.policies.push(i), { policyId: `pol_${calls.policies.length}` }),
     updateRootQuorum: async (i) => (calls.quorum.push(i), {}),
+    createWalletAccounts: async () => ({ addresses: ["AgentAcct1111111111111111111111111111111111"] }),
   };
   const stampedPost = async (path: string, body: string, stamp: string) => {
     calls.stamped.push({ path, body, stamp });
@@ -312,5 +313,42 @@ describe("self-custody (passkey owns the wallet)", () => {
     expect(r.status).toBe("confirmed");
     expect(s.calls.sign.length).toBe(signsBefore);
     expect(s.calls.stamped.at(-1)).toMatchObject({ path: "/public/v1/submit/sign_transaction", stamp: "stamp-xyz" });
+  });
+});
+
+describe("real-money agents", () => {
+  it("trades its own account through realExec, then closes positions", async () => {
+    const app = createOutcry({ mode: "paper" } as never);
+    const u = app.users.create({ badge: "THI", jacket: "memes", residence: "CH" });
+    const spec = {
+      name: "REALBOT", goal: "test", markets: ["memes"], kind: "sniper",
+      universe: { venue: "pumpfun", minHolders: 7, maxTopWalletPct: 33, maxAgeSeconds: 600 },
+      sizeUsd: 10, exit: { stopLossPct: 20, takeProfitPct: 50 },
+      limits: { maxPerTradeUsd: 10, maxPerDayUsd: 50, maxOpenPositions: 3, maxDrawdownPct: 90 }, mode: "paper",
+    };
+    const a = app.agents.propose(u.id, spec).agent;
+    app.agents.deploy(u.id, a.id, { mode: "paper" });
+    const swaps: { side: string; mint: string; size: unknown }[] = [];
+    app.agents.realExec = {
+      swap: async (_a, side, mint, size) => (swaps.push({ side, mint, size }), side === "buy" ? { ok: true, signature: "s1", tokenAmount: (size.usd ?? 0) / app.market.priceUsd("REALM"), solAmount: (size.usd ?? 0) / app.market.priceUsd("SOL") } : { ok: true, signature: "s2", solAmount: 0.2 }),
+      solBalance: async () => 0.5,
+    };
+    app.agents.goReal(u.id, a.id, "AgentAddr1111111111111111111111111111111111", 0.5);
+    expect(app.agents.get(a.id)!.real?.address).toBe("AgentAddr1111111111111111111111111111111111");
+    const mint = "RealMemeMint11111111111111111111111111pump";
+    app.market.spawnMeme("REALM", { mint, holders: 50, holdersCollapsed: 50 });
+    await app.agents.tick();
+    await app.agents.tick();
+    expect(swaps[0]).toMatchObject({ side: "buy", mint });
+    expect(app.agents.positionsOf(a.id)).toHaveLength(1);
+    expect(app.desk.listForUser(u.id).some((t) => t.kind === "order")).toBe(false); // no paper tickets
+    // Simulated memes (sim... mints) are never bought with real money.
+    app.market.spawnMeme("SIMM", { holders: 50, holdersCollapsed: 50 });
+    await app.agents.tick();
+    expect(swaps.filter((x) => x.side === "buy")).toHaveLength(1);
+    const left = await app.agents.closeAllReal(u.id, a.id);
+    expect(left).toBe(0);
+    expect(swaps.at(-1)).toMatchObject({ side: "sell", mint, size: { pct: 100 } });
+    expect(app.agents.perf(a.id)!.trades.map((t) => t.side)).toEqual(["buy", "sell"]);
   });
 });

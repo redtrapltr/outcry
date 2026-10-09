@@ -156,6 +156,11 @@ export async function buildServer(opts: ServerOptions = {}) {
   const auth = new AuthService();
   if (livePilot) {
     orch.tools.live = { pilot: livePilot, secured: (uid) => auth.hasPasskey(uid) };
+    // Real-money agents trade from their own on-chain account through the same Jupiter path.
+    app.agents.realExec = {
+      swap: (a, side, mint, size) => livePilot.agentSwap(a.userId, a.real!.address, side, mint, size),
+      solBalance: (a) => livePilot.agentSolBalance(a.real!.address),
+    };
     // Same stock, two tokens (xStocks / Ondo): pair them up for the spread scanner.
     orch.tools.spreads = new SpreadScanner(
       livePilot.jupiter,

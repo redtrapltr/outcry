@@ -505,9 +505,11 @@ async function refresh() {
         `<button type="button" data-act="rename" data-id="${a.id}" data-name="${esc(a.spec.name)}">Rename</button>`,
         x.update?.available ? `<button type="button" data-act="update" data-id="${a.id}" data-name="${esc(a.spec.name)}" style="color:var(--up)">Update to v${x.update.version}</button>` : '',
         !a.hiddenStrategy && (running || a.state === 'paused') ? `<button type="button" data-act="publish" data-id="${a.id}" data-name="${esc(a.spec.name)}">${x.listing ? 'Listed ✓' : 'Publish'}</button>` : '',
+        !a.hiddenStrategy && !a.real && (running || a.state === 'paused') ? `<button type="button" data-act="goreal" data-id="${a.id}" data-name="${esc(a.spec.name)}" style="color:#ffb3b3">Go real $</button>` : '',
+        a.real ? `<button type="button" data-act="stopreal" data-id="${a.id}" data-name="${esc(a.spec.name)}" style="color:#ffb3b3">Stop & withdraw</button>` : '',
         `<button type="button" class="del" data-act="delete" data-id="${a.id}" data-name="${esc(a.spec.name)}">Delete</button>`,
       ].join('');
-      return `<div class="agent-row"><div class="item"><span style="display:flex;gap:8px;align-items:center;min-width:0"><span class="sq" style="background:${(J[a.spec.markets[0]] || J.strategies)[1]}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.spec.name)}</span></span><span class="status st-${a.state}">${a.state.toUpperCase()}${a.state === 'live' ? ' · ' + a.spec.mode.toUpperCase() : ''}</span></div><div class="a-ctl">${btns}</div></div>`;
+      return `<div class="agent-row"><div class="item"><span style="display:flex;gap:8px;align-items:center;min-width:0"><span class="sq" style="background:${(J[a.spec.markets[0]] || J.strategies)[1]}"></span><span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(a.spec.name)}</span></span><span class="status st-${a.state}">${a.real ? '<b style="color:#ff6b6b">REAL</b> · ' : ''}${a.state.toUpperCase()}${a.state === 'live' && !a.real ? ' · ' + a.spec.mode.toUpperCase() : ''}</span></div><div class="a-ctl">${btns}</div></div>`;
     }).join('') || '<div class="empty">No agents yet.</div>';
   } catch (e) { /* ignore */ }
 }
@@ -904,6 +906,14 @@ $('chats').addEventListener('dblclick', async e => {
 });
 async function agentAction(id, act, name) {
   if (act === 'publish') return openPublish(id, name);
+  if (act === 'goreal') return openGoReal(id, name);
+  if (act === 'stopreal') {
+    if (!confirm(`Stop ${name}? It sells its open positions, then sends all its SOL back to your real wallet.`)) return;
+    toast(`Stopping ${name}: selling positions…`);
+    try { const r = await api(`/api/agents/${id}/real/stop`, { method: 'POST' }); feed(`${name} stopped; ${fmt(r.sent || 0, 4)} SOL back in your real wallet`); toast(`${name} stopped, funds returned`); }
+    catch (err) { toast(err.message); }
+    refresh(); return;
+  }
   if (act === 'update') {
     if (!confirm(`Switch ${name} to the creator's latest strategy? Your budget, trade size and risk settings stay the same.`)) return;
     await api(`/api/agents/${id}/update-strategy`, { method: 'POST' });
@@ -1165,6 +1175,38 @@ async function openCreator(handle) {
     }
   });
   wireListings(body, () => p.agents, close);
+}
+/** Move an agent to real money: its own on-chain account, funded from the real wallet with a passkey-signed transfer. */
+async function openGoReal(agentId, name) {
+  const { body, close } = sheet('Go real · ' + name);
+  let st;
+  try { st = await api('/api/live'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
+  if (!st.eligible || !st.wallet) { body.innerHTML = `<div class="lw"><div class="lw-card"><b>Real money isn't available yet</b><span class="meta">${esc(st.reason || 'Create your real wallet first (Real wallet in the sidebar).')}</span></div></div>`; return; }
+  const max = st.limits?.maxAgentUsd ?? 50;
+  body.innerHTML = `<div class="lw">
+    <div class="lw-pills"><span class="lw-pill red">REAL MONEY</span><span class="lw-pill">own wallet per agent</span><span class="lw-pill">max $${max} budget</span></div>
+    <div class="lw-card">
+      <p style="margin:0">${esc(name)} gets <b>its own Solana account</b> inside your Turnkey wallet. You fund it from your real wallet; it trades only that money, with its own limits (trade size, open positions, drawdown pause). Outcry's 0.5% fee applies to each trade.</p>
+      <p class="meta" style="margin:0">Losses are real and can be total. Start small. You can stop it any time: it sells its positions and sends the SOL back to your real wallet.</p>
+      <form class="lw-form lw-greal"><div><span class="lw-lbl">Budget</span><div class="lw-chips">${[10, 20, 50].filter(v => v <= max).map(v => `<button type="button" class="chip${v === 10 ? ' on' : ''}" data-b="${v}">$${v}</button>`).join('')}<input name="budget" type="number" min="5" max="${max}" step="1" value="10" aria-label="Budget in USD"></div></div>
+      <button class="btn btn-primary lw-go" type="submit">Create agent wallet & fund it</button></form>
+      <div class="gr-host"></div>
+    </div></div>`;
+  const f = body.querySelector('.lw-greal'), host = body.querySelector('.gr-host');
+  f.addEventListener('click', e => { const c = e.target.closest('[data-b]'); if (c) { f.budget.value = c.dataset.b; f.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c)); } });
+  f.onsubmit = async ev => {
+    ev.preventDefault();
+    host.innerHTML = '<p class="meta">Creating the agent wallet…</p>';
+    try {
+      const r = await api(`/api/agents/${agentId}/real/prepare`, { method: 'POST', body: { budgetUsd: +f.budget.value } });
+      host.innerHTML = `<p class="meta">Agent wallet: <code>${esc(r.address)}</code>. Sign the funding transfer:</p>`;
+      host.appendChild(withdrawTicket(r.withdrawal, { onDone: async (x) => {
+        if (x.status !== 'confirmed') return;
+        try { await api(`/api/agents/${agentId}/real/start`, { method: 'POST' }); toast(`${name} is trading real money`); feed(`${name} went REAL`); close(); refresh(); pollAgents(); }
+        catch (e) { host.insertAdjacentHTML('beforeend', `<p class="meta down">${esc(e.message)} (funding arrived; press Start again in a few seconds)</p><button class="btn" type="button" data-restart>Start</button>`); host.querySelector('[data-restart]').onclick = async () => { try { await api(`/api/agents/${agentId}/real/start`, { method: 'POST' }); close(); refresh(); } catch (er) { toast(er.message); } }; }
+      } }));
+    } catch (e) { host.innerHTML = `<p class="meta down">${esc(e.message)}</p>`; }
+  };
 }
 async function openPublish(agentId, name) {
   if (!myHandle) { toast('First, choose the @handle shown on your listings'); if (!(await chooseHandle())) return; }
