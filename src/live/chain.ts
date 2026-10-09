@@ -7,7 +7,7 @@ type FetchLike = (url: string, init?: { method?: string; headers?: Record<string
 const defaultFetch: FetchLike = (u, i) => fetch(u, { ...i, signal: i?.signal ?? AbortSignal.timeout(15_000) }) as never;
 
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
-export const USDC_MINT = "EPjFWJd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
+export const USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
 const TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
 
 export interface JupOrder {
@@ -49,8 +49,11 @@ export class JupiterSwap {
     }
     const r = await this.f(`${this.base}/order?${q}`, { headers: { "x-api-key": this.cfg.apiKey } });
     const j = (await r.json().catch(() => ({}))) as JupOrder & { error?: string };
-    if (!r.ok) throw new Error(`Jupiter order failed (${r.status}): ${j.error ?? j.errorMessage ?? "no details"}`);
-    if (!j.transaction) throw new Error(j.errorMessage ? `Jupiter: ${j.errorMessage}` : "Jupiter returned no transaction for this swap");
+    if (!r.ok) throw new Error(r.status >= 500 ? `Jupiter couldn't price this swap right now (${r.status}). Check the token address, or try again in a moment.` : `Jupiter rejected the order (${r.status}): ${j.error ?? j.errorMessage ?? "no details"}`);
+    if (!j.transaction) {
+      const why: Record<string, string> = { "1": "not enough balance of the token you're paying with", "2": "not enough SOL left for the network fee", "3": "the swap is below Jupiter's minimum size" };
+      throw new Error(`Jupiter can't build this swap: ${why[String(j.errorCode)] ?? j.errorMessage ?? "no route found"}`);
+    }
     return j;
   }
 
