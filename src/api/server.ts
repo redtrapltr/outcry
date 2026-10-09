@@ -15,6 +15,7 @@ import { TokenLookup } from "../data/lookup.js";
 import { turnkeyFromEnv } from "../wallet/turnkey.js";
 import { LivePilot, pilotConfigFromEnv, type TokenInfo } from "../live/pilot.js";
 import { JupiterSwap, SolanaRpc } from "../live/chain.js";
+import { SpreadScanner, type StockPair } from "../live/spreads.js";
 
 /** Symbol, decimals and USD price for mints, from Jupiter's free token search. */
 async function jupiterTokenInfo(mints: string[]): Promise<Record<string, TokenInfo>> {
@@ -153,7 +154,25 @@ export async function buildServer(opts: ServerOptions = {}) {
     setInterval(() => void refresh(), 60_000).unref();
   }
   const auth = new AuthService();
-  if (livePilot) orch.tools.live = { pilot: livePilot, secured: (uid) => auth.hasPasskey(uid) };
+  if (livePilot) {
+    orch.tools.live = { pilot: livePilot, secured: (uid) => auth.hasPasskey(uid) };
+    // Same stock, two tokens (xStocks / Ondo): pair them up for the spread scanner.
+    orch.tools.spreads = new SpreadScanner(
+      livePilot.jupiter,
+      () => {
+        const byTicker = new Map<string, StockPair["a"][]>();
+        for (const s of app.market.listStocks()) {
+          const a = app.market.asset(s.symbol);
+          if (!a?.address || a.chain !== "solana") continue;
+          const list = byTicker.get(s.ticker) ?? [];
+          list.push({ symbol: s.symbol, mint: a.address, decimals: a.decimals, priceUsd: s.priceUsd });
+          byTicker.set(s.ticker, list);
+        }
+        return [...byTicker].filter(([, l]) => l.length >= 2).map(([ticker, l]) => ({ ticker, a: l[0]!, b: l[1]! }));
+      },
+      () => (process.env.JUPITER_REFERRAL_ACCOUNT ? Math.min(255, Math.max(50, Number(process.env.JUPITER_REFERRAL_FEE_BPS ?? 50))) : 0),
+    );
+  }
   let persistence: Persistence | undefined;
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
     auth,

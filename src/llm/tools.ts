@@ -117,6 +117,12 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "scan_stock_spreads",
+    kind: "read",
+    description: "Compare the two Solana versions of the same US stock (xStocks ...x vs Ondo ...on) with real, executable Jupiter quotes in USDC, both ways, after Outcry's fee. Use for arbitrage / spread / 'which is cheaper' questions about tokenized stocks.",
+    input_schema: { type: "object", properties: { size_usd: { type: "number", default: 100 } } },
+  },
+  {
     name: "propose_real_order",
     kind: "write",
     description:
@@ -128,6 +134,7 @@ export const TOOLS: ToolDef[] = [
         token: { type: "string", description: "Solana mint address, USDC, or a tokenized stock symbol (MSFTx / MSFTon, or the plain ticker)" },
         usd: { type: "number", description: "Buy: dollars of SOL to spend" },
         pct: { type: "number", description: "Sell: percent of the holding to sell (1-100)", default: 100 },
+        pay_with: { type: "string", enum: ["SOL", "USDC"], description: "What to pay with (buys) or receive (sells). Default: SOL, falling back to USDC when the token only routes against USDC (e.g. Ondo stocks)." },
       },
       required: ["side", "token"],
     },
@@ -258,4 +265,5 @@ How you work:
 - Map every rule the user states to its own field; never fold one rule into a different setting (e.g. "top 10 wallets under 20%" is maxTop10Pct, not maxTopWalletPct; "pause at -50% drawdown" is limits.maxDrawdownPct, not the stop loss).
 - To change an agent the user already has, call update_agent; do not build a duplicate with propose_agent.
 - Paper vs real money: every order is paper money unless the user explicitly says real money, live, or "for real". Then use propose_real_order (real Solana wallet, trades against SOL, buys in dollars). Never switch a paper request to real money on your own. If real trading isn't available for the user, say why (the tool result explains).
+- Stock spreads: scan_stock_spreads returns executable quotes. A positive swap edge is only capturable by someone who already holds the expensive version (sell it, buy the cheap one: same exposure, plus the edge). For a buyer it's simply a discount. If the edge is negative after fees, say there is no opportunity right now. Never promise profit.
 - Not investment advice: when users ask what to buy, give balanced information and let them decide.`;

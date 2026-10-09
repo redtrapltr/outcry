@@ -62,6 +62,8 @@ export interface LiveQuote {
   feeBps?: number;
   /** Outcry's fee on this swap (Jupiter referral), 0 when not collected. */
   outcryFeeBps: number;
+  /** What the trade settles against. */
+  base: "SOL" | "USDC";
   router?: string;
   requestId: string;
   transaction: string;
@@ -104,6 +106,10 @@ export class LivePilot {
   private busy = new Set<string>();
 
   constructor(private cfg: PilotConfig, private d: PilotDeps) {}
+
+  get jupiter() {
+    return this.d.jupiter;
+  }
 
   /** The Turnkey wallet store (persisted alongside the trades). */
   get wallets() {
@@ -173,7 +179,7 @@ export class LivePilot {
    * Price a real swap. Buy: spend `usd` worth of SOL on `token`. Sell: sell
    * `pct` percent of the token back to SOL.
    */
-  async quote(userId: string, hasPasskey: boolean, req: { side: "buy" | "sell"; token: string; usd?: number; pct?: number }): Promise<Omit<LiveQuote, "transaction" | "requestId" | "userId">> {
+  async quote(userId: string, hasPasskey: boolean, req: { side: "buy" | "sell"; token: string; usd?: number; pct?: number; payWith?: "SOL" | "USDC" }): Promise<Omit<LiveQuote, "transaction" | "requestId" | "userId">> {
     this.must(userId, hasPasskey);
     const w = this.d.wallets.get(userId);
     if (!w) throw new Error("Create your real wallet first");
@@ -190,31 +196,23 @@ export class LivePilot {
     const info = (await this.d.tokenInfo([mint]).catch(() => ({} as Record<string, TokenInfo>)))[mint];
     const symbol = info?.symbol ?? short(mint);
 
-    let order, usd: number, inputMint: string, outputMint: string, payAmount: number, payAsset: string;
-    if (req.side === "buy") {
-      usd = Number(req.usd);
-      if (!(usd > 0)) throw new Error("How many dollars of SOL should go into this buy?");
-      if (usd > this.cfg.maxOrderUsd + 1e-9) throw new Error(`Pilot limit: $${this.cfg.maxOrderUsd} per buy`);
-      const spent = this.spentToday(userId);
-      if (spent + usd > this.cfg.maxDailyUsd + 1e-9) throw new Error(`Pilot limit: $${this.cfg.maxDailyUsd} of buys per day ($${spent.toFixed(2)} used)`);
-      const sol = usd / solUsd;
-      const have = await this.d.rpc.solBalance(w.address);
-      if (have - sol < this.cfg.reserveSol) throw new Error(`Not enough SOL: you have ${have.toFixed(4)} SOL and ${this.cfg.reserveSol} SOL stays back for fees. Deposit SOL to ${w.address}`);
-      inputMint = SOL_MINT; outputMint = mint; payAmount = sol; payAsset = "SOL";
-      order = await this.d.jupiter.order({ inputMint, outputMint, amount: BigInt(Math.floor(sol * 1e9)), taker: w.address });
-    } else {
-      const pct = Math.min(100, Math.max(1, Number(req.pct ?? 100)));
-      const held = (await this.d.rpc.tokens(w.address)).find((t) => t.mint === mint);
-      if (!held) throw new Error(`You don't hold ${symbol}`);
-      const amount = pct >= 100 ? BigInt(held.raw) : (BigInt(held.raw) * BigInt(Math.round(pct * 100))) / 10_000n;
-      if (amount <= 0n) throw new Error("Nothing to sell");
-      const sol = await this.d.rpc.solBalance(w.address);
-      if (sol < 0.001) throw new Error(`You need a little SOL for the network fee (have ${sol.toFixed(4)})`);
-      inputMint = mint; outputMint = SOL_MINT; payAmount = Number(amount) / 10 ** held.decimals; payAsset = symbol;
-      order = await this.d.jupiter.order({ inputMint, outputMint, amount, taker: w.address });
-      usd = (Number(order.outAmount) / 1e9) * solUsd;
+    // Trades settle against SOL by default. Some tokens (e.g. Ondo stocks) only route against USDC,
+    // so when the SOL route fails we try USDC, or the user can ask to pay with USDC directly.
+    const bases: ("SOL" | "USDC")[] = mint === USDC_MINT ? ["SOL"] : req.payWith === "USDC" ? ["USDC"] : req.payWith === "SOL" ? ["SOL"] : ["SOL", "USDC"];
+    let built: Awaited<ReturnType<LivePilot["buildOrder"]>> | undefined;
+    const errors: string[] = [];
+    for (const base of bases) {
+      try {
+        built = await this.buildOrder(userId, w.address, req, mint, symbol, base, solUsd);
+        break;
+      } catch (e) {
+        errors.push(`${base}: ${(e as Error).message}`);
+      }
     }
-    const receiveDecimals = req.side === "buy" ? (info?.decimals ?? (await this.decimalsOf(mint))) : 9;
+    if (!built) throw new Error(errors.length === 1 ? errors[0]!.replace(/^(SOL|USDC): /, "") : `No route worked. ${errors.join(" | ")}`);
+    const { order, usd, inputMint, outputMint, payAmount, payAsset, base } = built;
+    const baseDecimals = base === "SOL" ? 9 : 6;
+    const receiveDecimals = req.side === "buy" ? (info?.decimals ?? (await this.decimalsOf(mint))) : baseDecimals;
     const q: LiveQuote = {
       id: newId("lq"),
       userId,
@@ -228,7 +226,8 @@ export class LivePilot {
       payAmount,
       payAsset,
       receiveAmount: Number(order.outAmount) / 10 ** receiveDecimals,
-      receiveAsset: req.side === "buy" ? symbol : "SOL",
+      receiveAsset: req.side === "buy" ? symbol : base,
+      base,
       usd,
       feeBps: order.feeBps,
       outcryFeeBps: this.referralBps(order),
@@ -241,6 +240,42 @@ export class LivePilot {
     for (const [k, v] of this.quotes) if (v.expiresAt < Date.now() - 60_000) this.quotes.delete(k);
     const { transaction: _t, requestId: _r, userId: _u, ...pub } = q;
     return pub;
+  }
+
+  /** Build one Jupiter order against a base asset (SOL or USDC), with the pilot's checks. */
+  private async buildOrder(userId: string, address: string, req: { side: "buy" | "sell"; usd?: number; pct?: number }, mint: string, symbol: string, base: "SOL" | "USDC", solUsd: number) {
+    const baseMint = base === "SOL" ? SOL_MINT : USDC_MINT;
+    const sol = await this.d.rpc.solBalance(address);
+    if (req.side === "buy") {
+      const usd = Number(req.usd);
+      if (!(usd > 0)) throw new Error("How many dollars should go into this buy?");
+      if (usd > this.cfg.maxOrderUsd + 1e-9) throw new Error(`Pilot limit: $${this.cfg.maxOrderUsd} per buy`);
+      const spent = this.spentToday(userId);
+      if (spent + usd > this.cfg.maxDailyUsd + 1e-9) throw new Error(`Pilot limit: $${this.cfg.maxDailyUsd} of buys per day ($${spent.toFixed(2)} used)`);
+      let amount: bigint, payAmount: number;
+      if (base === "SOL") {
+        payAmount = usd / solUsd;
+        if (sol - payAmount < this.cfg.reserveSol) throw new Error(`Not enough SOL: you have ${sol.toFixed(4)} SOL and ${this.cfg.reserveSol} SOL stays back for fees. Deposit SOL to ${address}`);
+        amount = BigInt(Math.floor(payAmount * 1e9));
+      } else {
+        const usdc = (await this.d.rpc.tokens(address)).find((t) => t.mint === USDC_MINT)?.amount ?? 0;
+        if (usdc + 1e-9 < usd) throw new Error(`Not enough USDC: you have ${usdc.toFixed(2)}`);
+        if (sol < 0.003) throw new Error(`Keep at least 0.003 SOL for network fees (have ${sol.toFixed(4)})`);
+        payAmount = usd;
+        amount = BigInt(Math.floor(usd * 1e6));
+      }
+      const order = await this.d.jupiter.order({ inputMint: baseMint, outputMint: mint, amount, taker: address });
+      return { order, usd, inputMint: baseMint, outputMint: mint, payAmount, payAsset: base as string, base };
+    }
+    const pct = Math.min(100, Math.max(1, Number(req.pct ?? 100)));
+    const held = (await this.d.rpc.tokens(address)).find((t) => t.mint === mint);
+    if (!held) throw new Error(`You don't hold ${symbol}`);
+    const amount = pct >= 100 ? BigInt(held.raw) : (BigInt(held.raw) * BigInt(Math.round(pct * 100))) / 10_000n;
+    if (amount <= 0n) throw new Error("Nothing to sell");
+    if (sol < 0.001) throw new Error(`You need a little SOL for the network fee (have ${sol.toFixed(4)})`);
+    const order = await this.d.jupiter.order({ inputMint: mint, outputMint: baseMint, amount, taker: address });
+    const usd = base === "SOL" ? (Number(order.outAmount) / 1e9) * solUsd : Number(order.outAmount) / 1e6;
+    return { order, usd, inputMint: mint, outputMint: baseMint, payAmount: Number(amount) / 10 ** held.decimals, payAsset: symbol, base };
   }
 
   /** Last time Jupiter skipped our referral fee (usually: no fee token account for that mint yet). */
@@ -321,15 +356,16 @@ export class LivePilot {
   /** Read the confirmed transaction back and price every part of its cost in USD. */
   private async costsOf(signature: string, userId: string, q: LiveQuote): Promise<LiveTrade["costs"]> {
     const w = this.d.wallets.get(userId)!;
-    const c = await this.d.rpc.txCosts(signature, w.address, q.mint);
+    const c = await this.d.rpc.txCosts(signature, w.address, [q.mint, USDC_MINT]);
     if (!c) return undefined;
     const sol = this.d.solUsd();
-    const tokUsd = (await this.d.tokenInfo([q.mint]).catch(() => ({} as Record<string, TokenInfo>)))[q.mint]?.usdPrice ?? (q.mint === USDC_MINT ? 1 : undefined);
+    const tokUsd = q.mint === USDC_MINT ? 1 : (await this.d.tokenInfo([q.mint]).catch(() => ({} as Record<string, TokenInfo>)))[q.mint]?.usdPrice;
     if (!(sol > 0) || tokUsd === undefined) return undefined;
-    // SOL that went into (buy) or came out of (sell) the swap itself.
-    const swapSol = Math.abs(c.solChange + (q.side === "buy" ? c.feeSol + c.rentSol : c.feeSol + c.rentSol));
-    const paidUsd = q.side === "buy" ? swapSol * sol : Math.abs(c.tokenChange) * tokUsd;
-    const gotUsd = q.side === "buy" ? Math.abs(c.tokenChange) * tokUsd : swapSol * sol;
+    // Value that went into / came out of the swap on the base side.
+    const baseUsd = q.base === "SOL" ? Math.abs(c.solChange + c.feeSol + c.rentSol) * sol : Math.abs(c.tokenChanges[USDC_MINT] ?? 0);
+    const tokenUsd = Math.abs(c.tokenChanges[q.mint] ?? 0) * tokUsd;
+    const paidUsd = q.side === "buy" ? baseUsd : tokenUsd;
+    const gotUsd = q.side === "buy" ? tokenUsd : baseUsd;
     const networkFeeUsd = c.feeSol * sol, rentUsd = c.rentSol * sol;
     // The value gap includes Outcry's fee; report the fee on its own line and the rest as price vs market.
     const outcryFeeUsd = (q.usd * q.outcryFeeBps) / 10_000;

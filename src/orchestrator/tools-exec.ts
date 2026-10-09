@@ -116,6 +116,8 @@ export class ToolExecutor {
   lookup?: { ensureFrom(text: string): Promise<string[]> };
   /** Resolves stock tickers / company names to tradable tokens (server, live data on). */
   stocks?: { ensureFrom(text: string): Promise<string[]> };
+  /** Stock spread scanner (real Jupiter quotes), when live trading is configured. */
+  spreads?: import("../live/spreads.js").SpreadScanner;
   /** Real-money pilot, when configured on the server. */
   live?: { pilot: import("../live/pilot.js").LivePilot; secured: (userId: string) => boolean };
   constructor(private app: Outcry) {}
@@ -224,13 +226,21 @@ export class ToolExecutor {
             card: { type: "order", ticket: t },
           };
         }
+        case "scan_stock_spreads": {
+          if (!this.spreads) return { ok: false, result: { error: "The spread scanner needs live trading (Jupiter key) on this server." } };
+          const size = Math.min(1_000, Math.max(10, Number(i.size_usd ?? 100)));
+          const r = await this.spreads.scan(size);
+          const lines = r.rows.map((x) => `${x.ticker}: ${x.cheap} cheaper by ${x.discountPct.toFixed(2)}% (buy $${x.buyCheapPx.toFixed(2)} vs sell ${x.rich} $${x.sellRichPx.toFixed(2)}); swap edge after Outcry fees ${x.swapEdgePct >= 0 ? "+" : ""}${x.swapEdgePct.toFixed(2)}%`);
+          return { ok: true, result: { summary: `Executable quotes for $${size} at ${r.at} (Outcry fee ${r.outcryFeeBps / 100}% per leg). ${lines.length ? lines.join("; ") : "No pair could be quoted."}${r.errors.length ? ` Not quotable: ${r.errors.join("; ")}` : ""}`, scan: r } };
+        }
         case "propose_real_order": {
           if (!this.live) return { ok: false, result: { error: "Real-money trading isn't set up on this server. I can place it as a paper order instead." } };
           const side = String(i.side) === "sell" ? "sell" : "buy";
           const token = String(i.token ?? "").trim();
           if (!token) return { ok: false, validationError: true, result: { error: "Which token? Give a mint address, USDC, or a stock ticker like MSFT." } };
           try {
-            const q = await this.live.pilot.quote(userId, this.live.secured(userId), { side, token, usd: i.usd !== undefined ? Number(i.usd) : undefined, pct: i.pct !== undefined ? Number(i.pct) : undefined });
+            const payWith = i.pay_with === "USDC" || i.pay_with === "SOL" ? (i.pay_with as "SOL" | "USDC") : undefined;
+            const q = await this.live.pilot.quote(userId, this.live.secured(userId), { side, token, usd: i.usd !== undefined ? Number(i.usd) : undefined, pct: i.pct !== undefined ? Number(i.pct) : undefined, payWith });
             return {
               ok: true,
               result: { summary: `Real order ready: ${side.toUpperCase()} ${q.symbol}, pay ${fmt(q.payAmount)} ${q.payAsset}, receive about ${fmt(q.receiveAmount)} ${q.receiveAsset} (≈$${q.usd.toFixed(2)}). This is real money: sign with your passkey within 40 seconds, or get a new quote.`, quoteId: q.id },

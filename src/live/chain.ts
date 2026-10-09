@@ -60,6 +60,15 @@ export class JupiterSwap {
     return j;
   }
 
+  /** Price only (no wallet, no transaction): used by the spread scanner. */
+  async quoteOnly(p: { inputMint: string; outputMint: string; amount: bigint }): Promise<{ inAmount: string; outAmount: string; router?: string }> {
+    const q = new URLSearchParams({ inputMint: p.inputMint, outputMint: p.outputMint, amount: p.amount.toString() });
+    const r = await this.f(`${this.base}/order?${q}`, { headers: { "x-api-key": this.cfg.apiKey } });
+    const j = (await r.json().catch(() => ({}))) as JupOrder & { error?: string };
+    if (!r.ok || !j.outAmount || j.outAmount === "0") throw new Error(j.errorMessage ?? j.error ?? `no route (${r.status})`);
+    return { inAmount: j.inAmount, outAmount: j.outAmount, router: j.router };
+  }
+
   async execute(signedTransaction: string, requestId: string): Promise<JupExecute> {
     const r = await this.f(`${this.base}/execute`, {
       method: "POST",
@@ -124,7 +133,7 @@ export class SolanaRpc {
    * locked as rent in newly created token accounts, the wallet's SOL change and
    * its change in one token. Retries briefly while the RPC catches up.
    */
-  async txCosts(signature: string, owner: string, mint: string, tries = 4): Promise<TxCosts | undefined> {
+  async txCosts(signature: string, owner: string, mints: string[], tries = 4): Promise<TxCosts | undefined> {
     for (let i = 0; i < tries; i++) {
       const tx = await this.call<RpcTx | null>("getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "confirmed" }]).catch(() => null);
       if (tx?.meta) {
@@ -133,13 +142,13 @@ export class SolanaRpc {
         const pre = tx.meta.preBalances, post = tx.meta.postBalances;
         let rent = 0;
         keys.forEach((_, j) => { if (j !== me && pre[j] === 0 && (post[j] ?? 0) > 0) rent += post[j]!; });
-        const tok = (list: RpcTokenBal[] | undefined) => (list ?? []).filter((b) => b.owner === owner && b.mint === mint).reduce((x, b) => x + Number(b.uiTokenAmount.uiAmountString ?? b.uiTokenAmount.uiAmount ?? 0), 0);
+        const tok = (list: RpcTokenBal[] | undefined, mint: string) => (list ?? []).filter((b) => b.owner === owner && b.mint === mint).reduce((x, b) => x + Number(b.uiTokenAmount.uiAmountString ?? b.uiTokenAmount.uiAmount ?? 0), 0);
         return {
           ok: !tx.meta.err,
           feeSol: tx.meta.fee / 1e9,
           rentSol: rent / 1e9,
           solChange: me >= 0 ? ((post[me] ?? 0) - (pre[me] ?? 0)) / 1e9 : 0,
-          tokenChange: tok(tx.meta.postTokenBalances) - tok(tx.meta.preTokenBalances),
+          tokenChanges: Object.fromEntries(mints.map((m) => [m, tok(tx.meta!.postTokenBalances, m) - tok(tx.meta!.preTokenBalances, m)])),
         };
       }
       await new Promise((r) => setTimeout(r, 1_500));
@@ -154,7 +163,8 @@ export interface TxCosts {
   rentSol: number;
   /** Net SOL change of the wallet (negative = spent), fee and rent included. */
   solChange: number;
-  tokenChange: number;
+  /** Change of each requested mint held by the owner. */
+  tokenChanges: Record<string, number>;
 }
 
 interface RpcTokenBal { owner?: string; mint: string; uiTokenAmount: { uiAmount: number | null; uiAmountString?: string } }

@@ -141,3 +141,35 @@ describe("real orders from the chat", () => {
     expect(paper.cards.some((c) => c.type === "live_order")).toBe(false);
   });
 });
+
+describe("pay with USDC and stock spreads", () => {
+  it("falls back to USDC when the SOL route fails", async () => {
+    const s = setup({ tokenRaw: "0" });
+    await s.pilot.createWallet(s.u.id, true);
+    // Make the SOL route fail and give the wallet 50 USDC.
+    const jup = s.pilot.jupiter as unknown as { order: (p: { inputMint: string }) => Promise<unknown> };
+    const orig = jup.order.bind(jup);
+    jup.order = async (p) => { if (p.inputMint === SOL_MINT) throw new Error("no route"); return orig(p as never); };
+    const rpc = (s.pilot as unknown as { d: { rpc: { tokens: () => Promise<unknown[]> } } }).d.rpc;
+    rpc.tokens = async () => [{ mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount: 50, decimals: 6, raw: "50000000" }];
+    const q = await s.pilot.quote(s.u.id, true, { side: "buy", token: MINT, usd: 4 });
+    expect(q.payAsset).toBe("USDC");
+    expect(q.base).toBe("USDC");
+    expect(s.calls.orders.at(-1)!.get("amount")).toBe("4000000");
+  });
+
+  it("scans executable spreads and nets Outcry's fee on both legs", async () => {
+    const { SpreadScanner } = await import("../src/live/spreads.js");
+    // MSFTon is cheaper: $100 buys 0.2 shares ($500/sh); selling 0.2 MSFTx returns $102 ($510/sh).
+    const jup = { quoteOnly: async (p: { inputMint: string; outputMint: string; amount: bigint }) =>
+      p.outputMint === "onmint" ? { inAmount: p.amount.toString(), outAmount: String(0.2 * 1e8) } : { inAmount: p.amount.toString(), outAmount: String(102 * 1e6) } };
+    const sc = new SpreadScanner(jup as never, () => [{ ticker: "MSFT", a: { symbol: "MSFTx", mint: "xmint", decimals: 8, priceUsd: 528 }, b: { symbol: "MSFTon", mint: "onmint", decimals: 8, priceUsd: 521 } }], () => 50, 0);
+    const r = await sc.scan(100);
+    const row = r.rows[0]!;
+    expect(row.cheap).toBe("MSFTon");
+    expect(row.buyCheapPx).toBeCloseTo(500, 6);
+    expect(row.sellRichPx).toBeCloseTo(510, 6);
+    expect(row.discountPct).toBeCloseTo((1 - 500 / 510) * 100, 6);
+    expect(row.swapEdgePct).toBeCloseTo(((102 * 0.995 - 100 * 1.005) / 100) * 100, 6); // +1.0% net
+  });
+});
