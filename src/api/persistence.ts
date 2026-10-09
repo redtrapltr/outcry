@@ -46,7 +46,7 @@ export class Persistence {
       ...(this.parts.transcripts ? { transcripts: { obj: { lines: this.parts.transcripts }, fields: ["lines"] } } : {}),
       ...(this.parts.recaps ? { recaps: { obj: { items: this.parts.recaps }, fields: ["items"] } } : {}),
       ...(this.parts.auth ? { auth: { obj: this.parts.auth, fields: ["credentials"] } } : {}),
-      ...(this.parts.live ? { live: { obj: this.parts.live, fields: ["trades"] }, liveWallets: { obj: this.parts.live.wallets, fields: ["wallets"] } } : {}),
+      ...(this.parts.live ? { live: { obj: this.parts.live, fields: ["trades", "withdrawals"] }, liveWallets: { obj: this.parts.live.wallets, fields: ["wallets"] } } : {}),
     };
   }
 

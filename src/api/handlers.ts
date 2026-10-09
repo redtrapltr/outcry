@@ -346,7 +346,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     if (st.wallet) {
       try { portfolio = await opts.live.portfolio(uid); } catch (e) { portfolioError = (e as Error).message; }
     }
-    return { ...st, portfolio, portfolioError, trades: opts.live.history(uid).slice(0, 30) };
+    return { ...st, portfolio, portfolioError, trades: opts.live.history(uid).slice(0, 30), withdrawals: opts.live.withdrawalHistory(uid).slice(0, 20) };
   });
   route("POST", "/api/live/wallet", ({ uid }) => live().createWallet(uid, secured(uid)));
   route("POST", "/api/live/quote", ({ uid, body }) => {
@@ -364,6 +364,23 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     if (!b.passkeyResponse) throw new HttpError(401, "Confirm with your passkey to sign");
     await needAuth().verifyApproval(uid, q.id, b.passkeyResponse, meta);
     return p.execute(uid, secured(uid), q.id, `webauthn:${q.id}`);
+  });
+
+  route("POST", "/api/live/withdraw", ({ uid, body }) => {
+    const b = z.object({ to: z.string().min(32).max(64), token: z.string().min(2).max(64), amount: z.number().positive().optional(), max: z.boolean().optional() }).parse(body);
+    return live().prepareWithdrawal(uid, secured(uid), b);
+  });
+  route("POST", "/api/live/withdraw/:id/challenge", async ({ uid, params, meta }) => {
+    const wd = live().withdrawalFor(uid, params.id!);
+    return needAuth().approvalOptions(uid, wd.id, JSON.stringify({ to: wd.to, asset: wd.asset, amount: wd.amount }), meta);
+  });
+  route("POST", "/api/live/withdraw/:id/execute", async ({ uid, params, body, meta }) => {
+    const b = z.object({ passkeyResponse: z.unknown() }).parse(body ?? {});
+    const p = live();
+    const wd = p.withdrawalFor(uid, params.id!);
+    if (!b.passkeyResponse) throw new HttpError(401, "Confirm with your passkey to send");
+    await needAuth().verifyApproval(uid, wd.id, b.passkeyResponse, meta);
+    return p.executeWithdrawal(uid, secured(uid), wd.id, `webauthn:${wd.id}`);
   });
 
   // --- public --------------------------------------------------------------------------

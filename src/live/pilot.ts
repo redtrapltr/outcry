@@ -13,6 +13,25 @@ import { newId, nowIso, type AuditLog } from "../core/infra.js";
 import type { UserStore } from "../core/users.js";
 import type { TurnkeyWallets } from "../wallet/turnkey.js";
 import { SOL_MINT, USDC_MINT, type JupiterSwap, type SolanaRpc } from "./chain.js";
+import { ATA_RENT_SOL, TOKEN_PROGRAMS, WITHDRAW_FEE_SOL, buildSolTransfer, buildTokenTransfer, checkDestination } from "./withdraw.js";
+
+export interface Withdrawal {
+  id: string;
+  userId: string;
+  at: string;
+  asset: string;
+  mint: string | null;
+  amount: number;
+  to: string;
+  status: "pending" | "confirmed" | "failed";
+  signature?: string;
+  error?: string;
+  /** Unsigned transaction (kept server-side until approved). */
+  tx?: string;
+  expiresAt?: number;
+  feeSol: number;
+  createsAccountSol: number;
+}
 
 export interface PilotConfig {
   enabled: boolean;
@@ -102,6 +121,8 @@ const isMint = (s: string) => /^[1-9A-HJ-NP-Za-km-z]{32,44}$/.test(s);
 
 export class LivePilot {
   readonly trades = new Map<string, LiveTrade[]>();
+  readonly withdrawals = new Map<string, Withdrawal[]>();
+  private pendingWithdrawals = new Map<string, Withdrawal>();
   private quotes = new Map<string, LiveQuote>();
   private busy = new Set<string>();
 
@@ -164,6 +185,7 @@ export class LivePilot {
     const solUsd = this.d.solUsd();
     const tokens = toks.map((t) => {
       const i = info[t.mint];
+      if (i?.symbol) this.symbolCache.set(t.mint, i.symbol);
       return { mint: t.mint, symbol: i?.symbol ?? short(t.mint), amount: t.amount, usd: i?.usdPrice !== undefined ? t.amount * i.usdPrice : null };
     }).sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0));
     const totalUsd = sol * solUsd + tokens.reduce((s, t) => s + (t.usd ?? 0), 0);
@@ -372,6 +394,98 @@ export class LivePilot {
     const swapEdgeUsd = gotUsd - paidUsd + outcryFeeUsd;
     return { networkFeeUsd, rentUsd, swapEdgeUsd, outcryFeeUsd, totalCostUsd: networkFeeUsd + outcryFeeUsd + Math.max(0, -swapEdgeUsd) };
   }
+
+  /**
+   * Prepare a withdrawal: SOL or a token you hold, to any regular wallet address.
+   * `amount` in token units, or max=true for everything (SOL keeps just the network fee).
+   */
+  async prepareWithdrawal(userId: string, hasPasskey: boolean, req: { to: string; token: string; amount?: number; max?: boolean }) {
+    this.must(userId, hasPasskey);
+    const w = this.d.wallets.get(userId);
+    if (!w) throw new Error("You don't have a real wallet yet");
+    const to = checkDestination(req.to).toBase58();
+    if (to === w.address) throw new Error("That's this wallet's own address");
+    const [sol, toks] = await Promise.all([this.d.rpc.solBalance(w.address), this.d.rpc.tokens(w.address)]);
+    const { blockhash } = await this.d.rpc.latestBlockhash();
+    const raw = req.token.trim();
+    const isSol = /^sol$/i.test(raw) || raw === SOL_MINT;
+    let tx: string, asset: string, mint: string | null, amount: number, createsAccountSol = 0;
+    if (isSol) {
+      const max = Math.max(0, sol - WITHDRAW_FEE_SOL - 0.000001);
+      amount = req.max ? max : Number(req.amount);
+      if (!(amount > 0)) throw new Error("How much SOL?");
+      if (amount > max + 1e-12) throw new Error(`You can send at most ${max.toFixed(6)} SOL (balance ${sol.toFixed(6)} minus the network fee)`);
+      tx = buildSolTransfer({ from: w.address, to, lamports: BigInt(Math.floor(amount * 1e9)), blockhash });
+      asset = "SOL"; mint = null;
+    } else {
+      const m = raw.toUpperCase() === "USDC" ? USDC_MINT : raw;
+      const held = toks.find((t) => t.mint === m) ?? toks.find((t) => this.symbolCache.get(t.mint)?.toUpperCase() === raw.toUpperCase());
+      if (!held) throw new Error(`You don't hold ${raw} in this wallet`);
+      const program = await this.d.rpc.accountOwner(held.mint);
+      if (!program || !TOKEN_PROGRAMS.includes(program)) throw new Error("Unknown token program for this token");
+      amount = req.max ? held.amount : Number(req.amount);
+      if (!(amount > 0)) throw new Error("How much?");
+      if (amount > held.amount + 1e-12) throw new Error(`You hold ${held.amount}`);
+      const amountRaw = req.max ? BigInt(held.raw) : BigInt(Math.floor(amount * 10 ** held.decimals));
+      // The receiver may need a token account for this token: the sender pays its deposit.
+      const dstHas = await this.d.rpc.tokens(to).then((l) => l.some((t) => t.mint === held.mint)).catch(() => false);
+      createsAccountSol = dstHas ? 0 : ATA_RENT_SOL;
+      if (sol < WITHDRAW_FEE_SOL + createsAccountSol) throw new Error(`You need ${(WITHDRAW_FEE_SOL + createsAccountSol).toFixed(5)} SOL for the network fee${createsAccountSol ? " and the receiver's token account deposit" : ""}`);
+      tx = buildTokenTransfer({ from: w.address, to, mint: held.mint, decimals: held.decimals, amountRaw, tokenProgram: program, blockhash });
+      const info = (await this.d.tokenInfo([held.mint]).catch(() => ({} as Record<string, TokenInfo>)))[held.mint];
+      asset = info?.symbol ?? short(held.mint); mint = held.mint;
+    }
+    const wd: Withdrawal = { id: newId("wd"), userId, at: nowIso(), asset, mint, amount, to, status: "pending", tx, expiresAt: Date.now() + 60_000, feeSol: WITHDRAW_FEE_SOL, createsAccountSol };
+    this.pendingWithdrawals.set(wd.id, wd);
+    const { tx: _t, userId: _u, ...pub } = wd;
+    return pub;
+  }
+
+  withdrawalFor(userId: string, id: string) {
+    const wd = this.pendingWithdrawals.get(id);
+    if (!wd || wd.userId !== userId) throw Object.assign(new Error("Withdrawal not found"), { status: 404 });
+    return wd;
+  }
+
+  /** Sign with Turnkey and send. Call only after the passkey check bound to this withdrawal. */
+  async executeWithdrawal(userId: string, hasPasskey: boolean, id: string, approval: string) {
+    this.must(userId, hasPasskey);
+    if (!approval) throw new Error("Approve with your passkey");
+    const wd = this.withdrawalFor(userId, id);
+    if (wd.status !== "pending" || !wd.tx) throw new Error("This withdrawal was already sent");
+    if (Date.now() > (wd.expiresAt ?? 0)) throw new Error("Expired: prepare it again");
+    if (this.busy.has(userId)) throw new Error("Another transaction is still being sent");
+    this.busy.add(userId);
+    const tx = wd.tx;
+    wd.tx = undefined;
+    this.pendingWithdrawals.delete(id);
+    try {
+      const signed = await this.d.wallets.signSolana(userId, tx);
+      wd.signature = await this.d.rpc.send(signed);
+      const err = await this.d.rpc.confirm(wd.signature);
+      wd.status = err ? "failed" : "confirmed";
+      wd.error = err;
+    } catch (e) {
+      wd.status = "failed";
+      wd.error = (e as Error).message.slice(0, 300);
+    } finally {
+      this.busy.delete(userId);
+    }
+    delete wd.expiresAt;
+    const list = this.withdrawals.get(userId) ?? [];
+    list.push(wd);
+    if (list.length > 200) list.splice(0, list.length - 200);
+    this.withdrawals.set(userId, list);
+    this.d.audit.append(`user:${userId}`, wd.status === "confirmed" ? "live.withdraw_confirmed" : "live.withdraw_failed", { id, asset: wd.asset, mint: wd.mint, amount: wd.amount, to: wd.to, signature: wd.signature, error: wd.error, approval });
+    const { userId: _u, ...pub } = wd;
+    return { ...pub, explorer: wd.signature ? `https://solscan.io/tx/${wd.signature}` : null };
+  }
+
+  withdrawalHistory(userId: string) {
+    return [...(this.withdrawals.get(userId) ?? [])].reverse().map(({ userId: _u, tx: _t, ...w }) => ({ ...w, explorer: w.signature ? `https://solscan.io/tx/${w.signature}` : null }));
+  }
+
+  private symbolCache = new Map<string, string>();
 
   history(userId: string) {
     return [...(this.trades.get(userId) ?? [])].reverse().map((t) => ({ ...t, explorer: t.signature ? `https://solscan.io/tx/${t.signature}` : null }));

@@ -20,6 +20,8 @@
     "@fastify/websocket": "^11.3.1",
     "@simplewebauthn/browser": "^13.3.0",
     "@simplewebauthn/server": "^13.3.3",
+    "@solana/spl-token": "^0.4.15",
+    "@solana/web3.js": "^1.99.0",
     "@turnkey/sdk-server": "^8.6.0",
     "esbuild": "^0.28.2",
     "fastify": "^5.12.5",

@@ -11,7 +11,7 @@ function setup(over: Partial<{ allow: string[]; sol: number; tokenRaw: string; e
   const app = createOutcry({ mode: "paper" } as never);
   const u = app.users.create({ badge: "THI", jacket: "memes", residence: "CH" });
   app.users.setHandle(u.id, "thiago");
-  const calls: { sub: Record<string, unknown>[]; sign: { organizationId: string; signWith: string; unsignedTransaction: string }[]; exec: unknown[]; orders: URLSearchParams[] } = { sub: [], sign: [], exec: [], orders: [] };
+  const calls: { sub: Record<string, unknown>[]; sign: { organizationId: string; signWith: string; unsignedTransaction: string }[]; exec: unknown[]; orders: URLSearchParams[]; sent: string[] } = { sub: [], sign: [], exec: [], orders: [], sent: [] };
   const api: TurnkeyApi = {
     getWhoami: async () => ({ organizationId: "org", organizationName: "Woodeng" }),
     createSubOrganization: async (i) => (calls.sub.push(i), { subOrganizationId: "sub_1", wallet: { walletId: "w_1", addresses: [ADDR] } }),
@@ -32,6 +32,10 @@ function setup(over: Partial<{ allow: string[]; sol: number; tokenRaw: string; e
   const rpc = new SolanaRpc("http://rpc", async (_u, init) => {
     const m = JSON.parse(String(init?.body)).method;
     if (m === "getBalance") return json({ result: { value: Math.round((over.sol ?? 1) * 1e9) } });
+    if (m === "getLatestBlockhash") return json({ result: { value: { blockhash: "11111111111111111111111111111111", lastValidBlockHeight: 1 } } });
+    if (m === "getAccountInfo") return json({ result: { value: { owner: "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb" } } });
+    if (m === "sendTransaction") { calls.sent.push(JSON.parse(String(init?.body)).params[0]); return json({ result: "sigW" }); }
+    if (m === "getSignatureStatuses") return json({ result: { value: [{ confirmationStatus: "confirmed", err: null }] } });
     if (m === "getTransaction") {
       const spent = 100_000_000 + 5_000 + 2_039_280; // 0.1 SOL swap + fee + new token account
       return json({ result: { meta: { err: null, fee: 5_000, preBalances: [1e9, 0, 0], postBalances: [1e9 - spent, 2_039_280, 0],
@@ -39,7 +43,7 @@ function setup(over: Partial<{ allow: string[]; sol: number; tokenRaw: string; e
         transaction: { message: { accountKeys: [{ pubkey: ADDR }, { pubkey: "ata" }, { pubkey: "wsol" }] } } } });
     }
     const prog = JSON.parse(String(init?.body)).params[1].programId;
-    if (prog.startsWith("Tokenkeg") && over.tokenRaw) return json({ result: { value: [{ account: { data: { parsed: { info: { mint: MINT, tokenAmount: { amount: over.tokenRaw, decimals: 6, uiAmount: 0 } } } } } }] } });
+    if (prog.startsWith("Tokenkeg") && over.tokenRaw && JSON.parse(String(init?.body)).params[0] === ADDR) return json({ result: { value: [{ account: { data: { parsed: { info: { mint: MINT, tokenAmount: { amount: over.tokenRaw, decimals: 6, uiAmount: 0 } } } } } }] } });
     return json({ result: { value: [] } });
   });
   const pilot = new LivePilot(
@@ -171,5 +175,41 @@ describe("pay with USDC and stock spreads", () => {
     expect(row.sellRichPx).toBeCloseTo(510, 6);
     expect(row.discountPct).toBeCloseTo((1 - 500 / 510) * 100, 6);
     expect(row.swapEdgePct).toBeCloseTo(((102 * 0.995 - 100 * 1.005) / 100) * 100, 6); // +1.0% net
+  });
+});
+
+describe("withdrawals", () => {
+  it("sends SOL or a Token-2022 token to a regular wallet, after approval, and refuses bad addresses", async () => {
+    const { Keypair, Transaction, SystemInstruction, PublicKey } = await import("@solana/web3.js");
+    const { getAssociatedTokenAddressSync, TOKEN_2022_PROGRAM_ID } = await import("@solana/spl-token");
+    const s = setup({ sol: 0.5, tokenRaw: "1000000000" });
+    await s.pilot.createWallet(s.u.id, true);
+    const dest = Keypair.generate().publicKey.toBase58();
+    await expect(s.pilot.prepareWithdrawal(s.u.id, true, { to: "nope", token: "SOL", amount: 0.1 })).rejects.toThrow(/valid Solana address/);
+    const ata = getAssociatedTokenAddressSync(new PublicKey(MINT), new PublicKey(dest), false, TOKEN_2022_PROGRAM_ID).toBase58();
+    await expect(s.pilot.prepareWithdrawal(s.u.id, true, { to: ata, token: "SOL", amount: 0.1 })).rejects.toThrow(/regular wallet/);
+    await expect(s.pilot.prepareWithdrawal(s.u.id, true, { to: dest, token: "SOL", amount: 1 })).rejects.toThrow(/at most/);
+
+    const p = await s.pilot.prepareWithdrawal(s.u.id, true, { to: dest, token: "SOL", amount: 0.1 });
+    expect(JSON.stringify(p)).not.toContain('"tx"');
+    await expect(s.pilot.executeWithdrawal(s.u.id, true, p.id, "")).rejects.toThrow(/passkey/);
+    const r = await s.pilot.executeWithdrawal(s.u.id, true, p.id, "webauthn:x");
+    expect(r.status).toBe("confirmed");
+    expect(r.explorer).toContain("sigW");
+    const tx = Transaction.from(Buffer.from(Buffer.from(s.calls.sign[0]!.unsignedTransaction, "hex")));
+    const transfer = tx.instructions.find((i) => i.programId.toBase58() === "11111111111111111111111111111111")!;
+    const d = SystemInstruction.decodeTransfer(transfer);
+    expect(d.toPubkey.toBase58()).toBe(dest);
+    expect(Number(d.lamports)).toBe(100_000_000);
+    await expect(s.pilot.executeWithdrawal(s.u.id, true, p.id, "webauthn:x")).rejects.toThrow(/not found/);
+
+    const t = await s.pilot.prepareWithdrawal(s.u.id, true, { to: dest, token: MINT, max: true });
+    expect(t.amount).toBe(1000);
+    expect(t.createsAccountSol).toBeGreaterThan(0);
+    await s.pilot.executeWithdrawal(s.u.id, true, t.id, "webauthn:x");
+    const ttx = Transaction.from(Buffer.from(s.calls.sign[1]!.unsignedTransaction, "hex"));
+    expect(ttx.instructions.at(-1)!.programId.toBase58()).toBe(TOKEN_2022_PROGRAM_ID.toBase58());
+    expect(s.pilot.withdrawalHistory(s.u.id)).toHaveLength(2);
+    expect(s.app.audit.since(0).filter((e) => e.action === "live.withdraw_confirmed")).toHaveLength(2);
   });
 });

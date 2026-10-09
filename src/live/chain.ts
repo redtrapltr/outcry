@@ -128,6 +128,34 @@ export class SolanaRpc {
     return out;
   }
 
+  async latestBlockhash(): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
+    const r = await this.call<{ value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
+    return r.value;
+  }
+
+  /** The program that owns an account (e.g. which token program a mint belongs to), or null if it doesn't exist. */
+  async accountOwner(address: string): Promise<string | null> {
+    const r = await this.call<{ value: { owner: string } | null }>("getAccountInfo", [address, { encoding: "base64", commitment: "confirmed", dataSlice: { offset: 0, length: 0 } }]);
+    return r.value?.owner ?? null;
+  }
+
+  async send(base64Tx: string): Promise<string> {
+    return this.call<string>("sendTransaction", [base64Tx, { encoding: "base64", preflightCommitment: "confirmed", maxRetries: 5 }]);
+  }
+
+  /** Wait until confirmed; returns an error message if the transaction failed or timed out. */
+  async confirm(signature: string, timeoutMs = 45_000): Promise<string | undefined> {
+    const end = Date.now() + timeoutMs;
+    while (Date.now() < end) {
+      const r = await this.call<{ value: ({ confirmationStatus?: string; err: unknown } | null)[] }>("getSignatureStatuses", [[signature], { searchTransactionHistory: false }]).catch(() => undefined);
+      const st = r?.value?.[0];
+      if (st?.err) return `Transaction failed on-chain: ${JSON.stringify(st.err).slice(0, 160)}`;
+      if (st && (st.confirmationStatus === "confirmed" || st.confirmationStatus === "finalized")) return undefined;
+      await new Promise((res) => setTimeout(res, 1_500));
+    }
+    return "Not confirmed within 45 seconds (it may still land: check Solscan)";
+  }
+
   /**
    * What a confirmed transaction actually cost the wallet: network fee, SOL
    * locked as rent in newly created token accounts, the wallet's SOL change and
