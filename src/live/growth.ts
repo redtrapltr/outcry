@@ -24,6 +24,31 @@ export const TIERS: Tier[] = [
 export const REFERRAL_SHARE = 0.2;
 const DAY = 86_400_000;
 
+export type PlanId = "free" | "pro" | "sniper";
+export interface Plan {
+  id: PlanId;
+  name: string;
+  /** USD per month (annual: 2 months free). */
+  priceUsd: number;
+  /** Effective Outcry fee (rebated down from the 0.5% charged on-chain). */
+  feeBps: number;
+  /** How many agents can trade real money at once. */
+  realAgents: number;
+  perks: string[];
+}
+
+export const PLANS: Record<PlanId, Plan> = {
+  free: { id: "free", name: "Floor", priceUsd: 0, feeBps: 50, realAgents: 2, perks: ["Paper trading, unlimited", "Real trading at 0.5%", "2 real-money agents", "Volume tiers and referrals"] },
+  pro: { id: "pro", name: "Pro", priceUsd: 49, feeBps: 35, realAgents: 10, perks: ["Fee 0.35% (rebated)", "10 real-money agents", "Telegram alerts", "Stock spread alerts (soon)", "Priority execution (soon)"] },
+  sniper: { id: "sniper", name: "Sniper", priceUsd: 199, feeBps: 25, realAgents: 25, perks: ["Fee 0.25% (rebated)", "25 real-money agents", "Everything in Pro", "Sub-second launch detection (soon)", "Jito bundles for snipes (soon)", "Real pump.fun launches with disclosed multi-wallet buys (soon)"] },
+};
+
+export interface Subscription {
+  plan: PlanId;
+  until: number;
+  payments: { at: string; usd: number; months: number; signature?: string }[];
+}
+
 export interface AccessRequest {
   userId: string;
   handle?: string;
@@ -43,8 +68,33 @@ export class Growth {
   /** userId -> referrer userId. */
   readonly referredBy = new Map<string, string>();
   readonly access = new Map<string, AccessRequest>();
-  /** Fee bps override for a subscription plan (set by the Pro tier). */
-  planFeeBps?: (userId: string) => number | undefined;
+  /** Paid plans (Pro / Sniper). */
+  readonly subs = new Map<string, Subscription>();
+  /** The user's active plan (free when none or expired). */
+  planOf(userId: string, now = Date.now()): Plan {
+    const s = this.subs.get(userId);
+    return s && s.until > now ? PLANS[s.plan] : PLANS.free;
+  }
+
+  planFeeBps(userId: string) {
+    const p = this.planOf(userId);
+    return p.id === "free" ? undefined : p.feeBps;
+  }
+
+  /** Price for a plan: annual = 10 months. */
+  static priceFor(plan: PlanId, months: 1 | 12) {
+    return PLANS[plan].priceUsd * (months === 12 ? 10 : 1);
+  }
+
+  /** Activate (or extend) a plan after a confirmed payment. Upgrading replaces the plan from now. */
+  activate(userId: string, plan: PlanId, months: 1 | 12, usd: number, signature?: string, now = Date.now()) {
+    if (plan === "free") throw new Error("Nothing to pay for the free plan");
+    const cur = this.subs.get(userId);
+    const base = cur && cur.plan === plan && cur.until > now ? cur.until : now;
+    const s: Subscription = { plan, until: base + months * 30 * DAY, payments: [...(cur?.payments ?? []), { at: nowIso(), usd, months, signature }] };
+    this.subs.set(userId, s);
+    return s;
+  }
 
   volume30d(userId: string, now = Date.now()) {
     const l = this.volume.get(userId) ?? [];

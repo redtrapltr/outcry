@@ -8,6 +8,7 @@ import { Jacket } from "../core/types.js";
 import type { ModelRouter } from "../llm/router.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import type { LivePilot } from "../live/pilot.js";
+import { Growth, PLANS } from "../live/growth.js";
 import type { AuthService, RequestMeta } from "./auth.js";
 import { blueprint } from "../orchestrator/tools-exec.js";
 import { redactAgent } from "../market/listings.js";
@@ -365,6 +366,34 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   // Waitlist for real money; admins (OUTCRY_ADMINS handles) approve.
   const admins = () => String((typeof process !== "undefined" ? process.env.OUTCRY_ADMINS : "") ?? "").split(/[\s,]+/).map((h) => h.replace(/^@/, "").toLowerCase()).filter(Boolean);
   const isAdmin = (uid: string) => { const h = app.users.get(uid).handle; return !!h && admins().includes(h); };
+  // Paid plans, paid in USDC from the real wallet to Outcry's treasury (signed like a withdrawal).
+  const treasury = () => (typeof process !== "undefined" ? process.env.OUTCRY_TREASURY_ADDRESS?.trim() : undefined) || undefined;
+  const pendingPlans = new Map<string, { userId: string; plan: "pro" | "sniper"; months: 1 | 12; usd: number; used?: boolean }>();
+  route("GET", "/api/plans", ({ uid }) => {
+    const sub = app.growth.subs.get(uid);
+    const cur = app.growth.planOf(uid);
+    return { plans: Object.values(PLANS), current: cur.id, until: sub && sub.until > Date.now() ? new Date(sub.until).toISOString() : null, payable: !!treasury() && !!opts.live };
+  });
+  route("POST", "/api/plans/subscribe", async ({ uid, body }) => {
+    const b = z.object({ plan: z.enum(["pro", "sniper"]), months: z.union([z.literal(1), z.literal(12)]).default(1) }).parse(body);
+    const to = treasury();
+    if (!to) throw new HttpError(501, "Payments aren't set up yet (OUTCRY_TREASURY_ADDRESS)");
+    const usd = Growth.priceFor(b.plan, b.months);
+    const w = await live().prepareWithdrawal(uid, secured(uid), { to, token: "USDC", amount: usd });
+    pendingPlans.set(w.id, { userId: uid, plan: b.plan, months: b.months, usd });
+    return { withdrawal: w, usd, plan: PLANS[b.plan] };
+  });
+  route("POST", "/api/plans/confirm", ({ uid, body }) => {
+    const b = z.object({ withdrawalId: z.string() }).parse(body);
+    const pp = pendingPlans.get(b.withdrawalId);
+    if (!pp || pp.userId !== uid || pp.used) throw new HttpError(404, "Payment not found");
+    const paid = live().withdrawalHistory(uid).find((w) => w.id === b.withdrawalId);
+    if (!paid || paid.status !== "confirmed" || paid.to !== treasury() || paid.mint !== "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" || paid.amount + 1e-6 < pp.usd) throw new HttpError(402, "Payment not confirmed on-chain");
+    pp.used = true;
+    const sub = app.growth.activate(uid, pp.plan, pp.months, pp.usd, paid.signature);
+    app.audit.append(`user:${uid}`, "plan.activated", { plan: pp.plan, months: pp.months, usd: pp.usd, signature: paid.signature });
+    return { plan: sub.plan, until: new Date(sub.until).toISOString() };
+  });
   route("POST", "/api/telegram/link", ({ uid }) => {
     if (!opts.telegram) throw new HttpError(501, "Telegram alerts aren't set up on this server yet");
     return { url: opts.telegram.linkFor(uid) };
@@ -442,6 +471,9 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     if (app.marketplace.isCopy(a.id)) throw new HttpError(400, "Real money for copied agents comes later");
     if (a.real) throw new HttpError(400, `${a.spec.name} already trades real money`);
     if (b.budgetUsd > maxAgentUsd) throw new HttpError(400, `Pilot limit: $${maxAgentUsd} per agent`);
+    const plan = app.growth.planOf(uid);
+    const realNow = app.agents.listForUser(uid).filter((x) => x.real && x.state !== "killed").length;
+    if (realNow >= plan.realAgents) throw new HttpError(402, `Your ${plan.name} plan runs ${plan.realAgents} real-money agents at once. Stop one, or upgrade.`);
     const p = live();
     const address = await p.agentAddress(uid, secured(uid), a.id);
     const sol = b.budgetUsd / app.market.priceUsd("SOL");

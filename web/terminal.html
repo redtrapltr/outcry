@@ -85,6 +85,14 @@ button,input{font:inherit;color:inherit}
 .lw-hint{margin:0}
 .lw-custody{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;border:1px solid var(--line2);border-radius:10px;padding:10px 12px}
 .lw-custody.ok{border-color:rgba(61,220,151,.5)}
+.plans{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}
+.plan{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.plan.hot{border-color:#ff5a5a;box-shadow:0 0 0 1px rgba(255,90,90,.25)}
+.plan.cur{border-color:var(--voice-text)}
+.plan-price{font:900 40px var(--display)}.plan-price span{font:14px var(--mono);color:var(--muted);margin-left:4px}
+.plan ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px;flex:1}
+.plans-top{display:flex;flex-direction:column;gap:10px}.plans-seg{max-width:420px}
+@media (max-width:760px){.plans{grid-template-columns:1fr}}
 .tier-bar{height:8px;border-radius:99px;background:var(--bg);border:1px solid var(--line2);overflow:hidden}.tier-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--voice),#3DDC97)}
 .lw-reclaim{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.lw-warn{margin:0;color:#ffb36b}
 .lw-list{display:flex;flex-direction:column}
@@ -324,6 +332,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
     </div>
     <button class="btn btn-primary" type="button" id="newSession">+ New chat</button>
     <button class="btn" type="button" id="marketBtn">◆ Marketplace</button>
+    <button class="btn" type="button" id="plansBtn">★ Plans · Pro & Sniper</button>
     <button class="btn" type="button" id="tgBtn">🔔 Telegram alerts</button>
     <button class="btn" type="button" id="adminBtn" hidden>⚑ Admin · access requests</button>
     <button class="btn" type="button" id="liveBtn">● Real wallet <span class="mono" style="font-size:10px;opacity:.7">PILOT</span></button>
@@ -1309,7 +1318,7 @@ async function makeSelfCustodial(resume) {
   let whoamiBody, credentialId;
   if (resume) ({ whoamiBody, credentialId } = resume);
   else {
-    if (!confirm('Create a wallet passkey on this device. After this, withdrawals from your real wallet need that passkey, and Outcry's server can no longer make direct transfers out. It can still sign swaps (that's how your trades and agents run), so keep here only what you trade.\n\nKeep this device (or your synced passkeys) safe: without it you cannot withdraw.')) return false;
+    if (!confirm("Create a wallet passkey on this device. After this, withdrawals from your real wallet need that passkey, and Outcry's server can no longer make direct transfers out. It can still sign swaps (that's how your trades and agents run), so keep here only what you trade.\n\nKeep this device (or your synced passkeys) safe: without it you cannot withdraw.")) return false;
     const opts = await api('/api/live/custody/options', { method: 'POST' });
     const { startRegistration } = await webauthn();
     const registration = await startRegistration({ optionsJSON: opts });
@@ -1552,7 +1561,40 @@ async function openAdmin() {
   });
   load();
 }
+async function openPlans() {
+  const { body, close } = sheet('Plans');
+  let d;
+  try { d = await api('/api/plans'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
+  let months = 1;
+  const draw = () => {
+    body.innerHTML = `<div class="plans-top"><p class="meta" style="margin:0">Paper trading stays free. Plans lower your fee on real trades and unlock more real-money agents. Paid in USDC from your real wallet, signed with your passkey.${d.until ? ` Your plan runs until ${new Date(d.until).toLocaleDateString()}.` : ''}</p>
+      <div class="lw-seg plans-seg"><button type="button" data-m="1" class="${months === 1 ? 'on' : ''}">Monthly</button><button type="button" data-m="12" class="${months === 12 ? 'on' : ''}">Yearly · 2 months free</button></div></div>
+      <div class="plans">${d.plans.map(p => `<div class="plan ${p.id === d.current ? 'cur' : ''} ${p.id === 'sniper' ? 'hot' : ''}">
+        <span class="eyebrow">${esc(p.name)}</span>
+        <div class="plan-price">${p.priceUsd ? `$${months === 12 ? p.priceUsd * 10 : p.priceUsd}<span>/${months === 12 ? 'year' : 'month'}</span>` : 'Free'}</div>
+        <ul>${p.perks.map(x => `<li>${esc(x)}</li>`).join('')}</ul>
+        ${p.id === d.current ? '<span class="lw-pill">Your plan</span>' : p.priceUsd ? `<button class="btn btn-primary" type="button" data-sub="${p.id}" ${d.payable ? '' : 'disabled title="Payments not set up yet"'}>Get ${esc(p.name)}</button>` : ''}
+      </div>`).join('')}</div><div class="plan-pay"></div>`;
+  };
+  draw();
+  body.addEventListener('click', async e => {
+    const m = e.target.closest('[data-m]'); if (m) { months = +m.dataset.m; draw(); return; }
+    const b = e.target.closest('[data-sub]'); if (!b) return;
+    const host = body.querySelector('.plan-pay');
+    try {
+      const r = await api('/api/plans/subscribe', { method: 'POST', body: { plan: b.dataset.sub, months } });
+      host.innerHTML = `<p class="meta">Pay $${r.usd} USDC to Outcry for ${esc(r.plan.name)} (${months === 12 ? '1 year' : '1 month'}):</p>`;
+      host.appendChild(withdrawTicket(r.withdrawal, { onDone: async (x) => {
+        if (x.status !== 'confirmed') return;
+        try { const a = await api('/api/plans/confirm', { method: 'POST', body: { withdrawalId: r.withdrawal.id } }); toast(`${r.plan.name} active until ${new Date(a.until).toLocaleDateString()}`); feed(`Upgraded to ${r.plan.name}`); close(); }
+        catch (err) { toast(err.message); }
+      } }));
+      host.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    } catch (err) { host.innerHTML = `<p class="meta down">${esc(err.message)}</p>`; }
+  });
+}
 $('marketBtn').onclick = () => openMarket();
+$('plansBtn').onclick = () => openPlans();
 $('adminBtn').onclick = () => openAdmin();
 let tgState = null;
 $('tgBtn').onclick = async () => {

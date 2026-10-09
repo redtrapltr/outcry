@@ -420,3 +420,21 @@ describe("telegram alerts", () => {
     expect(ALERT_WORTHY.test("PAPER · BUY BONK $10.00 filled")).toBe(false);
   });
 });
+
+describe("plans", () => {
+  it("prices, activates, extends and lowers the effective fee", async () => {
+    const { Growth, PLANS } = await import("../src/live/growth.js");
+    const g = new Growth();
+    expect(Growth.priceFor("pro", 12)).toBe(490);
+    expect(g.planOf("u").id).toBe("free");
+    const now = Date.now();
+    g.activate("u", "pro", 1, 49, "sig", now);
+    expect(g.planOf("u").id).toBe("pro");
+    expect(g.tierFor("u").feeBps).toBe(PLANS.pro.feeBps);
+    const r = g.recordTrade("u", 1_000, 50);
+    expect(r.rebateUsd).toBeCloseTo(1.5, 6); // 0.5% charged, 0.35% plan -> 0.15% back
+    const s = g.activate("u", "pro", 1, 49, "sig2", now);
+    expect(s.until - now).toBe(60 * 86_400_000); // extended
+    expect(g.planOf("u", now + 61 * 86_400_000).id).toBe("free");
+  });
+});
