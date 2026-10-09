@@ -135,7 +135,11 @@ export class LivePilot {
   async portfolio(userId: string) {
     const w = this.d.wallets.get(userId);
     if (!w) return null;
-    const [sol, toks] = await Promise.all([this.d.rpc.solBalance(w.address), this.d.rpc.tokens(w.address)]);
+    let tokenError: string | null = null;
+    const [sol, toks] = await Promise.all([
+      this.d.rpc.solBalance(w.address),
+      this.d.rpc.tokens(w.address).catch((e: Error) => ((tokenError = e.message.slice(0, 160)), [])),
+    ]);
     const info = toks.length ? await this.d.tokenInfo(toks.map((t) => t.mint)).catch(() => ({} as Record<string, TokenInfo>)) : {};
     const solUsd = this.d.solUsd();
     const tokens = toks.map((t) => {
@@ -143,7 +147,7 @@ export class LivePilot {
       return { mint: t.mint, symbol: i?.symbol ?? short(t.mint), amount: t.amount, usd: i?.usdPrice !== undefined ? t.amount * i.usdPrice : null };
     }).sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0));
     const totalUsd = sol * solUsd + tokens.reduce((s, t) => s + (t.usd ?? 0), 0);
-    return { address: w.address, sol, solUsd: sol * solUsd, tokens, totalUsd, explorer: `https://solscan.io/account/${w.address}` };
+    return { address: w.address, sol, solUsd: sol * solUsd, tokens, tokenError, totalUsd, explorer: `https://solscan.io/account/${w.address}` };
   }
 
   spentToday(userId: string) {

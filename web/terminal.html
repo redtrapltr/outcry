@@ -71,16 +71,39 @@ button,input{font:inherit;color:inherit}
 .tabs{display:flex;gap:8px;flex-wrap:wrap;margin-top:6px}
 .tabs .chip{border:1px solid var(--line2);background:transparent;color:inherit;border-radius:999px;padding:7px 14px;font:13px var(--mono);cursor:pointer}
 .tabs .chip.on{background:var(--voice);border-color:var(--voice);color:#fff}
-.lw-head{display:grid;grid-template-columns:auto 1fr;gap:16px 28px;align-items:start}
-.lw-total{font:900 44px var(--display)}
-.lw-addr{display:flex;flex-direction:column;gap:8px;min-width:0}
-.lw-addr code{font:12px var(--mono);word-break:break-all;background:var(--card);border:1px solid var(--line);border-radius:8px;padding:8px 10px}
-.lw-toks,.lw-hist{display:flex;flex-direction:column;gap:6px;font:13px var(--mono)}
-.lw-toks>div,.lw-hist>div{display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;border-bottom:1px solid var(--line);padding:6px 0}
-.lw-hist a{color:var(--voice-text)}
+.lw{max-width:620px;margin:0 auto;width:100%;display:flex;flex-direction:column;gap:14px}
+.lw-pills{display:flex;flex-wrap:wrap;gap:6px}
+.lw-pill{font:11px var(--mono);letter-spacing:.06em;border:1px solid var(--line2);border-radius:999px;padding:4px 10px;color:var(--soft)}
+.lw-pill.red{border-color:#ff5a5a;color:#ffb3b3}
+.lw-card{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:18px;display:flex;flex-direction:column;gap:10px}
+.lw-row{display:flex;justify-content:space-between;align-items:center}
+.lw-icon{background:transparent;border:1px solid var(--line2);color:inherit;border-radius:999px;width:34px;height:34px;cursor:pointer;font-size:16px}
+.lw-total{font:900 52px/1 var(--display)}
+.lw-addr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
+.lw-addr code{font:13px var(--mono);background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:7px 10px}
+.btn-sm{padding:6px 12px;font-size:13px}
+.lw-hint{margin:0}.lw-warn{margin:0;color:#ffb36b}
+.lw-list{display:flex;flex-direction:column}
+.lw-list>div{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
+.lw-list>div:last-child{border-bottom:0}
+.lw-list>div>span:last-child{text-align:right}
+.lw-list a{color:var(--voice-text)}
+.lw-form{display:flex;flex-direction:column;gap:14px}
+.lw-form label{display:flex;flex-direction:column;gap:6px;font-size:13px;color:var(--soft)}
+.lw-form input{background:var(--bg);border:1px solid var(--line2);border-radius:10px;color:var(--text);padding:11px 12px;font:14px var(--mono);min-width:0}
+.lw-seg{display:grid;grid-template-columns:1fr 1fr;background:var(--bg);border:1px solid var(--line2);border-radius:12px;padding:4px}
+.lw-seg button{background:transparent;border:0;color:var(--soft);padding:9px;border-radius:9px;font:600 14px inherit;cursor:pointer}
+.lw-seg button.on{background:var(--voice);color:#fff}
+.lw-seg button[data-side=sell].on{background:#e2475a}
+.lw-lbl{display:block;font-size:13px;color:var(--soft);margin-bottom:6px}
+.lw-chips{display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+.lw-chips .chip{border:1px solid var(--line2);background:transparent;color:inherit;border-radius:999px;padding:8px 14px;font:13px var(--mono);cursor:pointer}
+.lw-chips .chip.on{background:var(--card2);border-color:var(--voice-text)}
+.lw-chips input{width:90px;flex:1}
+.lw-go{width:100%;padding:13px}
 .lw-qbody{display:flex;justify-content:space-between;gap:12px;padding:14px;flex-wrap:wrap}
 #liveBtn{border-color:#ff5a5a;color:#ffb3b3}
-@media (max-width:640px){.lw-head{grid-template-columns:1fr}}
+@media (max-width:640px){.lw-total{font-size:42px}.lw-card{padding:14px}}
 .creator-head{display:flex;gap:16px;align-items:center}
 .cbadge{width:64px;height:64px;flex:none;border-radius:14px;display:grid;place-items:center;background:#ff5fa2;color:#1a0f2a;font:900 22px var(--display)}
 .cstats{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:10px}
@@ -1151,32 +1174,50 @@ async function openLive() {
     try { s = await api('/api/live'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
     const intro = `<p class="meta" style="margin:0">Real money on Solana. Pilot: up to $${s.limits?.maxOrderUsd ?? 25} per buy, $${s.limits?.maxDailyUsd ?? 100} of buys a day, every trade signed with your passkey. Keys are held by Turnkey; in this pilot Outcry's server can sign after your approval.</p>`;
     if (!s.eligible) {
-      body.innerHTML = intro + `<div class="summary"><b>Not available yet.</b> ${esc(s.reason || '')}</div>${/passkey/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-secure>Secure with a passkey</button>' : ''}${/handle/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-handle>Choose your @handle</button>' : ''}`;
+      body.innerHTML = `<div class="lw">` + intro + `<div class="lw-card"><b>Not available yet</b><span class="meta">${esc(s.reason || '')}</span></div>${/passkey/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-secure>Secure with a passkey</button>' : ''}${/handle/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-handle>Choose your @handle</button>' : ''}</div>`;
       return;
     }
     if (!s.wallet) {
-      body.innerHTML = intro + `<div class="summary">You don't have a real wallet yet. Outcry creates one Solana wallet for you on Turnkey; you fund it by sending SOL to its address.</div><div><button class="btn btn-primary" type="button" data-create>Create my real wallet</button></div>`;
+      body.innerHTML = `<div class="lw">` + intro + `<div class="lw-card"><b>Your own Solana wallet</b><span class="meta">Outcry creates one wallet for you on Turnkey. You fund it by sending SOL to its address, and only trades you approve with your passkey can move it.</span><button class="btn btn-primary lw-go" type="button" data-create>Create my real wallet</button></div></div>`;
       return;
     }
     const p = s.portfolio;
     const toks = p?.tokens || [];
-    body.innerHTML = intro + `
-      <div class="lw-head"><div><span class="eyebrow">Balance</span><div class="lw-total">${p ? usd(p.totalUsd) : '—'}</div><span class="meta">${p ? `${p.sol.toFixed(4)} SOL (${usd(p.solUsd)})` : esc(s.portfolioError || 'Balance unavailable')}</span></div>
-        <div class="lw-addr"><span class="eyebrow">Deposit SOL to</span><code>${esc(s.wallet.address)}</code><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn" type="button" data-copy>Copy address</button><a class="btn" href="https://solscan.io/account/${esc(s.wallet.address)}" target="_blank" rel="noopener">Solscan ↗</a><button class="btn" type="button" data-reload>↻ Refresh</button></div></div></div>
-      ${toks.length ? `<div class="lw-toks"><span class="eyebrow">Tokens</span>${toks.map(t => `<div><span>${esc(t.symbol)} <span class="meta">${fmt(t.amount, 4)}</span></span><span>${t.usd === null ? '—' : usd(t.usd)} <button class="linkbtn" type="button" data-sellmint="${esc(t.mint)}">sell</button></span></div>`).join('')}</div>` : ''}
-      <form class="form lw-form">
-        <div class="tabs wide"><button class="chip on" type="button" data-side="buy">Buy</button><button class="chip" type="button" data-side="sell">Sell</button></div>
-        <label class="wide">Token mint address<input name="token" placeholder="e.g. a pump.fun mint, or USDC" required autocomplete="off"></label>
-        <label class="lw-buy">Spend (USD of SOL)<input name="usd" type="number" min="1" max="${s.limits.maxOrderUsd}" step="1" value="5"></label>
-        <label class="lw-sell" hidden>Sell share of holding (%)<input name="pct" type="number" min="1" max="100" step="1" value="100"></label>
-        <div class="actions"><button class="btn btn-primary" type="submit">Get real quote</button></div>
-      </form>
-      <div class="lw-quote"></div>
-      <div class="lw-hist"><span class="eyebrow">Real trades</span>${s.trades.length ? s.trades.map(t => `<div><span>${new Date(t.at).toLocaleString()} · ${t.side === 'buy' ? 'Bought' : 'Sold'} ${esc(t.symbol)} · ${usd(t.usd)}</span><span class="${t.status === 'confirmed' ? 'up' : 'down'}">${t.status === 'confirmed' ? 'confirmed' : 'failed: ' + esc(t.error || '')}${t.explorer ? ` <a href="${esc(t.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}</span></div>`).join('') : '<p class="meta">None yet.</p>'}</div>`;
+    const addr = s.wallet.address;
+    const shortAddr = addr.slice(0, 6) + '…' + addr.slice(-6);
+    const err = s.portfolioError || p?.tokenError;
+    body.innerHTML = `<div class="lw">
+      <div class="lw-pills"><span class="lw-pill red">REAL MONEY · PILOT</span><span class="lw-pill">$${s.limits.maxOrderUsd} max per buy</span><span class="lw-pill">$${s.limits.maxDailyUsd}/day</span><span class="lw-pill">passkey on every trade</span></div>
+      <section class="lw-card lw-bal">
+        <div class="lw-row"><span class="eyebrow">Balance</span><button class="lw-icon" type="button" data-reload title="Refresh" aria-label="Refresh balance">↻</button></div>
+        <div class="lw-total">${p ? usd(p.totalUsd) : '—'}</div>
+        <div class="meta">${p ? `${fmt(p.sol, 4)} SOL · ${usd(p.solUsd)}` : 'Balance unavailable right now'}</div>
+        <div class="lw-addr"><code title="${esc(addr)}">${esc(shortAddr)}</code><button class="btn btn-sm" type="button" data-copy>Copy address</button><a class="btn btn-sm" href="https://solscan.io/account/${esc(addr)}" target="_blank" rel="noopener">Solscan ↗</a></div>
+        <p class="meta lw-hint">${p && p.sol < 0.02 ? 'To start, send a little SOL (0.05–0.1) to this address on the <b>Solana</b> network, then refresh.' : 'Send SOL on the Solana network to add funds.'}</p>
+        ${err ? `<p class="meta lw-warn">Some balances couldn't load: ${esc(err)}</p>` : ''}
+      </section>
+      ${toks.length ? `<section class="lw-card"><span class="eyebrow">Tokens</span><div class="lw-list">${toks.map(t => `<div><span><b>${esc(t.symbol)}</b> <span class="meta">${fmt(t.amount, t.amount >= 1000 ? 0 : 4)}</span></span><span>${t.usd === null ? '—' : usd(t.usd)} <button class="btn btn-sm" type="button" data-sellmint="${esc(t.mint)}">Sell</button></span></div>`).join('')}</div></section>` : ''}
+      <section class="lw-card">
+        <form class="lw-form">
+          <div class="lw-seg" role="tablist"><button class="on" type="button" data-side="buy">Buy</button><button type="button" data-side="sell">Sell</button></div>
+          <label>Token<input name="token" placeholder="Mint address, or USDC" required autocomplete="off" spellcheck="false"></label>
+          <div class="lw-buy"><span class="lw-lbl">Spend</span><div class="lw-chips">${[2, 5, 10, 25].filter(v => v <= s.limits.maxOrderUsd).map(v => `<button type="button" class="chip${v === 5 ? ' on' : ''}" data-usd="${v}">$${v}</button>`).join('')}<input name="usd" type="number" min="1" max="${s.limits.maxOrderUsd}" step="1" value="5" aria-label="Amount in USD"></div></div>
+          <div class="lw-sell" hidden><span class="lw-lbl">Sell</span><div class="lw-chips">${[25, 50, 100].map(v => `<button type="button" class="chip${v === 100 ? ' on' : ''}" data-pct="${v}">${v}%</button>`).join('')}<input name="pct" type="number" min="1" max="100" step="1" value="100" aria-label="Percent of holding"></div></div>
+          <button class="btn btn-primary lw-go" type="submit">Get real quote</button>
+        </form>
+        <div class="lw-quote"></div>
+      </section>
+      <section class="lw-card"><span class="eyebrow">Real trades</span><div class="lw-list">${s.trades.length ? s.trades.map(t => `<div><span>${t.side === 'buy' ? 'Bought' : 'Sold'} <b>${esc(t.symbol)}</b> · ${usd(t.usd)}<br><span class="meta">${new Date(t.at).toLocaleString()}</span></span><span class="${t.status === 'confirmed' ? 'up' : 'down'}">${t.status === 'confirmed' ? 'Confirmed' : 'Failed'}${t.explorer ? ` · <a href="${esc(t.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}${t.error ? `<br><span class="meta">${esc(t.error)}</span>` : ''}</span></div>`).join('') : '<p class="meta" style="margin:0">No real trades yet.</p>'}</div></section>
+    </div>`;
     const form = body.querySelector('.lw-form');
     let side = 'buy';
-    const setSide = v => { side = v; form.querySelectorAll('[data-side]').forEach(b => b.classList.toggle('on', b.dataset.side === v)); form.querySelector('.lw-buy').hidden = v !== 'buy'; form.querySelector('.lw-sell').hidden = v !== 'sell'; };
-    form.addEventListener('click', e => { const b = e.target.closest('[data-side]'); if (b) setSide(b.dataset.side); });
+    const setSide = v => { side = v; form.querySelectorAll('[data-side]').forEach(b => b.classList.toggle('on', b.dataset.side === v)); form.querySelector('.lw-buy').hidden = v !== 'buy'; form.querySelector('.lw-sell').hidden = v !== 'sell'; form.querySelector('.lw-go').textContent = v === 'buy' ? 'Get real quote' : 'Get sell quote'; };
+    form.addEventListener('click', e => {
+      const b = e.target.closest('[data-side]'); if (b) setSide(b.dataset.side);
+      const c = e.target.closest('[data-usd],[data-pct]');
+      if (c) { const k = c.dataset.usd ? 'usd' : 'pct'; form[k].value = c.dataset[k]; c.parentElement.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c)); }
+    });
+    form.addEventListener('input', e => { if (e.target.name === 'usd' || e.target.name === 'pct') e.target.parentElement.querySelectorAll('.chip').forEach(x => x.classList.remove('on')); });
     body.querySelectorAll('[data-sellmint]').forEach(b => b.onclick = () => { setSide('sell'); form.token.value = b.dataset.sellmint; form.scrollIntoView({ behavior: 'smooth' }); });
     form.onsubmit = async ev => {
       ev.preventDefault();
@@ -1200,7 +1241,7 @@ async function openLive() {
     if (t.closest('[data-secure]')) { close(); $('secureBtn')?.click(); return; }
     if (t.closest('[data-handle]')) { if (await chooseHandle()) render(); return; }
     if (t.closest('[data-reload]')) { render(); return; }
-    if (t.closest('[data-copy]')) { const a = body.querySelector('.lw-addr code').textContent; try { await navigator.clipboard.writeText(a); toast('Address copied'); } catch { prompt('Your wallet address', a); } return; }
+    if (t.closest('[data-copy]')) { const a = body.querySelector('.lw-addr code').title; try { await navigator.clipboard.writeText(a); toast('Address copied'); } catch { prompt('Your wallet address', a); } return; }
     if (t.closest('[data-cancel]')) { stop(); quote = null; body.querySelector('.lw-quote').innerHTML = ''; return; }
     if (t.closest('[data-create]')) {
       t.disabled = true; t.textContent = 'Creating on Turnkey…';

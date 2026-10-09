@@ -8,7 +8,7 @@ const defaultFetch: FetchLike = (u, i) => fetch(u, { ...i, signal: i?.signal ?? 
 
 export const SOL_MINT = "So11111111111111111111111111111111111111112";
 export const USDC_MINT = "EPjFWJd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v";
-const TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PCnBkCxx5JjKsF"];
+const TOKEN_PROGRAMS = ["TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", "TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"];
 
 export interface JupOrder {
   transaction: string | null;
@@ -90,17 +90,26 @@ export class SolanaRpc {
 
   async tokens(address: string): Promise<TokenBalance[]> {
     const out: TokenBalance[] = [];
+    let lastErr: Error | undefined, okCount = 0;
     for (const programId of TOKEN_PROGRAMS) {
-      const r = await this.call<{ value: { account: { data: { parsed: { info: { mint: string; tokenAmount: { amount: string; decimals: number; uiAmount: number | null } } } } } }[] }>(
+      let r;
+      try {
+        r = await this.call<{ value: { account: { data: { parsed: { info: { mint: string; tokenAmount: { amount: string; decimals: number; uiAmount: number | null } } } } } }[] }>(
         "getTokenAccountsByOwner",
         [address, { programId }, { encoding: "jsonParsed", commitment: "confirmed" }],
       );
+        okCount++;
+      } catch (e) {
+        lastErr = e as Error;
+        continue; // one token program failing shouldn't hide the other's balances
+      }
       for (const a of r.value) {
         const i = a.account.data.parsed.info;
         if (i.tokenAmount.amount === "0") continue;
         out.push({ mint: i.mint, amount: Number(i.tokenAmount.amount) / 10 ** i.tokenAmount.decimals, decimals: i.tokenAmount.decimals, raw: i.tokenAmount.amount });
       }
     }
+    if (!okCount && lastErr) throw lastErr;
     return out;
   }
 }
