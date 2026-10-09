@@ -31,6 +31,8 @@ export interface Withdrawal {
   expiresAt?: number;
   feeSol: number;
   createsAccountSol: number;
+  /** Self-custodial wallets: the request the owner's passkey stamps (sent to Turnkey as is). */
+  turnkey?: { body: string; credentialId?: string };
 }
 
 export interface PilotConfig {
@@ -156,7 +158,9 @@ export class LivePilot {
       reason: reason ?? null,
       wallet: w ? { address: w.address, createdAt: w.createdAt } : null,
       limits: { maxOrderUsd: this.cfg.maxOrderUsd, maxDailyUsd: this.cfg.maxDailyUsd, spentTodayUsd: this.spentToday(userId), reserveSol: this.cfg.reserveSol },
-      custody: "pilot: Outcry's server key can sign for this wallet after your passkey approval",
+      custody: w?.custody ?? (w ? "server" : null),
+      // An enrolment that wasn't confirmed yet can be finished with the same passkey.
+      custodyResume: w?.custody === "enrolled" ? { whoamiBody: JSON.stringify({ organizationId: w.subOrgId }), credentialId: w.credentialId } : null,
     };
   }
 
@@ -448,6 +452,7 @@ export class LivePilot {
       asset = info?.symbol ?? short(held.mint); mint = held.mint;
     }
     const wd: Withdrawal = { id: newId("wd"), userId, at: nowIso(), asset, mint, amount, to, status: "pending", tx, expiresAt: Date.now() + 60_000, feeSol: WITHDRAW_FEE_SOL, createsAccountSol };
+    this.attachPasskeySigning(wd);
     this.pendingWithdrawals.set(wd.id, wd);
     const { tx: _t, userId: _u, ...pub } = wd;
     return pub;
@@ -471,9 +476,46 @@ export class LivePilot {
     const { blockhash } = await this.d.rpc.latestBlockhash();
     const sol = acc.reduce((x, a) => x + a.lamports, 0) / 1e9;
     const wd: Withdrawal = { id: newId("wd"), userId, at: nowIso(), asset: `SOL (${acc.length} deposit${acc.length > 1 ? "s" : ""} reclaimed)`, mint: null, amount: sol, to: w.address, status: "pending", tx: buildCloseAccounts({ owner: w.address, accounts: acc, blockhash }), expiresAt: Date.now() + 60_000, feeSol: WITHDRAW_FEE_SOL, createsAccountSol: 0 };
+    this.attachPasskeySigning(wd);
     this.pendingWithdrawals.set(wd.id, wd);
     const { tx: _t, userId: _u, ...pub } = wd;
     return pub;
+  }
+
+  private attachPasskeySigning(wd: Withdrawal) {
+    const w = this.d.wallets.get(wd.userId);
+    if (w?.custody === "passkey" && wd.tx) wd.turnkey = { body: this.d.wallets.signBody(wd.userId, wd.tx), credentialId: w.credentialId };
+  }
+
+  // --- self-custody -------------------------------------------------------------------
+  private custodyChallenges = new Map<string, { challenge: string; at: number }>();
+
+  rememberCustodyChallenge(userId: string, challenge: string) {
+    this.custodyChallenges.set(userId, { challenge, at: Date.now() });
+  }
+
+  async enrollPasskey(userId: string, hasPasskey: boolean, reg: { id: string; response: { clientDataJSON: string; attestationObject: string; transports?: string[] } }) {
+    this.must(userId, hasPasskey);
+    const c = this.custodyChallenges.get(userId);
+    if (!c || Date.now() - c.at > 5 * 60_000) throw new Error("Start again: the passkey request expired");
+    this.custodyChallenges.delete(userId);
+    const r = await this.d.wallets.enrollPasskey(userId, {
+      challenge: c.challenge,
+      credentialId: reg.id,
+      clientDataJson: reg.response.clientDataJSON,
+      attestationObject: reg.response.attestationObject,
+      transports: reg.response.transports ?? ["internal", "hybrid"],
+      label: `Outcry wallet passkey ${new Date().toISOString().slice(0, 10)}`,
+    });
+    this.d.audit.append(`user:${userId}`, "live.custody_enrolled", { credentialId: reg.id });
+    return r;
+  }
+
+  async confirmCustody(userId: string, hasPasskey: boolean, whoamiBody: string, stamp: string) {
+    this.must(userId, hasPasskey);
+    const w = await this.d.wallets.confirmPasskey(userId, whoamiBody, stamp);
+    this.d.audit.append(`user:${userId}`, "live.custody_passkey", { address: w.address, endUserId: w.endUserId });
+    return { custody: w.custody, address: w.address };
   }
 
   withdrawalFor(userId: string, id: string) {
@@ -483,10 +525,12 @@ export class LivePilot {
   }
 
   /** Sign with Turnkey and send. Call only after the passkey check bound to this withdrawal. */
-  async executeWithdrawal(userId: string, hasPasskey: boolean, id: string, approval: string) {
+  async executeWithdrawal(userId: string, hasPasskey: boolean, id: string, approval: string, stamp?: string) {
     this.must(userId, hasPasskey);
-    if (!approval) throw new Error("Approve with your passkey");
     const wd = this.withdrawalFor(userId, id);
+    // Self-custodial: only the owner's passkey stamp can authorize; Outcry's own approval isn't enough.
+    if (wd.turnkey && !stamp) throw new Error("Sign with your wallet passkey");
+    if (!wd.turnkey && !approval) throw new Error("Approve with your passkey");
     if (wd.status !== "pending" || !wd.tx) throw new Error("This withdrawal was already sent");
     if (Date.now() > (wd.expiresAt ?? 0)) throw new Error("Expired: prepare it again");
     if (this.busy.has(userId)) throw new Error("Another transaction is still being sent");
@@ -495,7 +539,7 @@ export class LivePilot {
     wd.tx = undefined;
     this.pendingWithdrawals.delete(id);
     try {
-      const signed = await this.d.wallets.signSolana(userId, tx);
+      const signed = wd.turnkey ? await this.d.wallets.submitStampedSign(userId, wd.turnkey.body, stamp!) : await this.d.wallets.signSolana(userId, tx);
       wd.signature = await this.d.rpc.send(signed);
       const err = await this.d.rpc.confirm(wd.signature);
       wd.status = err ? "failed" : "confirmed";
@@ -507,6 +551,7 @@ export class LivePilot {
       this.busy.delete(userId);
     }
     delete wd.expiresAt;
+    delete wd.turnkey;
     const list = this.withdrawals.get(userId) ?? [];
     list.push(wd);
     if (list.length > 200) list.splice(0, list.length - 200);

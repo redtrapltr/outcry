@@ -378,12 +378,33 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     return needAuth().approvalOptions(uid, wd.id, JSON.stringify({ to: wd.to, asset: wd.asset, amount: wd.amount }), meta);
   });
   route("POST", "/api/live/withdraw/:id/execute", async ({ uid, params, body, meta }) => {
-    const b = z.object({ passkeyResponse: z.unknown() }).parse(body ?? {});
+    const b = z.object({ passkeyResponse: z.unknown(), stamp: z.string().max(10_000).optional() }).parse(body ?? {});
     const p = live();
     const wd = p.withdrawalFor(uid, params.id!);
+    if (wd.turnkey) {
+      // Self-custodial: the wallet passkey's stamp goes to Turnkey, which checks it.
+      if (!b.stamp) throw new HttpError(401, "Sign with your wallet passkey");
+      return p.executeWithdrawal(uid, secured(uid), wd.id, "turnkey-passkey", b.stamp);
+    }
     if (!b.passkeyResponse) throw new HttpError(401, "Confirm with your passkey to send");
     await needAuth().verifyApproval(uid, wd.id, b.passkeyResponse, meta);
     return p.executeWithdrawal(uid, secured(uid), wd.id, `webauthn:${wd.id}`);
+  });
+  // Self-custody: enrol a wallet passkey at Turnkey, prove it works, then hand it root.
+  route("POST", "/api/live/custody/options", async ({ uid, meta }) => {
+    const p = live();
+    const u = app.users.get(uid);
+    const opts = await needAuth().walletPasskeyOptions(u.handle ? `@${u.handle} wallet` : `${u.badge} wallet`, meta);
+    p.rememberCustodyChallenge(uid, opts.challenge);
+    return opts;
+  });
+  route("POST", "/api/live/custody/enroll", async ({ uid, body }) => {
+    const b = z.object({ registration: z.object({ id: z.string(), response: z.object({ clientDataJSON: z.string(), attestationObject: z.string(), transports: z.array(z.string()).optional() }) }) }).parse(body);
+    return live().enrollPasskey(uid, secured(uid), b.registration);
+  });
+  route("POST", "/api/live/custody/confirm", async ({ uid, body }) => {
+    const b = z.object({ whoamiBody: z.string().max(500), stamp: z.string().max(10_000) }).parse(body);
+    return live().confirmCustody(uid, secured(uid), b.whoamiBody, b.stamp);
   });
 
   // --- public --------------------------------------------------------------------------

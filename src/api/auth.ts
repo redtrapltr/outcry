@@ -115,6 +115,20 @@ export class AuthService {
     return this.verifyAssertion(challenge, response, meta);
   }
 
+  /**
+   * Registration options for a wallet passkey (enrolled at Turnkey, not as an Outcry login).
+   * Turnkey verifies the attestation itself, so this only shapes the browser request.
+   */
+  async walletPasskeyOptions(userName: string, meta: RequestMeta) {
+    return generateRegistrationOptions({
+      rpName: "Outcry wallet",
+      rpID: meta.rpId,
+      userName,
+      attestationType: "none",
+      authenticatorSelection: { residentKey: "preferred", userVerification: "preferred" },
+    });
+  }
+
   // --- approve a ticket: the challenge commits to the ticket id -------------
   async approvalOptions(userId: string, ticketId: string, ticketFingerprint: string, meta: RequestMeta) {
     const creds = [...this.credentials.values()].filter((c) => c.userId === userId);

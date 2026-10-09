@@ -83,6 +83,8 @@ button,input{font:inherit;color:inherit}
 .lw-addr code{font:13px var(--mono);background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:7px 10px}
 .btn-sm{padding:6px 12px;font-size:13px}
 .lw-hint{margin:0}
+.lw-custody{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;border:1px solid var(--line2);border-radius:10px;padding:10px 12px}
+.lw-custody.ok{border-color:rgba(61,220,151,.5)}
 .lw-reclaim{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.lw-warn{margin:0;color:#ffb36b}
 .lw-list{display:flex;flex-direction:column}
 .lw-list>div{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
@@ -1249,6 +1251,33 @@ function costLine(c) {
   const cents = n => (Math.abs(n) < 0.01 ? '$' + Math.abs(n).toFixed(4) : usd(Math.abs(n)));
   return `<div class="live-cost">Costs: network ${cents(c.networkFeeUsd)} · price vs market ${c.swapEdgeUsd >= 0 ? '+' : '−'}${cents(c.swapEdgeUsd)} · Outcry ${cents(c.outcryFeeUsd)}${c.rentUsd > 0.0001 ? ` · new token account deposit ${cents(c.rentUsd)} (refundable)` : ''}</div>`;
 }
+/** Sign a Turnkey request with the wallet passkey (the browser talks to the authenticator; the server only relays). */
+async function tkStamp(body, credentialId) {
+  const { WebauthnStamper } = await import('./turnkey-stamper.js');
+  const b64 = (credentialId || '').replace(/-/g, '+').replace(/_/g, '/');
+  const id = credentialId ? Uint8Array.from(atob(b64 + '='.repeat((4 - b64.length % 4) % 4)), c => c.charCodeAt(0)) : null;
+  const st = new WebauthnStamper({ rpId: location.hostname, allowCredentials: id ? [{ id, type: 'public-key' }] : [] });
+  return (await st.stamp(body)).stampHeaderValue;
+}
+/** Self-custody: create a wallet passkey, enrol it at Turnkey, prove it works, then it becomes the only owner. */
+async function makeSelfCustodial(resume) {
+  let whoamiBody, credentialId;
+  if (resume) ({ whoamiBody, credentialId } = resume);
+  else {
+    if (!confirm('Create a wallet passkey on this device. After this, only that passkey can withdraw from your real wallet. Outcry can still execute the trades you ask for, but can never move funds out.\n\nKeep this device (or your synced passkeys) safe: without it you cannot withdraw.')) return false;
+    const opts = await api('/api/live/custody/options', { method: 'POST' });
+    const { startRegistration } = await webauthn();
+    const registration = await startRegistration({ optionsJSON: opts });
+    toast('Passkey created, registering it with Turnkey…');
+    ({ whoamiBody, credentialId } = await api('/api/live/custody/enroll', { method: 'POST', body: { registration } }));
+  }
+  toast('Confirm once more to verify the passkey');
+  const stamp = await tkStamp(whoamiBody, credentialId);
+  await api('/api/live/custody/confirm', { method: 'POST', body: { whoamiBody, stamp } });
+  toast('Self-custodial: only your passkey can move funds out');
+  feed('Real wallet is now self-custodial');
+  return true;
+}
 /** A withdrawal review (wallet sheet or chat): full address, fees, passkey signing, result. */
 function withdrawTicket(w, { solUsdPerSol = 0, onDone, onCancel } = {}) {
   const el = document.createElement('div');
@@ -1265,11 +1294,15 @@ function withdrawTicket(w, { solUsdPerSol = 0, onDone, onCancel } = {}) {
   sg.onclick = async () => {
     sg.disabled = true; sg.textContent = 'Waiting for your passkey…';
     try {
-      const opts = await api(`/api/live/withdraw/${w.id}/challenge`, { method: 'POST' });
-      const { startAuthentication } = await webauthn();
-      const passkeyResponse = await startAuthentication({ optionsJSON: opts });
+      let payload;
+      if (w.turnkey) payload = { stamp: await tkStamp(w.turnkey.body, w.turnkey.credentialId) };
+      else {
+        const opts = await api(`/api/live/withdraw/${w.id}/challenge`, { method: 'POST' });
+        const { startAuthentication } = await webauthn();
+        payload = { passkeyResponse: await startAuthentication({ optionsJSON: opts }) };
+      }
       sg.textContent = 'Sending…';
-      const r = await api(`/api/live/withdraw/${w.id}/execute`, { method: 'POST', body: { passkeyResponse } });
+      const r = await api(`/api/live/withdraw/${w.id}/execute`, { method: 'POST', body: payload });
       el.querySelector('.live-acts').remove();
       st.textContent = r.status === 'confirmed' ? 'sent' : 'failed';
       res.innerHTML = r.status === 'confirmed' ? `<span class="up">✓ Sent</span>${r.explorer ? ` · <a href="${esc(r.explorer)}" target="_blank" rel="noopener">view tx ↗</a>` : ''}` : `<span class="down">Failed:</span> ${esc(r.error || 'unknown')}${r.explorer ? ` · <a href="${esc(r.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}`;
@@ -1352,6 +1385,9 @@ async function openLive() {
         <div class="lw-total">${p ? usd(p.totalUsd) : '—'}</div>
         <div class="meta">${p ? `${fmt(p.sol, 4)} SOL · ${usd(p.solUsd)}` : 'Balance unavailable right now'}</div>
         <div class="lw-addr"><code title="${esc(addr)}">${esc(shortAddr)}</code><button class="btn btn-sm" type="button" data-copy>Copy address</button><a class="btn btn-sm" href="https://solscan.io/account/${esc(addr)}" target="_blank" rel="noopener">Solscan ↗</a><button class="btn btn-sm" type="button" data-wdopen>Withdraw ↗</button></div>
+        <div class="lw-custody ${s.custody === 'passkey' ? 'ok' : ''}">${s.custody === 'passkey'
+          ? '<span>🔐 <b>Self-custodial.</b> Only your wallet passkey can move funds out; Outcry can only execute the trades you ask for.</span>'
+          : `<span>Custody: <b>${s.custody === 'enrolled' ? 'passkey enrolled, not verified yet' : "Outcry's server key (pilot)"}</b>. Make it self-custodial so only your passkey can withdraw.</span><button class="btn btn-sm" type="button" data-custody>${s.custody === 'enrolled' ? 'Finish setup' : 'Make it self-custodial'}</button>`}</div>
         <p class="meta lw-hint">${p && p.sol < 0.02 ? 'To start, send a little SOL (0.05–0.1) to this address on the <b>Solana</b> network, then refresh.' : 'Send SOL on the Solana network to add funds.'}</p>
         ${err ? `<p class="meta lw-warn">Some balances couldn't load: ${esc(err)}</p>` : ''}
         ${s.reclaimable?.count ? `<div class="lw-reclaim"><span class="meta">${s.reclaimable.count} empty token account${s.reclaimable.count > 1 ? 's' : ''} hold${s.reclaimable.count > 1 ? '' : 's'} ${fmt(s.reclaimable.sol, 4)} SOL of deposits${p?.sol ? ` (≈ ${usd(s.reclaimable.sol * p.solUsd / p.sol)})` : ''}.</span><button class="btn btn-sm" type="button" data-reclaim>Reclaim</button></div><div class="lw-reclaim-rev"></div>` : ''}
@@ -1380,6 +1416,12 @@ async function openLive() {
       ${(s.withdrawals || []).length ? `<section class="lw-card"><span class="eyebrow">Withdrawals</span><div class="lw-list">${s.withdrawals.map(w => `<div><span>Sent <b>${fmt(w.amount, w.amount >= 1000 ? 0 : 6)} ${esc(w.asset)}</b> to ${esc(w.to.slice(0, 4) + '…' + w.to.slice(-4))}<br><span class="meta">${new Date(w.at).toLocaleString()}</span></span><span class="${w.status === 'confirmed' ? 'up' : 'down'}">${w.status === 'confirmed' ? 'Confirmed' : 'Failed'}${w.explorer ? ` · <a href="${esc(w.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}${w.error ? `<br><span class="meta">${esc(w.error)}</span>` : ''}</span></div>`).join('')}</div></section>` : ''}
       <section class="lw-card"><span class="eyebrow">Real trades</span><div class="lw-list">${s.trades.length ? s.trades.map(t => `<div><span>${t.side === 'buy' ? 'Bought' : 'Sold'} <b>${esc(t.symbol)}</b> · ${usd(t.usd)}<br><span class="meta">${new Date(t.at).toLocaleString()}</span></span><span class="${t.status === 'confirmed' ? 'up' : 'down'}">${t.status === 'confirmed' ? 'Confirmed' : 'Failed'}${t.explorer ? ` · <a href="${esc(t.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}${t.error ? `<br><span class="meta">${esc(t.error)}</span>` : ''}${t.costs ? `<br><span class="meta">cost ${t.costs.totalCostUsd < 0.01 ? '$' + t.costs.totalCostUsd.toFixed(4) : usd(t.costs.totalCostUsd)}${t.costs.rentUsd > 0.0001 ? ' + ' + usd(t.costs.rentUsd) + ' deposit' : ''}</span>` : ''}</span></div>`).join('') : '<p class="meta" style="margin:0">No real trades yet.</p>'}</div></section>
     </div>`;
+    const cu = body.querySelector('[data-custody]');
+    if (cu) cu.onclick = async () => {
+      cu.disabled = true;
+      try { if (await makeSelfCustodial(s.custodyResume)) render(); } catch (e) { toast(e.message); }
+      cu.disabled = false;
+    };
     const rc = body.querySelector('[data-reclaim]');
     if (rc) rc.onclick = async () => {
       const host = body.querySelector('.lw-reclaim-rev');

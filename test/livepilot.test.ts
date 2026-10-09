@@ -11,13 +11,22 @@ function setup(over: Partial<{ allow: string[]; sol: number; tokenRaw: string; e
   const app = createOutcry({ mode: "paper" } as never);
   const u = app.users.create({ badge: "THI", jacket: "memes", residence: "CH" });
   app.users.setHandle(u.id, "thiago");
-  const calls: { sub: Record<string, unknown>[]; sign: { organizationId: string; signWith: string; unsignedTransaction: string }[]; exec: unknown[]; orders: URLSearchParams[]; sent: string[] } = { sub: [], sign: [], exec: [], orders: [], sent: [] };
+  const calls: { sub: Record<string, unknown>[]; sign: { organizationId: string; signWith: string; unsignedTransaction: string }[]; exec: unknown[]; orders: URLSearchParams[]; sent: string[]; users: Record<string, unknown>[]; policies: Record<string, unknown>[]; quorum: unknown[]; stamped: { path: string; body: string; stamp: string }[] } = { sub: [], sign: [], exec: [], orders: [], sent: [], users: [], policies: [], quorum: [], stamped: [] };
   const api: TurnkeyApi = {
-    getWhoami: async () => ({ organizationId: "org", organizationName: "Woodeng" }),
+    getWhoami: async (i) => ({ organizationId: i.organizationId, organizationName: "Woodeng", userId: "server_user" }),
     createSubOrganization: async (i) => (calls.sub.push(i), { subOrganizationId: "sub_1", wallet: { walletId: "w_1", addresses: [ADDR] } }),
     signTransaction: async (i) => (calls.sign.push(i), { signedTransaction: i.unsignedTransaction + "ff" }),
+    createUsers: async (i) => (calls.users.push(i), { userIds: ["owner_user"] }),
+    createPolicy: async (i) => (calls.policies.push(i), { policyId: `pol_${calls.policies.length}` }),
+    updateRootQuorum: async (i) => (calls.quorum.push(i), {}),
   };
-  const wallets = new TurnkeyWallets({ organizationId: "org", apiPublicKey: "02pub", apiPrivateKey: "priv" }, api);
+  const stampedPost = async (path: string, body: string, stamp: string) => {
+    calls.stamped.push({ path, body, stamp });
+    if (path.endsWith("whoami")) return stamp === "good" ? { organizationId: "sub_1", userId: "owner_user" } : { organizationId: "sub_1", userId: "someone_else" };
+    const j = JSON.parse(body);
+    return { activity: { status: "ACTIVITY_STATUS_COMPLETED", result: { signTransactionResult: { signedTransaction: j.parameters.unsignedTransaction + "aa" } } } };
+  };
+  const wallets = new TurnkeyWallets({ organizationId: "org", apiPublicKey: "02pub", apiPrivateKey: "priv" }, api, stampedPost);
   const json = (j: unknown, ok = true) => ({ ok, status: ok ? 200 : 400, json: async () => j, text: async () => JSON.stringify(j) });
   const jup = new JupiterSwap({ apiKey: "k" }, async (url, init) => {
     if (url.includes("/order?")) {
@@ -263,5 +272,45 @@ describe("reclaim deposits", () => {
     expect(tx.instructions.at(-1)!.programId.toBase58()).toBe("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
     rpc.emptyTokenAccounts = async () => [];
     await expect(s.pilot.prepareReclaim(s.u.id, true)).rejects.toThrow(/Nothing to reclaim/);
+  });
+});
+
+describe("self-custody (passkey owns the wallet)", () => {
+  it("enrols the passkey, limits the server, verifies before switching root, then withdrawals need the passkey", async () => {
+    const { Keypair, PublicKey } = await import("@solana/web3.js");
+    const { NATIVE_MINT, getAssociatedTokenAddressSync } = await import("@solana/spl-token");
+    const s = setup({ sol: 0.5 });
+    await s.pilot.createWallet(s.u.id, true);
+    await expect(s.pilot.enrollPasskey(s.u.id, true, { id: "cred1", response: { clientDataJSON: "cd", attestationObject: "ao" } })).rejects.toThrow(/expired/);
+    s.pilot.rememberCustodyChallenge(s.u.id, "chal123");
+    const e = await s.pilot.enrollPasskey(s.u.id, true, { id: "cred1", response: { clientDataJSON: "cd", attestationObject: "ao", transports: ["internal", "hybrid", "weird"] } });
+    const auth = (s.calls.users[0]!.users as { authenticators: { challenge: string; attestation: { credentialId: string; transports: string[] } }[] }[])[0]!.authenticators[0]!;
+    expect(auth.challenge).toBe("chal123");
+    expect(auth.attestation.transports).toEqual(["AUTHENTICATOR_TRANSPORT_INTERNAL", "AUTHENTICATOR_TRANSPORT_HYBRID"]);
+    const wsol = getAssociatedTokenAddressSync(NATIVE_MINT, new PublicKey(ADDR)).toBase58();
+    const swap = s.calls.policies[0] as { consensus: string; condition: string };
+    expect(swap.consensus).toContain("server_user");
+    expect(swap.condition).toContain(`t.to == '${wsol}'`);
+    expect(swap.condition).toContain(`t.owner != '${ADDR}'`);
+    expect(s.calls.quorum).toHaveLength(0); // not switched before the passkey is proven
+    expect(s.pilot.status(s.u.id, true).custody).toBe("enrolled");
+
+    await expect(s.pilot.confirmCustody(s.u.id, true, e.whoamiBody, "bad")).rejects.toThrow(/isn't the one/);
+    expect(s.calls.quorum).toHaveLength(0);
+    await s.pilot.confirmCustody(s.u.id, true, e.whoamiBody, "good");
+    expect(s.calls.quorum[0]).toEqual({ organizationId: "sub_1", threshold: 1, userIds: ["owner_user"] });
+    expect(s.pilot.status(s.u.id, true).custody).toBe("passkey");
+
+    // Withdrawals now go through the passkey stamp, never the server key.
+    const dest = Keypair.generate().publicKey.toBase58();
+    const w = await s.pilot.prepareWithdrawal(s.u.id, true, { to: dest, token: "SOL", amount: 0.01 });
+    expect(w.turnkey?.credentialId).toBe("cred1");
+    expect(JSON.parse(w.turnkey!.body).organizationId).toBe("sub_1");
+    await expect(s.pilot.executeWithdrawal(s.u.id, true, w.id, "webauthn:x")).rejects.toThrow(/wallet passkey/);
+    const signsBefore = s.calls.sign.length;
+    const r = await s.pilot.executeWithdrawal(s.u.id, true, w.id, "turnkey-passkey", "stamp-xyz");
+    expect(r.status).toBe("confirmed");
+    expect(s.calls.sign.length).toBe(signsBefore);
+    expect(s.calls.stamped.at(-1)).toMatchObject({ path: "/public/v1/submit/sign_transaction", stamp: "stamp-xyz" });
   });
 });
