@@ -17,6 +17,12 @@ type FetchLike = (url: string) => Promise<{ ok: boolean; status: number; json():
 const CRYPTO: Record<string, string> = { SOL: "SOLUSDT", ETH: "ETHUSDT", BTC: "BTCUSDT" };
 const STOCKS: Record<string, string> = { AAPLx: "AAPL", TSLAx: "TSLA", NVDAon: "NVDA", SPYon: "SPY" };
 const SOL_MINT = "So11111111111111111111111111111111111111112";
+/** Solana-side proxies when Binance is unreachable: wrapped ETH (Wormhole) and Coinbase's cbBTC. */
+const JUP_FALLBACK: Record<string, string> = {
+  SOL: SOL_MINT,
+  ETH: "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs",
+  BTC: "cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij",
+};
 const TTL: Record<Timeframe, number> = { "1m": 60_000, "5m": 120_000, "15m": 300_000, "1h": 300_000, "4h": 900_000, "1d": 1_800_000 };
 
 export interface LiveStatus {
@@ -114,11 +120,13 @@ export class LiveFeeds implements LiveOverlay {
 
   private async pollJupiterSol() {
     try {
-      const r = await this.f(`https://lite-api.jup.ag/price/v3?ids=${SOL_MINT}`);
+      const r = await this.f(`https://lite-api.jup.ag/price/v3?ids=${Object.values(JUP_FALLBACK).join(",")}`);
       if (!r.ok) return;
       const j = (await r.json()) as Record<string, { usdPrice?: number }>;
-      const p = j[SOL_MINT]?.usdPrice;
-      if (p && p > 0) this.px.set("SOL", { usd: p, at: Date.now(), source: "Jupiter" });
+      for (const [sym, mint] of Object.entries(JUP_FALLBACK)) {
+        const p = j[mint]?.usdPrice;
+        if (p && p > 0) this.px.set(sym, { usd: p, at: Date.now(), source: "Jupiter" });
+      }
     } catch {
       /* both down: simulated prices are used */
     }

@@ -13,7 +13,7 @@ import { newId, nowIso, type AuditLog } from "../core/infra.js";
 import type { UserStore } from "../core/users.js";
 import type { TurnkeyWallets } from "../wallet/turnkey.js";
 import { SOL_MINT, USDC_MINT, type JupiterSwap, type SolanaRpc } from "./chain.js";
-import { ATA_RENT_SOL, TOKEN_PROGRAMS, WITHDRAW_FEE_SOL, buildSolTransfer, buildTokenTransfer, checkDestination } from "./withdraw.js";
+import { ATA_RENT_SOL, TOKEN_PROGRAMS, WITHDRAW_FEE_SOL, buildCloseAccounts, buildSolTransfer, buildTokenTransfer, checkDestination } from "./withdraw.js";
 
 export interface Withdrawal {
   id: string;
@@ -448,6 +448,29 @@ export class LivePilot {
       asset = info?.symbol ?? short(held.mint); mint = held.mint;
     }
     const wd: Withdrawal = { id: newId("wd"), userId, at: nowIso(), asset, mint, amount, to, status: "pending", tx, expiresAt: Date.now() + 60_000, feeSol: WITHDRAW_FEE_SOL, createsAccountSol };
+    this.pendingWithdrawals.set(wd.id, wd);
+    const { tx: _t, userId: _u, ...pub } = wd;
+    return pub;
+  }
+
+  /** How much SOL is locked in empty token accounts (returned by reclaimDeposits). */
+  async reclaimable(userId: string) {
+    const w = this.d.wallets.get(userId);
+    if (!w) return { count: 0, sol: 0 };
+    const acc = await this.d.rpc.emptyTokenAccounts(w.address);
+    return { count: acc.length, sol: acc.reduce((x, a) => x + a.lamports, 0) / 1e9 };
+  }
+
+  /** Prepare closing empty token accounts (max 20 per transaction); signed like a withdrawal, to the wallet itself. */
+  async prepareReclaim(userId: string, hasPasskey: boolean) {
+    this.must(userId, hasPasskey);
+    const w = this.d.wallets.get(userId);
+    if (!w) throw new Error("You don't have a real wallet yet");
+    const acc = (await this.d.rpc.emptyTokenAccounts(w.address)).slice(0, 20);
+    if (!acc.length) throw new Error("Nothing to reclaim: no empty token accounts");
+    const { blockhash } = await this.d.rpc.latestBlockhash();
+    const sol = acc.reduce((x, a) => x + a.lamports, 0) / 1e9;
+    const wd: Withdrawal = { id: newId("wd"), userId, at: nowIso(), asset: `SOL (${acc.length} deposit${acc.length > 1 ? "s" : ""} reclaimed)`, mint: null, amount: sol, to: w.address, status: "pending", tx: buildCloseAccounts({ owner: w.address, accounts: acc, blockhash }), expiresAt: Date.now() + 60_000, feeSol: WITHDRAW_FEE_SOL, createsAccountSol: 0 };
     this.pendingWithdrawals.set(wd.id, wd);
     const { tx: _t, userId: _u, ...pub } = wd;
     return pub;

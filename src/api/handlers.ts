@@ -346,7 +346,8 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     if (st.wallet) {
       try { portfolio = await opts.live.portfolio(uid); } catch (e) { portfolioError = (e as Error).message; }
     }
-    return { ...st, portfolio, portfolioError, trades: opts.live.history(uid).slice(0, 30), withdrawals: opts.live.withdrawalHistory(uid).slice(0, 20) };
+    const reclaimable = st.wallet ? await opts.live.reclaimable(uid).catch(() => null) : null;
+    return { ...st, portfolio, portfolioError, reclaimable, trades: opts.live.history(uid).slice(0, 30), withdrawals: opts.live.withdrawalHistory(uid).slice(0, 20) };
   });
   route("POST", "/api/live/wallet", ({ uid }) => live().createWallet(uid, secured(uid)));
   route("POST", "/api/live/quote", ({ uid, body }) => {
@@ -370,6 +371,8 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     const b = z.object({ to: z.string().min(32).max(64), token: z.string().min(2).max(64), amount: z.number().positive().optional(), max: z.boolean().optional() }).parse(body);
     return live().prepareWithdrawal(uid, secured(uid), b);
   });
+  route("GET", "/api/live/reclaim", ({ uid }) => live().reclaimable(uid));
+  route("POST", "/api/live/reclaim", ({ uid }) => live().prepareReclaim(uid, secured(uid)));
   route("POST", "/api/live/withdraw/:id/challenge", async ({ uid, params, meta }) => {
     const wd = live().withdrawalFor(uid, params.id!);
     return needAuth().approvalOptions(uid, wd.id, JSON.stringify({ to: wd.to, asset: wd.asset, amount: wd.amount }), meta);

@@ -246,3 +246,22 @@ describe("withdrawals from the chat", () => {
     expect(n).toBe(3);
   });
 });
+
+describe("reclaim deposits", () => {
+  it("closes empty token accounts back into the wallet", async () => {
+    const { Transaction } = await import("@solana/web3.js");
+    const s = setup({ sol: 0.5 });
+    await s.pilot.createWallet(s.u.id, true);
+    const rpc = (s.pilot as unknown as { d: { rpc: { emptyTokenAccounts: () => Promise<unknown[]> } } }).d.rpc;
+    rpc.emptyTokenAccounts = async () => [{ pubkey: "So11111111111111111111111111111111111111112", program: "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA", lamports: 2_039_280 }];
+    expect((await s.pilot.reclaimable(s.u.id)).sol).toBeCloseTo(0.00203928, 9);
+    const w = await s.pilot.prepareReclaim(s.u.id, true);
+    expect(w.to).toBe(ADDR);
+    expect(w.asset).toMatch(/reclaimed/);
+    await s.pilot.executeWithdrawal(s.u.id, true, w.id, "webauthn:x");
+    const tx = Transaction.from(Buffer.from(s.calls.sign.at(-1)!.unsignedTransaction, "hex"));
+    expect(tx.instructions.at(-1)!.programId.toBase58()).toBe("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA");
+    rpc.emptyTokenAccounts = async () => [];
+    await expect(s.pilot.prepareReclaim(s.u.id, true)).rejects.toThrow(/Nothing to reclaim/);
+  });
+});

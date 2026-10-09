@@ -144,6 +144,19 @@ export class SolanaRpc {
     return out;
   }
 
+  /** Token accounts holding nothing: closing them returns their deposit (~0.002 SOL each). */
+  async emptyTokenAccounts(owner: string): Promise<{ pubkey: string; program: string; lamports: number }[]> {
+    const out: { pubkey: string; program: string; lamports: number }[] = [];
+    for (const programId of TOKEN_PROGRAMS) {
+      const r = await this.call<{ value: { pubkey: string; account: { lamports: number; data: { parsed: { info: { tokenAmount: { amount: string } } } } } }[] }>(
+        "getTokenAccountsByOwner",
+        [owner, { programId }, { encoding: "jsonParsed", commitment: "confirmed" }],
+      ).catch(() => ({ value: [] }));
+      for (const a of r.value) if (a.account.data.parsed.info.tokenAmount.amount === "0") out.push({ pubkey: a.pubkey, program: programId, lamports: a.account.lamports });
+    }
+    return out;
+  }
+
   async latestBlockhash(): Promise<{ blockhash: string; lastValidBlockHeight: number }> {
     const r = await this.call<{ value: { blockhash: string; lastValidBlockHeight: number } }>("getLatestBlockhash", [{ commitment: "confirmed" }]);
     return r.value;

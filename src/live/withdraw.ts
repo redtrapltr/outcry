@@ -4,7 +4,7 @@
  * pilot signs it with Turnkey after a passkey approval and sends it.
  */
 import { ComputeBudgetProgram, PublicKey, SystemProgram, Transaction } from "@solana/web3.js";
-import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
+import { TOKEN_2022_PROGRAM_ID, TOKEN_PROGRAM_ID, createAssociatedTokenAccountIdempotentInstruction, createCloseAccountInstruction, createTransferCheckedInstruction, getAssociatedTokenAddressSync } from "@solana/spl-token";
 
 /** Priority fee so withdrawals land when the network is busy (~0.00002 SOL total). */
 const PRIORITY_MICRO_LAMPORTS = 50_000;
@@ -48,3 +48,16 @@ export function buildTokenTransfer(p: { from: string; to: string; mint: string; 
 }
 
 export const TOKEN_PROGRAMS = [TOKEN_PROGRAM_ID.toBase58(), TOKEN_2022_PROGRAM_ID.toBase58()];
+
+/** Close empty token accounts; their deposits go back to the owner. */
+export function buildCloseAccounts(p: { owner: string; accounts: { pubkey: string; program: string }[]; blockhash: string }): string {
+  const owner = new PublicKey(p.owner);
+  const tx = new Transaction({ feePayer: owner, recentBlockhash: p.blockhash });
+  tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNITS }));
+  tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_MICRO_LAMPORTS }));
+  for (const a of p.accounts) {
+    const program = a.program === TOKEN_2022_PROGRAM_ID.toBase58() ? TOKEN_2022_PROGRAM_ID : TOKEN_PROGRAM_ID;
+    tx.add(createCloseAccountInstruction(new PublicKey(a.pubkey), owner, owner, [], program));
+  }
+  return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
+}

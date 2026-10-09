@@ -27,10 +27,12 @@ describe("live prices", () => {
 
   it("falls back to Jupiter for SOL when Binance fails", async () => {
     const feeds = new LiveFeeds({
-      fetch: async (u) => (u.includes("jup.ag") ? ok({ So11111111111111111111111111111111111111112: { usdPrice: 140.1 } }) : { ok: false, status: 451, json: async () => ({}) }),
+      fetch: async (u) => (u.includes("jup.ag") ? ok({ So11111111111111111111111111111111111111112: { usdPrice: 140.1 }, "7vfCXTUXx5WJV5JADk17DUJ4ksgau7utNKj4b963voxs": { usdPrice: 2501 }, cbbtcf3aa214zXHbiAZQwf4122FBYbraNdFqgw4iMij: { usdPrice: 82600 } }) : { ok: false, status: 418, json: async () => ({}) }),
     });
     await feeds.pollCrypto();
     expect(feeds.price("SOL")).toBe(140.1);
+    expect(feeds.price("ETH")).toBe(2501);
+    expect(feeds.price("BTC")).toBe(82600);
   });
 });
 

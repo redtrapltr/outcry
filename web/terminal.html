@@ -82,7 +82,8 @@ button,input{font:inherit;color:inherit}
 .lw-addr{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:6px}
 .lw-addr code{font:13px var(--mono);background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:7px 10px}
 .btn-sm{padding:6px 12px;font-size:13px}
-.lw-hint{margin:0}.lw-warn{margin:0;color:#ffb36b}
+.lw-hint{margin:0}
+.lw-reclaim{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.lw-warn{margin:0;color:#ffb36b}
 .lw-list{display:flex;flex-direction:column}
 .lw-list>div{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
 .lw-list>div:last-child{border-bottom:0}
@@ -1253,10 +1254,11 @@ function withdrawTicket(w, { solUsdPerSol = 0, onDone, onCancel } = {}) {
   const el = document.createElement('div');
   el.className = 'live-tk';
   const solFee = (w.feeSol + w.createsAccountSol) * solUsdPerSol;
-  el.innerHTML = `<div class="ticket"><div class="t-head" style="background:#ff5a5a;color:#1a0f2a"><span>WITHDRAWAL · SOLANA</span><span class="wd-st">check the address</span></div>
-    <div class="lw-qbody"><div><b>Send ${fmt(w.amount, w.amount >= 1000 ? 2 : 6)} ${esc(w.asset)}</b><div class="meta">to</div><code style="font:12px var(--mono);word-break:break-all">${esc(w.to)}</code></div>
+  const reclaim = /reclaimed/.test(w.asset);
+  el.innerHTML = `<div class="ticket"><div class="t-head" style="background:${reclaim ? '#3DDC97' : '#ff5a5a'};color:#1a0f2a"><span>${reclaim ? 'RECLAIM DEPOSITS · SOLANA' : 'WITHDRAWAL · SOLANA'}</span><span class="wd-st">${reclaim ? 'back to this wallet' : 'check the address'}</span></div>
+    <div class="lw-qbody"><div><b>${reclaim ? 'Get back' : 'Send'} ${fmt(w.amount, w.amount >= 1000 ? 2 : 6)} ${esc(w.asset)}</b><div class="meta">to</div><code style="font:12px var(--mono);word-break:break-all">${esc(w.to)}</code></div>
     <div style="text-align:right">network fee ≈ ${Number(w.feeSol).toFixed(6)} SOL${w.createsAccountSol ? `<br>+ ${w.createsAccountSol} SOL receiver token account` : ''}${solFee ? `<br><span class="meta">≈ ${usd(solFee)}</span>` : ''}</div></div></div>
-    <p class="meta" style="margin:0">Withdrawals can't be reversed. Make sure this is your address on the Solana network.</p>
+    <p class="meta" style="margin:0">${reclaim ? 'Closes empty token accounts; you can still buy those tokens again later.' : "Withdrawals can't be reversed. Make sure this is your address on the Solana network."}</p>
     <div class="live-acts"><button class="btn btn-primary" type="button" data-wdsign>Sign with passkey & send</button><button class="btn" type="button" data-wdcancel>Cancel</button></div><div class="live-res meta"></div>`;
   const st = el.querySelector('.wd-st'), res = el.querySelector('.live-res'), sg = el.querySelector('[data-wdsign]');
   el.querySelector('[data-wdcancel]').onclick = () => { if (onCancel) onCancel(); else { el.querySelector('.live-acts').remove(); st.textContent = 'cancelled'; } };
@@ -1352,6 +1354,7 @@ async function openLive() {
         <div class="lw-addr"><code title="${esc(addr)}">${esc(shortAddr)}</code><button class="btn btn-sm" type="button" data-copy>Copy address</button><a class="btn btn-sm" href="https://solscan.io/account/${esc(addr)}" target="_blank" rel="noopener">Solscan ↗</a><button class="btn btn-sm" type="button" data-wdopen>Withdraw ↗</button></div>
         <p class="meta lw-hint">${p && p.sol < 0.02 ? 'To start, send a little SOL (0.05–0.1) to this address on the <b>Solana</b> network, then refresh.' : 'Send SOL on the Solana network to add funds.'}</p>
         ${err ? `<p class="meta lw-warn">Some balances couldn't load: ${esc(err)}</p>` : ''}
+        ${s.reclaimable?.count ? `<div class="lw-reclaim"><span class="meta">${s.reclaimable.count} empty token account${s.reclaimable.count > 1 ? 's' : ''} hold${s.reclaimable.count > 1 ? '' : 's'} ${fmt(s.reclaimable.sol, 4)} SOL of deposits${p?.sol ? ` (≈ ${usd(s.reclaimable.sol * p.solUsd / p.sol)})` : ''}.</span><button class="btn btn-sm" type="button" data-reclaim>Reclaim</button></div><div class="lw-reclaim-rev"></div>` : ''}
       </section>
       <section class="lw-card lw-wd" hidden>
         <div class="lw-row"><span class="eyebrow">Withdraw to your own wallet</span><button class="lw-icon" type="button" data-wdclose aria-label="Close withdraw">×</button></div>
@@ -1377,6 +1380,12 @@ async function openLive() {
       ${(s.withdrawals || []).length ? `<section class="lw-card"><span class="eyebrow">Withdrawals</span><div class="lw-list">${s.withdrawals.map(w => `<div><span>Sent <b>${fmt(w.amount, w.amount >= 1000 ? 0 : 6)} ${esc(w.asset)}</b> to ${esc(w.to.slice(0, 4) + '…' + w.to.slice(-4))}<br><span class="meta">${new Date(w.at).toLocaleString()}</span></span><span class="${w.status === 'confirmed' ? 'up' : 'down'}">${w.status === 'confirmed' ? 'Confirmed' : 'Failed'}${w.explorer ? ` · <a href="${esc(w.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}${w.error ? `<br><span class="meta">${esc(w.error)}</span>` : ''}</span></div>`).join('')}</div></section>` : ''}
       <section class="lw-card"><span class="eyebrow">Real trades</span><div class="lw-list">${s.trades.length ? s.trades.map(t => `<div><span>${t.side === 'buy' ? 'Bought' : 'Sold'} <b>${esc(t.symbol)}</b> · ${usd(t.usd)}<br><span class="meta">${new Date(t.at).toLocaleString()}</span></span><span class="${t.status === 'confirmed' ? 'up' : 'down'}">${t.status === 'confirmed' ? 'Confirmed' : 'Failed'}${t.explorer ? ` · <a href="${esc(t.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}${t.error ? `<br><span class="meta">${esc(t.error)}</span>` : ''}${t.costs ? `<br><span class="meta">cost ${t.costs.totalCostUsd < 0.01 ? '$' + t.costs.totalCostUsd.toFixed(4) : usd(t.costs.totalCostUsd)}${t.costs.rentUsd > 0.0001 ? ' + ' + usd(t.costs.rentUsd) + ' deposit' : ''}</span>` : ''}</span></div>`).join('') : '<p class="meta" style="margin:0">No real trades yet.</p>'}</div></section>
     </div>`;
+    const rc = body.querySelector('[data-reclaim]');
+    if (rc) rc.onclick = async () => {
+      const host = body.querySelector('.lw-reclaim-rev');
+      try { const w = await api('/api/live/reclaim', { method: 'POST' }); host.innerHTML = ''; host.appendChild(withdrawTicket(w, { solUsdPerSol: (p?.solUsd && p?.sol) ? p.solUsd / p.sol : 0, onDone: () => setTimeout(render, 3000), onCancel: () => { host.innerHTML = ''; } })); }
+      catch (e) { host.innerHTML = `<p class="meta down">${esc(e.message)}</p>`; }
+    };
     const wdc = body.querySelector('.lw-wd'), wdf = body.querySelector('.lw-wdform'), wdrev = body.querySelector('.lw-wdrev');
     body.querySelector('[data-wdopen]').onclick = () => { wdc.hidden = false; wdc.scrollIntoView({ behavior: 'smooth', block: 'center' }); };
     body.querySelector('[data-wdclose]').onclick = () => { wdc.hidden = true; wdrev.innerHTML = ''; };
