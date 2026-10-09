@@ -103,6 +103,9 @@ button,input{font:inherit;color:inherit}
 .lw-go{width:100%;padding:13px}
 .lw-qbody{display:flex;justify-content:space-between;gap:12px;padding:14px;flex-wrap:wrap}
 #liveBtn{border-color:#ff5a5a;color:#ffb3b3}
+.live-tk{display:flex;flex-direction:column;gap:10px;max-width:560px}
+.live-acts{display:flex;gap:8px;flex-wrap:wrap}
+.live-res a{color:var(--voice-text)}
 @media (max-width:640px){.lw-total{font-size:42px}.lw-card{padding:14px}}
 .creator-head{display:flex;gap:16px;align-items:center}
 .cbadge{width:64px;height:64px;flex:none;border-radius:14px;display:grid;place-items:center;background:#ff5fa2;color:#1a0f2a;font:900 22px var(--display)}
@@ -744,6 +747,7 @@ function searchCard(c) {
 async function renderCards(body, cards, instant = false) {
   for (const c of cards) {
     if (c.type === 'order') body.appendChild(orderCard(c.ticket));
+    else if (c.type === 'live_order') body.appendChild(liveTicket(c.quote));
     else if (c.type === 'launch') body.appendChild(launchCard(c.ticket, c.devSharePct));
     else if (c.type === 'agent') body.appendChild(await agentCard(c, instant));
     else if (c.type === 'strategy') body.appendChild(strategyCard(c));
@@ -1163,6 +1167,49 @@ async function openPublish(agentId, name) {
     } catch (err) { toast(err.message); }
   };
 }
+/** A real-money order ticket (chat or wallet sheet): countdown, passkey signing, result. */
+function liveTicket(q, { onDone, onCancel } = {}) {
+  const el = document.createElement('div');
+  el.className = 'live-tk';
+  const amt = (n) => fmt(n, n >= 1000 ? 2 : 6);
+  el.innerHTML = `<div class="ticket"><div class="t-head" style="background:#ff5a5a;color:#1a0f2a"><span>REAL MONEY · SOLANA</span><span class="lw-ttl"></span></div>
+    <div class="lw-qbody"><div><b>${q.side.toUpperCase()} · ${esc(q.symbol)}</b><div class="meta">jupiter${q.router ? ' · ' + esc(q.router) : ''}${q.feeBps !== undefined ? ` · fee ${(q.feeBps / 100).toFixed(2)}%` : ''}</div></div>
+    <div style="text-align:right">pay ${amt(q.payAmount)} ${esc(q.payAsset)}<br>receive ≈ ${amt(q.receiveAmount)} ${esc(q.receiveAsset)}<br><b>≈ ${usd(q.usd)}</b></div></div></div>
+    <div class="live-acts"><button class="btn btn-primary" type="button" data-sign>Sign with passkey & send</button><button class="btn" type="button" data-cancel>Cancel</button></div>
+    <div class="live-res meta"></div>`;
+  const ttl = el.querySelector('.lw-ttl'), sg = el.querySelector('[data-sign]'), res = el.querySelector('.live-res');
+  let done = false;
+  const timer = setInterval(() => {
+    if (!document.body.contains(el) && el.isConnected === false && done) return clearInterval(timer);
+    const left = Math.max(0, Math.round((q.expiresAt - Date.now()) / 1000));
+    if (done) return;
+    ttl.textContent = left ? `expires in ${left}s` : 'expired';
+    if (!left) { clearInterval(timer); sg.disabled = true; sg.textContent = 'Quote expired, ask again'; }
+  }, 250);
+  el.querySelector('[data-cancel]').onclick = () => { clearInterval(timer); done = true; if (onCancel) onCancel(); else { el.querySelector('.live-acts').remove(); ttl.textContent = 'cancelled'; } };
+  sg.onclick = async () => {
+    sg.disabled = true; sg.textContent = 'Waiting for your passkey…';
+    try {
+      const opts = await api(`/api/live/quote/${q.id}/challenge`, { method: 'POST' });
+      const { startAuthentication } = await webauthn();
+      const passkeyResponse = await startAuthentication({ optionsJSON: opts });
+      sg.textContent = 'Sending to Solana…';
+      const r = await api(`/api/live/quote/${q.id}/execute`, { method: 'POST', body: { passkeyResponse } });
+      done = true; clearInterval(timer);
+      el.querySelector('.live-acts').remove();
+      if (r.status === 'confirmed') {
+        ttl.textContent = 'confirmed';
+        res.innerHTML = `<span class="up">✓ Confirmed on Solana</span> · received ${esc(r.received)}${r.signature ? ` · <a href="https://solscan.io/tx/${esc(r.signature)}" target="_blank" rel="noopener">view tx ↗</a>` : ''}`;
+        toast(`Confirmed: ${r.side === 'buy' ? 'bought' : 'sold'} ${r.symbol}`); feed(`REAL ${r.side} ${r.symbol} ${usd(r.usd)} confirmed`);
+      } else {
+        ttl.textContent = 'failed';
+        res.innerHTML = `<span class="down">Failed:</span> ${esc(r.error || 'unknown')}${r.signature ? ` · <a href="https://solscan.io/tx/${esc(r.signature)}" target="_blank" rel="noopener">tx ↗</a>` : ''}`;
+      }
+      onDone?.(r);
+    } catch (err) { toast(err.message); sg.disabled = false; sg.textContent = 'Sign with passkey & send'; }
+  };
+  return el;
+}
 async function openLive() {
   const { body, close } = sheet('Real wallet');
   let quote = null, timer = null;
@@ -1227,13 +1274,8 @@ async function openLive() {
       try {
         quote = await api('/api/live/quote', { method: 'POST', body: side === 'buy' ? { side, token: String(f.get('token')).trim(), usd: +f.get('usd') } : { side, token: String(f.get('token')).trim(), pct: +f.get('pct') } });
       } catch (e) { host.innerHTML = `<p class="meta down">${esc(e.message)}</p>`; return; }
-      host.innerHTML = `<div class="ticket"><div class="t-head" style="background:#ff5a5a;color:#1a0f2a"><span>REAL ORDER · SOLANA</span><span class="lw-ttl"></span></div>
-        <div class="lw-qbody"><div><b>${quote.side.toUpperCase()} · ${esc(quote.symbol)}</b><div class="meta">jupiter${quote.router ? ' · ' + esc(quote.router) : ''}${quote.feeBps !== undefined ? ` · fee ${(quote.feeBps / 100).toFixed(2)}%` : ''}</div></div>
-        <div style="text-align:right">pay ${fmt(quote.payAmount, quote.payAmount >= 1000 ? 2 : 6)} ${esc(quote.payAsset)}<br>receive ≈ ${fmt(quote.receiveAmount, quote.receiveAmount >= 1000 ? 2 : 6)} ${esc(quote.receiveAsset)}<br><b>≈ ${usd(quote.usd)}</b></div></div></div>
-        <div style="display:flex;gap:8px;margin-top:10px"><button class="btn btn-primary" type="button" data-sign>Sign with passkey & send</button><button class="btn" type="button" data-cancel>Cancel</button></div>`;
-      const ttl = host.querySelector('.lw-ttl');
-      stop();
-      timer = setInterval(() => { const left = Math.max(0, Math.round((quote.expiresAt - Date.now()) / 1000)); ttl.textContent = left ? `expires in ${left}s` : 'expired, get a new quote'; if (!left) { stop(); host.querySelector('[data-sign]').disabled = true; } }, 250);
+      host.innerHTML = '';
+      host.appendChild(liveTicket(quote, { onDone: () => setTimeout(render, 2500), onCancel: () => { host.innerHTML = ''; } }));
     };
   };
   body.addEventListener('click', async e => {
@@ -1242,26 +1284,10 @@ async function openLive() {
     if (t.closest('[data-handle]')) { if (await chooseHandle()) render(); return; }
     if (t.closest('[data-reload]')) { render(); return; }
     if (t.closest('[data-copy]')) { const a = body.querySelector('.lw-addr code').title; try { await navigator.clipboard.writeText(a); toast('Address copied'); } catch { prompt('Your wallet address', a); } return; }
-    if (t.closest('[data-cancel]')) { stop(); quote = null; body.querySelector('.lw-quote').innerHTML = ''; return; }
     if (t.closest('[data-create]')) {
       t.disabled = true; t.textContent = 'Creating on Turnkey…';
       try { const w = await api('/api/live/wallet', { method: 'POST' }); toast('Real wallet created: ' + w.address.slice(0, 6) + '…'); render(); } catch (err) { toast(err.message); t.disabled = false; t.textContent = 'Create my real wallet'; }
       return;
-    }
-    const sg = t.closest('[data-sign]');
-    if (sg && quote) {
-      sg.disabled = true; sg.textContent = 'Waiting for your passkey…';
-      try {
-        const opts = await api(`/api/live/quote/${quote.id}/challenge`, { method: 'POST' });
-        const { startAuthentication } = await webauthn();
-        const passkeyResponse = await startAuthentication({ optionsJSON: opts });
-        sg.textContent = 'Sending to Solana…';
-        const r = await api(`/api/live/quote/${quote.id}/execute`, { method: 'POST', body: { passkeyResponse } });
-        stop();
-        if (r.status === 'confirmed') { toast(`Confirmed: ${r.side === 'buy' ? 'bought' : 'sold'} ${r.symbol}`); feed(`REAL ${r.side} ${r.symbol} ${usd(r.usd)} confirmed`); }
-        else toast('Trade failed: ' + (r.error || 'unknown'));
-        render();
-      } catch (err) { toast(err.message); sg.disabled = false; sg.textContent = 'Sign with passkey & send'; }
     }
   });
   const obs = new MutationObserver(() => { if (!document.body.contains(body)) { stop(); obs.disconnect(); } });

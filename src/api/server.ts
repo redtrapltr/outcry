@@ -137,6 +137,7 @@ export async function buildServer(opts: ServerOptions = {}) {
     setInterval(() => void refresh(), 5 * 60_000).unref();
   }
   const auth = new AuthService();
+  if (livePilot) orch.tools.live = { pilot: livePilot, secured: (uid) => auth.hasPasskey(uid) };
   let persistence: Persistence | undefined;
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
     auth,

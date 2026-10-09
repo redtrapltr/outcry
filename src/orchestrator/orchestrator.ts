@@ -126,7 +126,7 @@ export class Orchestrator {
       if (!calls.length) {
         reply = texts.join("\n").trim();
         // Guard: a reply that says a ticket is ready when no ticket was created this turn.
-        const madeTicket = cards.some((c) => c.type === "order" || c.type === "launch");
+        const madeTicket = cards.some((c) => c.type === "order" || c.type === "launch" || c.type === "live_order");
         const asked = toolCalls.some((n) => n === "propose_order" || n === "propose_launch");
         // An existing unsigned ticket is fine to point at (it's listed in the app); only a ticket that exists nowhere is a problem.
         const anyPending = this.app.desk.listForUser(userId).some((t) => t.status === "needs_confirmation" || t.status === "needs_second_confirmation");

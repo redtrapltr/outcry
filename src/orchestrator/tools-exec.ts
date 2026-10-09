@@ -21,7 +21,8 @@ export type Card =
   | { type: "strategy"; strategy: Omit<SavedStrategy, "report">; report: BacktestSummary }
   | { type: "strategy_search"; asset: string; tested: number; real: boolean; sources: string[]; buyHoldPct: number; ranking: StrategyRank[] }
   | { type: "portfolio"; data: ReturnType<Outcry["users"]["portfolio"]> }
-  | { type: "agent_control"; agent: Agent };
+  | { type: "agent_control"; agent: Agent }
+  | { type: "live_order"; quote: Record<string, unknown> };
 
 export interface BlueprintNode {
   key: "goal" | "markets" | "signals" | "risk" | "execution";
@@ -115,6 +116,8 @@ export class ToolExecutor {
   lookup?: { ensureFrom(text: string): Promise<string[]> };
   /** Resolves stock tickers / company names to tradable tokens (server, live data on). */
   stocks?: { ensureFrom(text: string): Promise<string[]> };
+  /** Real-money pilot, when configured on the server. */
+  live?: { pilot: import("../live/pilot.js").LivePilot; secured: (userId: string) => boolean };
   constructor(private app: Outcry) {}
 
   wrapForModel(name: string, outcome: ToolOutcome): string {
@@ -220,6 +223,21 @@ export class ToolExecutor {
             result: { summary: `Ticket ready: ${lines.join("; ")}. Total ≈ $${t.totalUsd.toFixed(2)}.${t.warnings.length ? " Check: " + t.warnings.join("; ") + "." : ""} Nothing moves until you sign.`, ticketId: t.id, status: t.status },
             card: { type: "order", ticket: t },
           };
+        }
+        case "propose_real_order": {
+          if (!this.live) return { ok: false, result: { error: "Real-money trading isn't set up on this server. I can place it as a paper order instead." } };
+          const side = String(i.side) === "sell" ? "sell" : "buy";
+          const token = String(i.token ?? "").trim();
+          try {
+            const q = await this.live.pilot.quote(userId, this.live.secured(userId), { side, token, usd: i.usd !== undefined ? Number(i.usd) : undefined, pct: i.pct !== undefined ? Number(i.pct) : undefined });
+            return {
+              ok: true,
+              result: { summary: `Real order ready: ${side.toUpperCase()} ${q.symbol}, pay ${fmt(q.payAmount)} ${q.payAsset}, receive about ${fmt(q.receiveAmount)} ${q.receiveAsset} (≈$${q.usd.toFixed(2)}). This is real money: sign with your passkey within 40 seconds, or get a new quote.`, quoteId: q.id },
+              card: { type: "live_order", quote: q as unknown as Record<string, unknown> },
+            };
+          } catch (e) {
+            return { ok: false, result: { error: (e as Error).message } };
+          }
         }
         case "propose_launch": {
           const t = app.launches.propose(userId, { name: i.name, ticker: i.ticker, description: i.description ?? "", wallets: Number(i.wallets), solPerWallet: Number(i.sol_per_wallet ?? i.solPerWallet) });

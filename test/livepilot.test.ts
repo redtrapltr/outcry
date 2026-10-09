@@ -102,3 +102,27 @@ describe("live trading pilot", () => {
     expect(s.app.audit.since(0).some((e) => e.action === "live.swap_failed")).toBe(true);
   });
 });
+
+describe("real orders from the chat", () => {
+  it("parses real-money requests and shows a real ticket; plain orders stay paper", async () => {
+    const { parseRealOrder, REAL_MONEY, OfflineProvider } = await import("../src/llm/offline.js");
+    expect(REAL_MONEY.test("buy $2 of USDC with real money")).toBe(true);
+    expect(REAL_MONEY.test("buy 4 SOL")).toBe(false);
+    expect(parseRealOrder("buy $2 of usdc with real money")).toEqual({ side: "buy", token: "USDC", usd: 2 });
+    expect(parseRealOrder(`sell half my ${MINT} for real`)).toEqual({ side: "sell", token: MINT, pct: 50 });
+
+    const { ModelRouter } = await import("../src/llm/router.js");
+    const { Orchestrator } = await import("../src/orchestrator/orchestrator.js");
+    const s = setup();
+    await s.pilot.createWallet(s.u.id, true);
+    const orch = new Orchestrator(s.app, new ModelRouter({ providers: { offline: new OfflineProvider() } }));
+    orch.tools.live = { pilot: s.pilot, secured: () => true };
+    const r = await orch.handle(s.u.id, "c1", "buy $2 of USDC with real money");
+    const card = r.cards.find((c) => c.type === "live_order") as { quote: { usd: number; symbol: string } } | undefined;
+    expect(card?.quote.usd).toBe(2);
+    expect(r.reply).toMatch(/real money/i);
+    const paper = await orch.handle(s.u.id, "c1", "buy 1 SOL");
+    expect(paper.cards.some((c) => c.type === "order")).toBe(true);
+    expect(paper.cards.some((c) => c.type === "live_order")).toBe(false);
+  });
+});

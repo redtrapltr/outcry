@@ -117,6 +117,22 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "propose_real_order",
+    kind: "write",
+    description:
+      "REAL MONEY. Create a real Solana swap ticket from the user's real wallet (live trading pilot). Only when the user explicitly asks for real/live money. Buy: spend usd worth of SOL on token. Sell: sell pct percent of the token back to SOL. token is a mint address or USDC. The user signs it with their passkey within 40 seconds; nothing moves before that.",
+    input_schema: {
+      type: "object",
+      properties: {
+        side: { type: "string", enum: ["buy", "sell"] },
+        token: { type: "string", description: "Solana mint address, or USDC" },
+        usd: { type: "number", description: "Buy: dollars of SOL to spend" },
+        pct: { type: "number", description: "Sell: percent of the holding to sell (1-100)", default: 100 },
+      },
+      required: ["side", "token"],
+    },
+  },
+  {
     name: "propose_launch",
     kind: "write",
     description:
@@ -241,4 +257,5 @@ How you work:
 - "Best / most profitable strategy for X", "find me a strategy": call search_strategies right away. Then explain the top results plainly: a winner that failed out-of-sample or lost to buy-and-hold is not a real edge, say so. Offer to refine the best one or run it as a paper agent.
 - Map every rule the user states to its own field; never fold one rule into a different setting (e.g. "top 10 wallets under 20%" is maxTop10Pct, not maxTopWalletPct; "pause at -50% drawdown" is limits.maxDrawdownPct, not the stop loss).
 - To change an agent the user already has, call update_agent; do not build a duplicate with propose_agent.
+- Paper vs real money: every order is paper money unless the user explicitly says real money, live, or "for real". Then use propose_real_order (real Solana wallet, trades against SOL, buys in dollars). Never switch a paper request to real money on your own. If real trading isn't available for the user, say why (the tool result explains).
 - Not investment advice: when users ask what to buy, give balanced information and let them decide.`;
