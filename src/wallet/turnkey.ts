@@ -235,6 +235,12 @@ export function turnkeyFromEnv(env: Record<string, string | undefined>): Turnkey
  *    inside the swap program);
  *  - add wallet accounts (for agent wallets).
  * Withdrawals therefore need the user's passkey.
+ *
+ * Known limit (hardening TODO): these rules see top-level transfers only. A holder of
+ * the server key could still craft a swap whose output goes to another account, or
+ * close the wSOL account to another address. Closing that gap needs instruction-level
+ * policies (Turnkey IDL parsing for Jupiter, token CloseAccount/Approve/SetAuthority
+ * and System Assign rules), tested against real swaps.
  */
 export function serverPolicies(serverUserId: string, address: string) {
   const wsol = getAssociatedTokenAddressSync(NATIVE_MINT, new PublicKey(address)).toBase58();
