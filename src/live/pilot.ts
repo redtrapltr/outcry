@@ -419,7 +419,19 @@ export class LivePilot {
       asset = "SOL"; mint = null;
     } else {
       const m = raw.toUpperCase() === "USDC" ? USDC_MINT : raw;
-      const held = toks.find((t) => t.mint === m) ?? toks.find((t) => this.symbolCache.get(t.mint)?.toUpperCase() === raw.toUpperCase());
+      let held = toks.find((t) => t.mint === m) ?? toks.find((t) => this.symbolCache.get(t.mint)?.toUpperCase() === raw.toUpperCase());
+      if (!held && toks.length) {
+        // By symbol: exact (MSFTx), else the plain ticker if only one version is held (MSFT -> MSFTx).
+        const info = await this.d.tokenInfo(toks.map((t) => t.mint)).catch(() => ({} as Record<string, TokenInfo>));
+        const sym = (t: { mint: string }) => (info[t.mint]?.symbol ?? "").toUpperCase();
+        const R = raw.replace(/^\$/, "").toUpperCase();
+        held = toks.find((t) => sym(t) === R);
+        if (!held) {
+          const loose = toks.filter((t) => sym(t) === `${R}X` || sym(t) === `${R}ON`);
+          if (loose.length > 1) throw new Error(`You hold several versions of ${R} (${loose.map(sym).join(", ")}): say which one`);
+          held = loose[0];
+        }
+      }
       if (!held) throw new Error(`You don't hold ${raw} in this wallet`);
       const program = await this.d.rpc.accountOwner(held.mint);
       if (!program || !TOKEN_PROGRAMS.includes(program)) throw new Error("Unknown token program for this token");

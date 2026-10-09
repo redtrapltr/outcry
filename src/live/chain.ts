@@ -91,11 +91,27 @@ export interface TokenBalance {
 export class SolanaRpc {
   constructor(private url: string, private f: FetchLike = defaultFetch) {}
 
+  /** JSON-RPC call; retries dropped connections, rate limits (429) and 5xx a couple of times. */
   private async call<T>(method: string, params: unknown[]): Promise<T> {
-    const r = await this.f(this.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
-    const j = (await r.json()) as { result?: T; error?: { message: string } };
-    if (j.error) throw new Error(`RPC ${method}: ${j.error.message}`);
-    return j.result as T;
+    let last: Error | undefined;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt) await new Promise((res) => setTimeout(res, 400 * 3 ** (attempt - 1)));
+      let r;
+      try {
+        r = await this.f(this.url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }) });
+      } catch (e) {
+        last = new Error(`Solana network unreachable (${(e as Error).message})`);
+        continue;
+      }
+      if (r.status === 429 || r.status >= 500) {
+        last = new Error(`Solana RPC busy (${r.status})`);
+        continue;
+      }
+      const j = (await r.json()) as { result?: T; error?: { message: string } };
+      if (j.error) throw new Error(`RPC ${method}: ${j.error.message}`);
+      return j.result as T;
+    }
+    throw last ?? new Error(`RPC ${method} failed`);
   }
 
   async solBalance(address: string): Promise<number> {

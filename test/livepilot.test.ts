@@ -213,3 +213,36 @@ describe("withdrawals", () => {
     expect(s.app.audit.since(0).filter((e) => e.action === "live.withdraw_confirmed")).toHaveLength(2);
   });
 });
+
+describe("withdrawals from the chat", () => {
+  it("only to an address the user typed; the model can't change it", async () => {
+    const { Keypair } = await import("@solana/web3.js");
+    const { OfflineProvider } = await import("../src/llm/offline.js");
+    const { ModelRouter } = await import("../src/llm/router.js");
+    const { Orchestrator } = await import("../src/orchestrator/orchestrator.js");
+    const s = setup({ sol: 0.5 });
+    await s.pilot.createWallet(s.u.id, true);
+    const orch = new Orchestrator(s.app, new ModelRouter({ providers: { offline: new OfflineProvider() } }));
+    orch.tools.live = { pilot: s.pilot, secured: () => true };
+    const dest = Keypair.generate().publicKey.toBase58();
+    const r = await orch.handle(s.u.id, "w1", `send 0.01 SOL to ${dest}`);
+    const card = r.cards.find((c) => c.type === "live_withdraw") as { withdrawal: { to: string; amount: number } } | undefined;
+    expect(card?.withdrawal.to).toBe(dest);
+    expect(card?.withdrawal.amount).toBe(0.01);
+    // A tool call with an address that isn't in the user's message is refused.
+    const other = Keypair.generate().publicKey.toBase58();
+    const bad = await orch.tools.run(s.u.id, "propose_withdrawal", { to: other, token: "SOL", amount: 0.01 }, { userText: `send 0.01 SOL to ${dest}` });
+    expect(bad.ok).toBe(false);
+    expect(JSON.stringify(bad.result)).toMatch(/pasted/);
+  });
+
+  it("retries the Solana RPC when the connection drops", async () => {
+    let n = 0;
+    const rpc = new SolanaRpc("http://rpc", async () => {
+      if (++n < 3) throw new Error("fetch failed");
+      return { ok: true, status: 200, json: async () => ({ result: { value: 2e9 } }), text: async () => "" };
+    });
+    expect(await rpc.solBalance(ADDR)).toBe(2);
+    expect(n).toBe(3);
+  });
+});

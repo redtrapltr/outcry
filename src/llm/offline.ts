@@ -159,6 +159,19 @@ export function parseControl(t: string) {
   return { agent, action };
 }
 
+/** "send 0.005 SOL to <address>", "withdraw all my USDC to <address>". */
+export function parseWithdrawal(text: string) {
+  if (!/\b(withdraw|send|transfer|move)\b/i.test(text)) return undefined;
+  const to = text.match(/\bto\s+([1-9A-HJ-NP-Za-km-z]{32,44})\b/)?.[1];
+  if (!to) return undefined;
+  text = text.replace(to, " ");
+  const max = /\b(all|everything|max)\b/i.test(text);
+  const amt = text.match(/(\d+(?:\.\d+)?)\s*(?:of\s+)?(?:my\s+)?\$?([A-Za-z][A-Za-z0-9]{1,9})\b/);
+  const sym = text.match(/\b(?:all|everything|max)\s+(?:of\s+)?(?:my\s+)?\$?([A-Za-z][A-Za-z0-9]{1,9})\b/i)?.[1];
+  const token = ((max ? sym ?? amt?.[2] : amt?.[2] ?? sym) ?? "SOL").replace(/^(my|to|the)$/i, "SOL");
+  return max ? { to, token, max: true } : { to, token, ...(amt ? { amount: Number(amt[1]) } : {}) };
+}
+
 /** "with real money", "for real", "live buy", "real trade". */
 export const REAL_MONEY = /\b(real|live)\s+(money|sol|wallet|trade|order|buy|sell|swap)\b|\bfor real\b|\bwith real\b/i;
 
@@ -195,6 +208,8 @@ export class OfflineProvider implements ModelProvider {
     const text = raw.replace(/<context>[\s\S]*?<\/context>/g, "").trim();
     const intent = classify(text);
     const call = (name: string, input: unknown): ChatResponse => ({ content: [{ type: "tool_use", id: id(), name, input }], stopReason: "tool_use", usage, model: "offline" });
+    const wd = parseWithdrawal(text);
+    if (wd) return call("propose_withdrawal", wd);
     switch (intent) {
       case "refuse":
         return {

@@ -22,7 +22,8 @@ export type Card =
   | { type: "strategy_search"; asset: string; tested: number; real: boolean; sources: string[]; buyHoldPct: number; ranking: StrategyRank[] }
   | { type: "portfolio"; data: ReturnType<Outcry["users"]["portfolio"]> }
   | { type: "agent_control"; agent: Agent }
-  | { type: "live_order"; quote: Record<string, unknown> };
+  | { type: "live_order"; quote: Record<string, unknown> }
+  | { type: "live_withdraw"; withdrawal: Record<string, unknown> };
 
 export interface BlueprintNode {
   key: "goal" | "markets" | "signals" | "risk" | "execution";
@@ -128,7 +129,7 @@ export class ToolExecutor {
     return ["get_token_risk", "list_new_tokens"].includes(name) ? untrusted(outcome.result) : json;
   }
 
-  async run(userId: string, name: string, input: unknown): Promise<ToolOutcome> {
+  async run(userId: string, name: string, input: unknown, ctx: { userText?: string } = {}): Promise<ToolOutcome> {
     const i = (input ?? {}) as Record<string, unknown>;
     const { app } = this;
     try {
@@ -225,6 +226,25 @@ export class ToolExecutor {
             result: { summary: `Ticket ready: ${lines.join("; ")}. Total ≈ $${t.totalUsd.toFixed(2)}.${t.warnings.length ? " Check: " + t.warnings.join("; ") + "." : ""} Nothing moves until you sign.`, ticketId: t.id, status: t.status },
             card: { type: "order", ticket: t },
           };
+        }
+        case "propose_withdrawal": {
+          if (!this.live) return { ok: false, result: { error: "Real-money wallets aren't set up on this server." } };
+          const to = String(i.to ?? "").trim();
+          // Safety: the destination must appear verbatim in what the user typed this turn. The model can
+          // never invent, complete or "fix" an address.
+          if (!to || !ctx.userText || !ctx.userText.includes(to)) {
+            return { ok: false, validationError: true, result: { error: "For safety, withdrawals only go to an address the user pasted in this message. Ask them to paste the full destination address." } };
+          }
+          try {
+            const w = await this.live.pilot.prepareWithdrawal(userId, this.live.secured(userId), { to, token: String(i.token ?? "SOL"), amount: i.amount !== undefined ? Number(i.amount) : undefined, max: !!i.max });
+            return {
+              ok: true,
+              result: { summary: `Withdrawal ready: send ${w.amount} ${w.asset} to ${w.to}. Network fee about ${w.feeSol} SOL${w.createsAccountSol ? ` plus ${w.createsAccountSol} SOL for the receiver's token account` : ""}. Check the address, then sign with your passkey within 60 seconds. Withdrawals can't be reversed.` },
+              card: { type: "live_withdraw", withdrawal: w as unknown as Record<string, unknown> },
+            };
+          } catch (e) {
+            return { ok: false, result: { error: (e as Error).message } };
+          }
         }
         case "scan_stock_spreads": {
           if (!this.spreads) return { ok: false, result: { error: "The spread scanner needs live trading (Jupiter key) on this server." } };

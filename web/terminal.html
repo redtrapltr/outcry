@@ -771,6 +771,7 @@ async function renderCards(body, cards, instant = false) {
   for (const c of cards) {
     if (c.type === 'order') body.appendChild(orderCard(c.ticket));
     else if (c.type === 'live_order') body.appendChild(liveTicket(c.quote));
+    else if (c.type === 'live_withdraw') body.appendChild(withdrawTicket(c.withdrawal));
     else if (c.type === 'launch') body.appendChild(launchCard(c.ticket, c.devSharePct));
     else if (c.type === 'agent') body.appendChild(await agentCard(c, instant));
     else if (c.type === 'strategy') body.appendChild(strategyCard(c));
@@ -1247,6 +1248,35 @@ function costLine(c) {
   const cents = n => (Math.abs(n) < 0.01 ? '$' + Math.abs(n).toFixed(4) : usd(Math.abs(n)));
   return `<div class="live-cost">Costs: network ${cents(c.networkFeeUsd)} · price vs market ${c.swapEdgeUsd >= 0 ? '+' : '−'}${cents(c.swapEdgeUsd)} · Outcry ${cents(c.outcryFeeUsd)}${c.rentUsd > 0.0001 ? ` · new token account deposit ${cents(c.rentUsd)} (refundable)` : ''}</div>`;
 }
+/** A withdrawal review (wallet sheet or chat): full address, fees, passkey signing, result. */
+function withdrawTicket(w, { solUsdPerSol = 0, onDone, onCancel } = {}) {
+  const el = document.createElement('div');
+  el.className = 'live-tk';
+  const solFee = (w.feeSol + w.createsAccountSol) * solUsdPerSol;
+  el.innerHTML = `<div class="ticket"><div class="t-head" style="background:#ff5a5a;color:#1a0f2a"><span>WITHDRAWAL · SOLANA</span><span class="wd-st">check the address</span></div>
+    <div class="lw-qbody"><div><b>Send ${fmt(w.amount, w.amount >= 1000 ? 2 : 6)} ${esc(w.asset)}</b><div class="meta">to</div><code style="font:12px var(--mono);word-break:break-all">${esc(w.to)}</code></div>
+    <div style="text-align:right">network fee ≈ ${Number(w.feeSol).toFixed(6)} SOL${w.createsAccountSol ? `<br>+ ${w.createsAccountSol} SOL receiver token account` : ''}${solFee ? `<br><span class="meta">≈ ${usd(solFee)}</span>` : ''}</div></div></div>
+    <p class="meta" style="margin:0">Withdrawals can't be reversed. Make sure this is your address on the Solana network.</p>
+    <div class="live-acts"><button class="btn btn-primary" type="button" data-wdsign>Sign with passkey & send</button><button class="btn" type="button" data-wdcancel>Cancel</button></div><div class="live-res meta"></div>`;
+  const st = el.querySelector('.wd-st'), res = el.querySelector('.live-res'), sg = el.querySelector('[data-wdsign]');
+  el.querySelector('[data-wdcancel]').onclick = () => { if (onCancel) onCancel(); else { el.querySelector('.live-acts').remove(); st.textContent = 'cancelled'; } };
+  sg.onclick = async () => {
+    sg.disabled = true; sg.textContent = 'Waiting for your passkey…';
+    try {
+      const opts = await api(`/api/live/withdraw/${w.id}/challenge`, { method: 'POST' });
+      const { startAuthentication } = await webauthn();
+      const passkeyResponse = await startAuthentication({ optionsJSON: opts });
+      sg.textContent = 'Sending…';
+      const r = await api(`/api/live/withdraw/${w.id}/execute`, { method: 'POST', body: { passkeyResponse } });
+      el.querySelector('.live-acts').remove();
+      st.textContent = r.status === 'confirmed' ? 'sent' : 'failed';
+      res.innerHTML = r.status === 'confirmed' ? `<span class="up">✓ Sent</span>${r.explorer ? ` · <a href="${esc(r.explorer)}" target="_blank" rel="noopener">view tx ↗</a>` : ''}` : `<span class="down">Failed:</span> ${esc(r.error || 'unknown')}${r.explorer ? ` · <a href="${esc(r.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}`;
+      if (r.status === 'confirmed') { toast(`Sent ${r.amount} ${r.asset}`); feed(`Withdrew ${r.amount} ${r.asset}`); }
+      onDone?.(r);
+    } catch (err) { toast(err.message); sg.disabled = false; sg.textContent = 'Sign with passkey & send'; }
+  };
+  return el;
+}
 /** A real-money order ticket (chat or wallet sheet): countdown, passkey signing, result. */
 function liveTicket(q, { onDone, onCancel } = {}) {
   const el = document.createElement('div');
@@ -1360,27 +1390,8 @@ async function openLive() {
       let w;
       try { w = await api('/api/live/withdraw', { method: 'POST', body: { to: wdf.to.value.trim(), token: wdf.token.value, ...(wdMax ? { max: true } : { amount: +wdf.amount.value }) } }); }
       catch (e) { wdrev.innerHTML = `<p class="meta down">${esc(e.message)}</p>`; return; }
-      const solFee = (w.feeSol + w.createsAccountSol) * ((p?.solUsd && p?.sol) ? p.solUsd / p.sol : 0);
-      wdrev.innerHTML = `<div class="ticket"><div class="t-head" style="background:#ff5a5a;color:#1a0f2a"><span>WITHDRAWAL · SOLANA</span><span>check the address</span></div>
-        <div class="lw-qbody"><div><b>Send ${fmt(w.amount, w.amount >= 1000 ? 2 : 6)} ${esc(w.asset)}</b><div class="meta">to</div><code style="font:12px var(--mono);word-break:break-all">${esc(w.to)}</code></div>
-        <div style="text-align:right">network fee ≈ ${w.feeSol.toFixed(6)} SOL${w.createsAccountSol ? `<br>+ ${w.createsAccountSol} SOL receiver token account` : ''}${solFee ? `<br><span class="meta">≈ ${usd(solFee)}</span>` : ''}</div></div></div>
-        <p class="meta" style="margin:8px 0">Withdrawals can't be reversed. Make sure this is your address on the Solana network.</p>
-        <div class="live-acts"><button class="btn btn-primary" type="button" data-wdsign>Sign with passkey & send</button><button class="btn" type="button" data-wdcancel>Cancel</button></div><div class="live-res meta"></div>`;
-      wdrev.querySelector('[data-wdcancel]').onclick = () => { wdrev.innerHTML = ''; };
-      const sg = wdrev.querySelector('[data-wdsign]');
-      sg.onclick = async () => {
-        sg.disabled = true; sg.textContent = 'Waiting for your passkey…';
-        try {
-          const opts = await api(`/api/live/withdraw/${w.id}/challenge`, { method: 'POST' });
-          const { startAuthentication } = await webauthn();
-          const passkeyResponse = await startAuthentication({ optionsJSON: opts });
-          sg.textContent = 'Sending…';
-          const r = await api(`/api/live/withdraw/${w.id}/execute`, { method: 'POST', body: { passkeyResponse } });
-          wdrev.querySelector('.live-acts').remove();
-          wdrev.querySelector('.live-res').innerHTML = r.status === 'confirmed' ? `<span class="up">✓ Sent</span>${r.explorer ? ` · <a href="${esc(r.explorer)}" target="_blank" rel="noopener">view tx ↗</a>` : ''}` : `<span class="down">Failed:</span> ${esc(r.error || 'unknown')}${r.explorer ? ` · <a href="${esc(r.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}`;
-          if (r.status === 'confirmed') { toast(`Sent ${r.amount} ${r.asset}`); feed(`Withdrew ${r.amount} ${r.asset}`); setTimeout(render, 3000); }
-        } catch (err) { toast(err.message); sg.disabled = false; sg.textContent = 'Sign with passkey & send'; }
-      };
+      wdrev.innerHTML = '';
+      wdrev.appendChild(withdrawTicket(w, { solUsdPerSol: (p?.solUsd && p?.sol) ? p.solUsd / p.sol : 0, onDone: () => setTimeout(render, 3000), onCancel: () => { wdrev.innerHTML = ''; } }));
     };
     const form = body.querySelector('.lw-trade');
     let side = 'buy';

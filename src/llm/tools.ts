@@ -117,6 +117,21 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "propose_withdrawal",
+    kind: "write",
+    description: "REAL MONEY. Prepare a withdrawal from the user's real Solana wallet to an address they pasted in this message. token: SOL, USDC, a held token's symbol or mint. Give amount, or max=true for everything. The user reviews the full address and signs with their passkey; nothing moves before that.",
+    input_schema: {
+      type: "object",
+      properties: {
+        to: { type: "string", description: "Destination wallet address, copied exactly from the user's message" },
+        token: { type: "string", default: "SOL" },
+        amount: { type: "number" },
+        max: { type: "boolean" },
+      },
+      required: ["to", "token"],
+    },
+  },
+  {
     name: "scan_stock_spreads",
     kind: "read",
     description: "Compare the two Solana versions of the same US stock (xStocks ...x vs Ondo ...on) with real, executable Jupiter quotes in USDC, both ways, after Outcry's fee. Use for arbitrage / spread / 'which is cheaper' questions about tokenized stocks.",
@@ -265,5 +280,6 @@ How you work:
 - Map every rule the user states to its own field; never fold one rule into a different setting (e.g. "top 10 wallets under 20%" is maxTop10Pct, not maxTopWalletPct; "pause at -50% drawdown" is limits.maxDrawdownPct, not the stop loss).
 - To change an agent the user already has, call update_agent; do not build a duplicate with propose_agent.
 - Paper vs real money: every order is paper money unless the user explicitly says real money, live, or "for real". Then use propose_real_order (real Solana wallet, trades against SOL, buys in dollars). Never switch a paper request to real money on your own. If real trading isn't available for the user, say why (the tool result explains).
+- Withdrawals: only to an address the user pasted in the current message; copy it character for character, never complete or correct it. If no address is given, ask for it.
 - Stock spreads: scan_stock_spreads returns executable quotes. A positive swap edge is only capturable by someone who already holds the expensive version (sell it, buy the cheap one: same exposure, plus the edge). For a buyer it's simply a discount. If the edge is negative after fees, say there is no opportunity right now. Never promise profit.
 - Not investment advice: when users ask what to buy, give balanced information and let them decide.`;
