@@ -113,6 +113,31 @@ describe("persistence never takes the site down", () => {
     return token as string;
   }
 
+  it.skipIf(!PG)("takes over even when a previous instance is stuck holding the state lock", async () => {
+    const pg = await import("pg");
+    const pool = new pg.default.Pool({ connectionString: PG });
+    const s1 = await buildServer({ store: await PostgresStore.connect(PG!), tickMs: 0, simLaunchEveryMs: 0 });
+    const token = await activity(s1, 1);
+    await s1.persistence!.flush();
+    // A stuck save: transaction open, row locked, connection never comes back.
+    pool.on("error", () => {});
+    const stuck = await pool.connect();
+    stuck.on("error", () => {}); // it gets terminated by the new instance, as intended
+    await stuck.query("begin");
+    await stuck.query("update outcry_state set updated_at = now() where id = 'main'");
+    const t0 = Date.now();
+    const s2 = await buildServer({ store: await PostgresStore.connect(PG!), tickMs: 0, simLaunchEveryMs: 0 });
+    expect(Date.now() - t0).toBeLessThan(20_000);
+    expect((await s2.f.inject({ method: "GET", url: "/api/me", headers: { authorization: `Bearer ${token}` } })).statusCode).toBe(200);
+    await activity(s2, 1);
+    await s2.persistence!.flush();
+    expect(s2.persistence!.status().lastError).toBeNull();
+    stuck.release(true);
+    await s2.f.close();
+    await s1.f.close().catch(() => {});
+    await pool.end().catch(() => {});
+  }, 40_000);
+
   it.skipIf(!PG)("starts with a broken audit chain: keeps the valid part, quarantines the rest", async () => {
     const pg = await import("pg");
     const pool = new pg.default.Pool({ connectionString: PG });

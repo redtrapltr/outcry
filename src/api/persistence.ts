@@ -14,6 +14,7 @@ export class Persistence {
   private lastSeq = 0;
   private timer?: ReturnType<typeof setInterval>;
   private saving: Promise<void> | undefined;
+  private savingSince = 0;
   lastSavedAt?: string;
   lastError?: string;
   /** Set when the persisted audit chain was broken at boot and the tail was quarantined. */
@@ -73,9 +74,16 @@ export class Persistence {
   }
 
   async flush(): Promise<void> {
-    if (this.saving) return this.saving;
+    if (this.saving) {
+      // Watchdog: a save that never returns must not stop all future saves.
+      if (Date.now() - this.savingSince < 120_000) return this.saving;
+      this.lastError = "A save hung for over 2 minutes and was abandoned";
+      console.error("[outcry] save hung; abandoning it");
+      this.saving = undefined;
+    }
     const run = this.doFlush();
     this.saving = run;
+    this.savingSince = Date.now();
     try {
       await run;
     } finally {
@@ -120,6 +128,6 @@ export class Persistence {
   }
 
   status() {
-    return { store: this.store.kind, lastSavedAt: this.lastSavedAt ?? null, lastError: this.lastError ?? null, ...(this.auditRepair ? { auditRepair: this.auditRepair } : {}) };
+    return { store: this.store.kind, lastSavedAt: this.lastSavedAt ?? null, lastError: this.lastError ?? null, ...(this.saving ? { savingForSec: Math.round((Date.now() - this.savingSince) / 1000) } : {}), ...(this.auditRepair ? { auditRepair: this.auditRepair } : {}) };
   }
 }

@@ -146,23 +146,65 @@ export class PostgresStore implements StateStore {
     // Render's internal URL (host without dots, e.g. dpg-xxx-a) needs no TLS; external hosts do.
     const host = new URL(url).hostname;
     const local = !host.includes(".") || host === "localhost" || host.startsWith("127.");
-    const pool = new Pool({ connectionString: url, max: 3, ssl: local ? undefined : { rejectUnauthorized: false } });
+    const pool = new Pool({
+      connectionString: url,
+      max: 3,
+      ssl: local ? undefined : { rejectUnauthorized: false },
+      // Never hang forever: a dropped connection used to stall saves (and hold the row lock) indefinitely.
+      keepAlive: true,
+      connectionTimeoutMillis: 10_000,
+      query_timeout: 60_000,
+      statement_timeout: 60_000,
+      idle_in_transaction_session_timeout: 60_000,
+    });
+    pool.on?.("error", (e: Error) => console.error("[outcry] postgres pool error:", e.message));
     return new PostgresStore(pool as unknown as PgLike);
   }
 
   private async migrate() {
+    // A session left "idle in transaction" for more than 30s is stuck (a save takes milliseconds) and
+    // would block startup on its row lock. End it before touching the tables.
+    const stale = await this.pool.query(
+      `select pg_terminate_backend(pid) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() and state like 'idle in transaction%' and now() - state_change > interval '30 seconds'`,
+    );
+    if (stale.rowCount) console.warn(`[outcry] ended ${stale.rowCount} stuck database session(s) left by a previous instance`);
     await this.pool.query(`create table if not exists outcry_state (id text primary key, data text not null, updated_at timestamptz not null default now())`);
     await this.pool.query(`create table if not exists outcry_audit (seq integer primary key, entry text not null)`);
-    await this.pool.query(`alter table outcry_state add column if not exists owner text`);
+    // ALTER TABLE takes an exclusive lock even when the column exists, so only run it when needed.
+    const col = await this.pool.query(`select 1 from information_schema.columns where table_name = 'outcry_state' and column_name = 'owner'`);
+    if (!col.rowCount) await this.pool.query(`alter table outcry_state add column if not exists owner text`);
     await this.pool.query(`create table if not exists outcry_audit_quarantine (seq integer not null, entry text not null, moved_at timestamptz not null default now())`);
   }
 
+  /**
+   * Become the only writer. If an older instance is stuck inside a save
+   * transaction it holds the row lock; after a short wait we end its session
+   * (it can't commit anything useful anymore) and take over.
+   */
   async claim(instanceId: string) {
     await this.ready;
-    await this.pool.query(
-      `insert into outcry_state (id, data, owner, updated_at) values ('main', '', $1, now()) on conflict (id) do update set owner = excluded.owner`,
-      [instanceId],
-    );
+    for (let attempt = 1; ; attempt++) {
+      const c = await this.pool.connect();
+      try {
+        await c.query("begin");
+        await c.query("set local lock_timeout = '5s'");
+        await c.query(
+          `insert into outcry_state (id, data, owner, updated_at) values ('main', '', $1, now()) on conflict (id) do update set owner = excluded.owner`,
+          [instanceId],
+        );
+        await c.query("commit");
+        return;
+      } catch (e) {
+        await c.query("rollback").catch(() => {});
+        if ((e as { code?: string }).code !== "55P03" || attempt >= 3) throw e;
+        const r = await c.query(
+          `select pg_terminate_backend(pid) from pg_stat_activity where datname = current_database() and pid <> pg_backend_pid() and state like 'idle in transaction%'`,
+        );
+        console.warn(`[outcry] state row was locked by a stuck session; ended ${r.rowCount ?? 0} stale session(s), retrying`);
+      } finally {
+        c.release();
+      }
+    }
   }
 
   async quarantine(fromSeq: number) {
