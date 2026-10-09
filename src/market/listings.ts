@@ -17,7 +17,7 @@ import type { UserStore } from "../core/users.js";
 import type { AgentRuntime } from "../agents/runtime.js";
 import type { CreatorRegistry } from "../launch/service.js";
 
-export const OUTCRY_COPY_BPS = 40;
+export const OUTCRY_COPY_BPS = 50;
 export const MAX_CREATOR_FEE_BPS = 200;
 /** A listing is ranked once its track record is long enough to mean something. */
 export const RANK_MIN_HOURS = 24;

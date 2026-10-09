@@ -22,7 +22,7 @@ describe("agent marketplace", () => {
     const listed = app.marketplace.list();
     expect(listed).toHaveLength(1);
     expect(JSON.stringify(listed)).not.toContain("minHolders");
-    expect(listed[0]!.fees.perTradePct).toBeCloseTo(0.9, 6);
+    expect(listed[0]!.fees.perTradePct).toBeCloseTo(1.0, 6);
 
     const creatorUsdc0 = app.users.get(creator.id).balances.USDC!;
     const subUsdc0 = app.users.get(sub.id).balances.USDC!;
@@ -40,7 +40,7 @@ describe("agent marketplace", () => {
     expect(r.agent.spec.name).toBe("MY COPY");
     expect(r.agent.spec.universe?.minHolders).toBe(7); // unchanged internally
 
-    // Copy trades: Outcry 0.4% + creator 0.5%; creator receives 50/90 of the fee.
+    // Copy trades: Outcry 0.5% + creator 0.5%; creator receives 50/100 of the fee.
     await app.agents.tick();
     const before = app.users.get(creator.id).balances.USDC!;
     app.market.spawnMeme("MKTA", { holders: 50, holdersCollapsed: 50 });
@@ -51,7 +51,7 @@ describe("agent marketplace", () => {
     const fee = tk.legs[0]!.platformFeeUsd;
     expect(fee / 8).toBeGreaterThan((OUTCRY_COPY_BPS + 50) / 10_000 * 0.9);
     const afterTrade = app.users.get(creator.id).balances.USDC!;
-    expect(afterTrade - before).toBeCloseTo((fee * 50) / 90, 6);
+    expect(afterTrade - before).toBeCloseTo((fee * 50) / 100, 6);
 
     // Performance fee: price jumps, take profit sells, creator gets 20% of the new profit.
     const m = app.market as unknown as { memes: Map<string, { risk: { symbol: string }; price: number }> };

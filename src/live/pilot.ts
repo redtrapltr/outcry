@@ -37,6 +37,8 @@ export interface PilotDeps {
   rpc: SolanaRpc;
   audit: AuditLog;
   solUsd: () => number;
+  /** Mint address for a symbol the market knows (tokenized stocks, tracked memes). */
+  resolveMint?: (symbol: string) => string | undefined;
   /** Symbol and USD price for mints (Jupiter token search). */
   tokenInfo: (mints: string[]) => Promise<Record<string, TokenInfo>>;
 }
@@ -58,6 +60,8 @@ export interface LiveQuote {
   receiveAsset: string;
   usd: number;
   feeBps?: number;
+  /** Outcry's fee on this swap (Jupiter referral), 0 when not collected. */
+  outcryFeeBps: number;
   router?: string;
   requestId: string;
   transaction: string;
@@ -174,8 +178,12 @@ export class LivePilot {
     const w = this.d.wallets.get(userId);
     if (!w) throw new Error("Create your real wallet first");
     const raw = req.token.trim();
-    const mint = raw.toUpperCase() === "USDC" ? USDC_MINT : raw;
-    if (!isMint(mint)) throw new Error("Paste the token's mint address (or USDC)");
+    let mint = raw.toUpperCase() === "USDC" ? USDC_MINT : raw;
+    if (!isMint(mint)) {
+      const m = this.d.resolveMint?.(raw.replace(/^\$/, ""));
+      if (m && isMint(m) && !m.startsWith("sim")) mint = m;
+    }
+    if (!isMint(mint)) throw new Error(`I don't know a real Solana token for "${raw}". Paste its mint address, or use USDC or a stock ticker like MSFT`);
     if (mint === SOL_MINT) throw new Error("Pick a token other than SOL: trades are against SOL");
     const solUsd = this.d.solUsd();
     if (!(solUsd > 0)) throw new Error("No SOL price right now, try again in a few seconds");
@@ -223,6 +231,7 @@ export class LivePilot {
       receiveAsset: req.side === "buy" ? symbol : "SOL",
       usd,
       feeBps: order.feeBps,
+      outcryFeeBps: this.referralBps(order),
       router: order.router,
       requestId: order.requestId,
       transaction: order.transaction!,
@@ -232,6 +241,20 @@ export class LivePilot {
     for (const [k, v] of this.quotes) if (v.expiresAt < Date.now() - 60_000) this.quotes.delete(k);
     const { transaction: _t, requestId: _r, userId: _u, ...pub } = q;
     return pub;
+  }
+
+  /** Last time Jupiter skipped our referral fee (usually: no fee token account for that mint yet). */
+  referralMiss?: { at: string; feeMint?: string };
+
+  private referralBps(order: { platformFee?: { feeBps?: number; feeMint?: string }; feeMint?: string; referralAccount?: string }) {
+    const want = this.d.jupiter.cfg.referralAccount ? this.d.jupiter.cfg.referralFeeBps ?? 0 : 0;
+    if (!want) return 0;
+    const got = order.platformFee?.feeBps ?? 0;
+    if (got !== want) {
+      this.referralMiss = { at: nowIso(), feeMint: order.platformFee?.feeMint ?? order.feeMint };
+      return 0;
+    }
+    return want;
   }
 
   private async decimalsOf(mint: string) {
@@ -307,8 +330,11 @@ export class LivePilot {
     const swapSol = Math.abs(c.solChange + (q.side === "buy" ? c.feeSol + c.rentSol : c.feeSol + c.rentSol));
     const paidUsd = q.side === "buy" ? swapSol * sol : Math.abs(c.tokenChange) * tokUsd;
     const gotUsd = q.side === "buy" ? Math.abs(c.tokenChange) * tokUsd : swapSol * sol;
-    const networkFeeUsd = c.feeSol * sol, rentUsd = c.rentSol * sol, swapEdgeUsd = gotUsd - paidUsd;
-    return { networkFeeUsd, rentUsd, swapEdgeUsd, outcryFeeUsd: 0, totalCostUsd: networkFeeUsd + Math.max(0, -swapEdgeUsd) };
+    const networkFeeUsd = c.feeSol * sol, rentUsd = c.rentSol * sol;
+    // The value gap includes Outcry's fee; report the fee on its own line and the rest as price vs market.
+    const outcryFeeUsd = (q.usd * q.outcryFeeBps) / 10_000;
+    const swapEdgeUsd = gotUsd - paidUsd + outcryFeeUsd;
+    return { networkFeeUsd, rentUsd, swapEdgeUsd, outcryFeeUsd, totalCostUsd: networkFeeUsd + outcryFeeUsd + Math.max(0, -swapEdgeUsd) };
   }
 
   history(userId: string) {

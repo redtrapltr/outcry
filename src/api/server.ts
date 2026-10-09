@@ -123,7 +123,16 @@ export async function buildServer(opts: ServerOptions = {}) {
     ? new LivePilot(pilotCfg, {
         users: app.users,
         wallets: turnkey,
-        jupiter: new JupiterSwap({ apiKey: process.env.JUPITER_API_KEY }),
+        jupiter: new JupiterSwap({
+          apiKey: process.env.JUPITER_API_KEY,
+          // Outcry's fee on real trades: Jupiter referral (50-255 bps; Jupiter keeps 20% of it).
+          referralAccount: process.env.JUPITER_REFERRAL_ACCOUNT?.trim() || undefined,
+          referralFeeBps: Math.min(255, Math.max(50, Number(process.env.JUPITER_REFERRAL_FEE_BPS ?? 50))),
+        }),
+        resolveMint: (sym) => {
+          const a = app.market.asset(sym);
+          return a?.chain === "solana" ? a.address : undefined;
+        },
         rpc: new SolanaRpc(rpcUrl ?? "https://api.mainnet-beta.solana.com"),
         audit: app.audit,
         solUsd: () => { try { return app.market.priceUsd("SOL"); } catch { return 0; } },
@@ -132,9 +141,16 @@ export async function buildServer(opts: ServerOptions = {}) {
     : undefined;
   let liveStatus: Record<string, unknown> = { configured: false, missing: [!turnkey && "TURNKEY_ORGANIZATION_ID / TURNKEY_API_PUBLIC_KEY / TURNKEY_API_PRIVATE_KEY", !process.env.JUPITER_API_KEY && "JUPITER_API_KEY"].filter(Boolean) };
   if (livePilot && turnkey) {
-    const refresh = async () => { liveStatus = { configured: true, enabled: pilotCfg.enabled, allowlist: pilotCfg.allowlist.length, maxOrderUsd: pilotCfg.maxOrderUsd, maxDailyUsd: pilotCfg.maxDailyUsd, turnkey: await turnkey.status() }; };
+    const refresh = async () => {
+      const ref = process.env.JUPITER_REFERRAL_ACCOUNT?.trim();
+      liveStatus = {
+        configured: true, enabled: pilotCfg.enabled, allowlist: pilotCfg.allowlist.length, maxOrderUsd: pilotCfg.maxOrderUsd, maxDailyUsd: pilotCfg.maxDailyUsd,
+        turnkey: await turnkey.status(),
+        outcryFee: ref ? { referralAccount: ref, bps: Math.min(255, Math.max(50, Number(process.env.JUPITER_REFERRAL_FEE_BPS ?? 50))), lastMissed: livePilot.referralMiss ?? null } : "off (set JUPITER_REFERRAL_ACCOUNT)",
+      };
+    };
     void refresh();
-    setInterval(() => void refresh(), 5 * 60_000).unref();
+    setInterval(() => void refresh(), 60_000).unref();
   }
   const auth = new AuthService();
   if (livePilot) orch.tools.live = { pilot: livePilot, secured: (uid) => auth.hasPasskey(uid) };

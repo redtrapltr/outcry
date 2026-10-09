@@ -123,6 +123,8 @@ describe("real orders from the chat", () => {
     expect(REAL_MONEY.test("buy 4 SOL")).toBe(false);
     expect(parseRealOrder("buy $2 of usdc with real money")).toEqual({ side: "buy", token: "USDC", usd: 2 });
     expect(parseRealOrder(`sell half my ${MINT} for real`)).toEqual({ side: "sell", token: MINT, pct: 50 });
+    expect(parseRealOrder("buy microsoft stock with real money, 3$ worth of it")).toEqual({ side: "buy", token: "MSFT", usd: 3 });
+    expect(parseRealOrder("buy something with real money").token).toBe("");
 
     const { ModelRouter } = await import("../src/llm/router.js");
     const { Orchestrator } = await import("../src/orchestrator/orchestrator.js");

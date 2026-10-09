@@ -1178,7 +1178,7 @@ async function openPublish(agentId, name) {
       <div class="actions wide"><button class="btn btn-primary" type="submit">Publish</button></div>
     </form>`;
   const form = body.querySelector('form');
-  const sum = () => { const f = new FormData(form); const fee = +f.get('fee') || 0; form.querySelector('.pub-sum').innerHTML = `Subscribers pay <b>${(0.4 + fee).toFixed(2)}% per trade</b>: 0.4% to Outcry, <b>${fee}% to you</b>${+f.get('perf') ? `, plus <b>${+f.get('perf')}% of their new profits</b>` : ''}${+f.get('unlock') ? `, <b>$${+f.get('unlock')}</b> to unlock` : ''}${+f.get('monthly') ? `, <b>$${+f.get('monthly')}/month</b>` : ''}.`; };
+  const sum = () => { const f = new FormData(form); const fee = +f.get('fee') || 0; form.querySelector('.pub-sum').innerHTML = `Subscribers pay <b>${(0.5 + fee).toFixed(2)}% per trade</b>: 0.5% to Outcry, <b>${fee}% to you</b>${+f.get('perf') ? `, plus <b>${+f.get('perf')}% of their new profits</b>` : ''}${+f.get('unlock') ? `, <b>$${+f.get('unlock')}</b> to unlock` : ''}${+f.get('monthly') ? `, <b>$${+f.get('monthly')}/month</b>` : ''}.`; };
   form.oninput = sum; sum();
   form.onsubmit = async ev => {
     ev.preventDefault();
@@ -1252,7 +1252,7 @@ function liveTicket(q, { onDone, onCancel } = {}) {
   el.className = 'live-tk';
   const amt = (n) => fmt(n, n >= 1000 ? 2 : 6);
   el.innerHTML = `<div class="ticket"><div class="t-head" style="background:#ff5a5a;color:#1a0f2a"><span>REAL MONEY · SOLANA</span><span class="lw-ttl"></span></div>
-    <div class="lw-qbody"><div><b>${q.side.toUpperCase()} · ${esc(q.symbol)}</b><div class="meta">jupiter${q.router ? ' · ' + esc(q.router) : ''}${q.feeBps !== undefined ? ` · fee ${(q.feeBps / 100).toFixed(2)}%` : ''}</div></div>
+    <div class="lw-qbody"><div><b>${q.side.toUpperCase()} · ${esc(q.symbol)}</b><div class="meta">jupiter${q.router ? ' · ' + esc(q.router) : ''}${q.outcryFeeBps ? ` · Outcry ${(q.outcryFeeBps / 100).toFixed(1)}%` : ''}</div></div>
     <div style="text-align:right">pay ${amt(q.payAmount)} ${esc(q.payAsset)}<br>receive ≈ ${amt(q.receiveAmount)} ${esc(q.receiveAsset)}<br><b>≈ ${usd(q.usd)}</b></div></div></div>
     <div class="live-acts"><button class="btn btn-primary" type="button" data-sign>Sign with passkey & send</button><button class="btn" type="button" data-cancel>Cancel</button></div>
     <div class="live-res meta"></div>`;

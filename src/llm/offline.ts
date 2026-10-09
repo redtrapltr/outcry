@@ -165,8 +165,12 @@ export const REAL_MONEY = /\b(real|live)\s+(money|sol|wallet|trade|order|buy|sel
 export function parseRealOrder(text: string) {
   const side = /\b(sell|dump)\b/i.test(text) ? "sell" : "buy";
   const mint = text.match(/\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/)?.[0];
-  const token = mint ?? (/\busdc\b/i.test(text) ? "USDC" : text.match(/\$([A-Za-z][A-Za-z0-9]{1,9})\b/)?.[1] ?? "USDC");
-  const usd = Number(text.match(/\$\s*(\d+(?:\.\d+)?)/)?.[1] ?? text.match(/(\d+(?:\.\d+)?)\s*(?:usd|dollars?|bucks)\b/i)?.[1] ?? NaN);
+  // Never guess the token for real money: mint, USDC, $TICKER or an all-caps ticker (MSFT), else ask.
+  const names: Record<string, string> = { microsoft: "MSFT", apple: "AAPL", tesla: "TSLA", nvidia: "NVDA", amazon: "AMZN", google: "GOOGL", alphabet: "GOOGL", meta: "META", coinbase: "COIN" };
+  const named = Object.entries(names).find(([k]) => new RegExp(`\\b${k}\\b`, "i").test(text))?.[1];
+  const caps = text.match(/\b([A-Z]{2,5}(?:x|on)?)\b/g)?.find((w) => !["USD", "SOL", "I"].includes(w));
+  const token = mint ?? (/\busdc\b/i.test(text) ? "USDC" : text.match(/\$([A-Za-z][A-Za-z0-9]{1,9})\b/)?.[1] ?? named ?? caps ?? "");
+  const usd = Number(text.match(/\$\s*(\d+(?:\.\d+)?)/)?.[1] ?? text.match(/(\d+(?:\.\d+)?)\s*(?:\$|usd\b|dollars?\b|bucks\b)/i)?.[1] ?? NaN);
   const pct = Number(text.match(/(\d{1,3})\s*%/)?.[1] ?? (/\b(half)\b/i.test(text) ? 50 : 100));
   return side === "buy" ? { side, token, ...(Number.isFinite(usd) ? { usd } : {}) } : { side, token, pct };
 }

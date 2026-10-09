@@ -228,6 +228,7 @@ export class ToolExecutor {
           if (!this.live) return { ok: false, result: { error: "Real-money trading isn't set up on this server. I can place it as a paper order instead." } };
           const side = String(i.side) === "sell" ? "sell" : "buy";
           const token = String(i.token ?? "").trim();
+          if (!token) return { ok: false, validationError: true, result: { error: "Which token? Give a mint address, USDC, or a stock ticker like MSFT." } };
           try {
             const q = await this.live.pilot.quote(userId, this.live.secured(userId), { side, token, usd: i.usd !== undefined ? Number(i.usd) : undefined, pct: i.pct !== undefined ? Number(i.pct) : undefined });
             return {

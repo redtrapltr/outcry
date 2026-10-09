@@ -22,6 +22,9 @@ export interface JupOrder {
   errorMessage?: string;
   priceImpactPct?: string | number;
   priceImpact?: string | number;
+  feeMint?: string;
+  platformFee?: { amount?: string; feeBps?: number; feeMint?: string };
+  referralAccount?: string;
 }
 
 export interface JupExecute {
@@ -34,7 +37,7 @@ export interface JupExecute {
 }
 
 export class JupiterSwap {
-  constructor(private cfg: { apiKey: string; baseUrl?: string; referralAccount?: string; referralFeeBps?: number }, private f: FetchLike = defaultFetch) {}
+  constructor(readonly cfg: { apiKey: string; baseUrl?: string; referralAccount?: string; referralFeeBps?: number }, private f: FetchLike = defaultFetch) {}
 
   private get base() {
     return this.cfg.baseUrl ?? "https://api.jup.ag/swap/v2";

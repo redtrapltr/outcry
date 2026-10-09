@@ -120,12 +120,12 @@ export const TOOLS: ToolDef[] = [
     name: "propose_real_order",
     kind: "write",
     description:
-      "REAL MONEY. Create a real Solana swap ticket from the user's real wallet (live trading pilot). Only when the user explicitly asks for real/live money. Buy: spend usd worth of SOL on token. Sell: sell pct percent of the token back to SOL. token is a mint address or USDC. The user signs it with their passkey within 40 seconds; nothing moves before that.",
+      "REAL MONEY. Create a real Solana swap ticket from the user's real wallet (live trading pilot). Only when the user explicitly asks for real/live money. Buy: spend usd worth of SOL on token. Sell: sell pct percent of the token back to SOL. token is a mint address or USDC. The user signs it with their passkey within 40 seconds; nothing moves before that. For stocks, when two versions exist (xStocks ...x, Ondo ...on), pick the one with the lower quote unless the user chose.",
     input_schema: {
       type: "object",
       properties: {
         side: { type: "string", enum: ["buy", "sell"] },
-        token: { type: "string", description: "Solana mint address, or USDC" },
+        token: { type: "string", description: "Solana mint address, USDC, or a tokenized stock symbol (MSFTx / MSFTon, or the plain ticker)" },
         usd: { type: "number", description: "Buy: dollars of SOL to spend" },
         pct: { type: "number", description: "Sell: percent of the holding to sell (1-100)", default: 100 },
       },
