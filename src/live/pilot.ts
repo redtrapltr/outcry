@@ -101,7 +101,7 @@ export class LivePilot {
     if (!this.cfg.enabled) return "Live trading is switched off on this server";
     const h = this.d.users.get(userId).handle;
     if (!h) return "Choose your @handle first";
-    if (!this.cfg.allowlist.includes(h)) return `@${h} isn't on the live trading pilot list yet`;
+    if (!this.cfg.allowlist.includes("*") && !this.cfg.allowlist.includes(h)) return `@${h} isn't on the live trading pilot list yet`;
     if (!hasPasskey) return "Secure your account with a passkey first: every real trade is signed with it";
     return undefined;
   }
@@ -288,7 +288,7 @@ export class LivePilot {
 export function pilotConfigFromEnv(env: Record<string, string | undefined>): PilotConfig {
   return {
     enabled: env.OUTCRY_LIVE_TRADING === "1",
-    allowlist: String(env.OUTCRY_LIVE_ALLOWLIST ?? "").split(/[\s,]+/).map((h) => h.replace(/^@/, "").toLowerCase()).filter(Boolean),
+    allowlist: String(env.OUTCRY_LIVE_ALLOWLIST ?? "").split(/[\s,]+/).map((h) => h.replace(/^@/, "").toLowerCase().trim()).filter(Boolean),
     maxOrderUsd: Number(env.OUTCRY_LIVE_MAX_ORDER_USD ?? 25),
     maxDailyUsd: Number(env.OUTCRY_LIVE_MAX_DAILY_USD ?? 100),
     reserveSol: Number(env.OUTCRY_LIVE_RESERVE_SOL ?? 0.01),
