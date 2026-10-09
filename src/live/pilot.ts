@@ -60,6 +60,8 @@ export interface PilotDeps {
   rpc: SolanaRpc;
   audit: AuditLog;
   solUsd: () => number;
+  /** Volume tiers, referrals and the live-access waitlist. */
+  growth?: import("./growth.js").Growth;
   /** Mint address for a symbol the market knows (tokenized stocks, tracked memes). */
   resolveMint?: (symbol: string) => string | undefined;
   /** Symbol and USD price for mints (Jupiter token search). */
@@ -146,7 +148,7 @@ export class LivePilot {
     if (!this.cfg.enabled) return "Live trading is switched off on this server";
     const h = this.d.users.get(userId).handle;
     if (!h) return "Choose your @handle first";
-    if (!this.cfg.allowlist.includes("*") && !this.cfg.allowlist.includes(h)) return `@${h} isn't on the live trading pilot list yet`;
+    if (!this.cfg.allowlist.includes("*") && !this.cfg.allowlist.includes(h) && !this.d.growth?.isApproved(userId)) return `@${h} isn't on the live trading pilot list yet`;
     if (!hasPasskey) return "Secure your account with a passkey first: every real trade is signed with it";
     return undefined;
   }
@@ -161,6 +163,9 @@ export class LivePilot {
       wallet: w ? { address: w.address, createdAt: w.createdAt } : null,
       limits: { maxOrderUsd: this.cfg.maxOrderUsd, maxDailyUsd: this.cfg.maxDailyUsd, spentTodayUsd: this.spentToday(userId), reserveSol: this.cfg.reserveSol, maxAgentUsd: this.cfg.maxAgentUsd ?? 50 },
       custody: w?.custody ?? (w ? "server" : null),
+      tier: this.d.growth?.tierFor(userId) ?? null,
+      referrals: this.d.growth?.referralStats(userId) ?? null,
+      access: this.d.growth?.access.get(userId)?.status ?? null,
       // An enrolment that wasn't confirmed yet can be finished with the same passkey.
       custodyResume: w?.custody === "enrolled" ? { whoamiBody: JSON.stringify({ organizationId: w.subOrgId }), credentialId: w.credentialId } : null,
     };
@@ -365,6 +370,7 @@ export class LivePilot {
           t.received = `${(Number(r.totalOutputAmount) * dec).toPrecision(6)} ${q.receiveAsset}`;
         }
         if (r.signature) t.costs = await this.costsOf(r.signature, userId, q).catch(() => undefined);
+        this.d.growth?.recordTrade(userId, q.usd, q.outcryFeeBps);
       } else {
         t.error = r.error ?? `Jupiter code ${r.code}`;
       }
@@ -600,6 +606,8 @@ export class LivePilot {
       const r = await this.d.jupiter.execute(signed, order.requestId);
       if (r.status !== "Success") return { ok: false, error: r.error ?? `Jupiter code ${r.code}`, signature: r.signature };
       const out = Number(r.totalOutputAmount ?? order.outAmount);
+      const notionalUsd = side === "buy" ? size.usd ?? 0 : (out / 1e9) * solUsd;
+      this.d.growth?.recordTrade(userId, notionalUsd, this.referralBps(order));
       if (side === "buy") {
         const decimals = (await this.d.tokenInfo([mint]).catch(() => ({} as Record<string, TokenInfo>)))[mint]?.decimals ?? 6;
         return { ok: true, signature: r.signature, tokenAmount: out / 10 ** decimals, solAmount: Number(amount) / 1e9 };

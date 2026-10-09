@@ -352,3 +352,48 @@ describe("real-money agents", () => {
     expect(app.agents.perf(a.id)!.trades.map((t) => t.side)).toEqual(["buy", "sell"]);
   });
 });
+
+describe("growth: tiers, rebates, referrals, waitlist", () => {
+  it("rebates the difference to the tier, pays referrers, and approves access", async () => {
+    const { Growth } = await import("../src/live/growth.js");
+    const g = new Growth();
+    expect(g.tierFor("a").name).toBe("Floor");
+    g.recordTrade("a", 9_000, 50);
+    expect(g.tierFor("a").next?.remainingUsd).toBeCloseTo(1_000, 6);
+    g.recordTrade("a", 2_000, 50); // tier computed before this trade: Floor -> no rebate
+    expect(g.tierFor("a").name).toBe("Pit");
+    const r = g.recordTrade("a", 1_000, 50); // Pit: 0.4% -> 0.1% back
+    expect(r.rebateUsd).toBeCloseTo(1, 6);
+    expect(g.tierFor("a").rebateOwedUsd).toBeCloseTo(1, 6);
+    // Fee not applied on-chain -> nothing to rebate.
+    expect(g.recordTrade("a", 1_000, 0).rebateUsd).toBe(0);
+    // Volume older than 30 days drops out.
+    expect(g.tierFor("a", Date.now() + 31 * 86_400_000).name).toBe("Floor");
+
+    expect(g.setReferrer("b", "a")).toBe(true);
+    expect(g.setReferrer("b", "c")).toBe(false);
+    expect(g.setReferrer("a", "a")).toBe(false);
+    const rb = g.recordTrade("b", 100, 50); // fee $0.50, Outcry keeps 80% = $0.40, referrer 20% = $0.08
+    expect(rb.referralUsd).toBeCloseTo(0.08, 6);
+    expect(g.referralStats("a")).toMatchObject({ invited: 1 });
+
+    // Waitlist: approval makes a non-allowlisted user eligible.
+    const s = setup({ allow: [] });
+    (s.pilot as unknown as { d: { growth: unknown } }).d.growth = s.app.growth;
+    expect(s.pilot.status(s.u.id, true).eligible).toBe(false);
+    s.app.growth.requestAccess(s.u.id, "thiago", "please");
+    expect(s.app.growth.pending()).toHaveLength(1);
+    s.app.growth.decide(s.u.id, true, "admin");
+    expect(s.pilot.status(s.u.id, true).eligible).toBe(true);
+  });
+
+  it("records referrals at sign-up through the API", async () => {
+    const { buildServer } = await import("../src/api/server.js");
+    const srv = await buildServer({ store: null, tickMs: 0, simLaunchEveryMs: 0 } as never);
+    const a = (await srv.f.inject({ method: "POST", url: "/api/session", payload: {} })).json();
+    await srv.f.inject({ method: "PATCH", url: "/api/me", headers: { authorization: `Bearer ${a.token}` }, payload: { handle: "inviter" } });
+    const b = (await srv.f.inject({ method: "POST", url: "/api/session", payload: { ref: "inviter" } })).json();
+    expect(srv.app.growth.referredBy.get(b.user.id)).toBe(a.user.id);
+    await srv.f.close();
+  });
+});

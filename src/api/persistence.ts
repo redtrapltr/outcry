@@ -36,6 +36,7 @@ export class Persistence {
       agents: { obj: a.agents, fields: ["agents", "positions", "seenTokens", "pendingTickets", "paperSince", "limitNotified", "history", "trades", "startUsd"] },
       lab: { obj: a.lab, fields: ["strategies"] },
       marketplace: { obj: a.marketplace, fields: ["listings", "subs"] },
+      growth: { obj: a.growth, fields: ["volume", "rebates", "referralRewards", "referredBy", "access"] },
       registry: { obj: a.registry, fields: ["byMint"] },
       launches: { obj: a.launches, fields: ["plans"] },
       signer: { obj: a.signer, fields: ["wallets"] },

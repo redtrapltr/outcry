@@ -138,6 +138,7 @@ export async function buildServer(opts: ServerOptions = {}) {
         audit: app.audit,
         solUsd: () => { try { return app.market.priceUsd("SOL"); } catch { return 0; } },
         tokenInfo: jupiterTokenInfo,
+        growth: app.growth,
       })
     : undefined;
   let liveStatus: Record<string, unknown> = { configured: false, missing: [!turnkey && "TURNKEY_ORGANIZATION_ID / TURNKEY_API_PUBLIC_KEY / TURNKEY_API_PRIVATE_KEY", !process.env.JUPITER_API_KEY && "JUPITER_API_KEY"].filter(Boolean) };

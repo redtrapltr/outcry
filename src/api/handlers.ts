@@ -34,6 +34,8 @@ const SessionBody = z.object({
   badge: z.string().min(1).max(4).default("YOU"),
   jacket: Jacket.default("memes"),
   residence: z.string().length(2).default("CH"),
+  /** Referral: the @handle whose link brought this user. */
+  ref: z.string().max(20).optional(),
 });
 
 export interface HandlerOptions {
@@ -112,15 +114,24 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     routes.push({ method, pattern, keys, auth, fn });
   };
 
+  const isAdminEarly = (uid: string) => {
+    const h = app.users.get(uid).handle;
+    const list = String((typeof process !== "undefined" ? process.env.OUTCRY_ADMINS : "") ?? "").split(/[\s,]+/).map((x) => x.replace(/^@/, "").toLowerCase());
+    return !!h && list.includes(h);
+  };
   // --- session & account ---------------------------------------------------
   route("POST", "/api/session", ({ body }) => {
     const b = SessionBody.parse(body ?? {});
     const user = app.users.create(b);
+    if (b.ref) {
+      const by = app.users.byHandle(b.ref);
+      if (by && app.growth.setReferrer(user.id, by.id)) app.audit.append(`user:${user.id}`, "growth.referred", { by: by.id });
+    }
     const token = newToken();
     tokens.set(token, user.id);
     return { token, user, llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" };
   }, false);
-  route("GET", "/api/me", ({ uid }) => ({ user: app.users.get(uid), portfolio: app.users.portfolio(uid), usage: router.spendOf(uid), llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" }));
+  route("GET", "/api/me", ({ uid }) => ({ isAdmin: isAdminEarly(uid), user: app.users.get(uid), portfolio: app.users.portfolio(uid), usage: router.spendOf(uid), llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" }));
 
   // --- chat -------------------------------------------------------------------
   route("POST", "/api/chat", async ({ uid, body }) => {
@@ -348,6 +359,29 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     }
     const reclaimable = st.wallet ? await opts.live.reclaimable(uid).catch(() => null) : null;
     return { ...st, portfolio, portfolioError, reclaimable, trades: opts.live.history(uid).slice(0, 30), withdrawals: opts.live.withdrawalHistory(uid).slice(0, 20) };
+  });
+  // Waitlist for real money; admins (OUTCRY_ADMINS handles) approve.
+  const admins = () => String((typeof process !== "undefined" ? process.env.OUTCRY_ADMINS : "") ?? "").split(/[\s,]+/).map((h) => h.replace(/^@/, "").toLowerCase()).filter(Boolean);
+  const isAdmin = (uid: string) => { const h = app.users.get(uid).handle; return !!h && admins().includes(h); };
+  route("POST", "/api/live/access", ({ uid, body }) => {
+    const b = z.object({ note: z.string().max(280).default("") }).parse(body ?? {});
+    const u = app.users.get(uid);
+    if (!u.handle) throw new HttpError(400, "Choose your @handle first");
+    const r = app.growth.requestAccess(uid, u.handle, b.note);
+    app.audit.append(`user:${uid}`, "growth.access_requested", {});
+    return r;
+  });
+  route("GET", "/api/admin/access", ({ uid }) => {
+    if (!isAdmin(uid)) throw new HttpError(403, "Admins only");
+    return app.growth.pending().map((r) => ({ ...r, secured: secured(r.userId), volume30dUsd: app.growth.volume30d(r.userId) }));
+  });
+  route("POST", "/api/admin/access/:userId", ({ uid, params, body }) => {
+    if (!isAdmin(uid)) throw new HttpError(403, "Admins only");
+    const b = z.object({ approve: z.boolean() }).parse(body);
+    const r = app.growth.decide(params.userId!, b.approve, uid);
+    app.audit.append(`user:${uid}`, b.approve ? "growth.access_approved" : "growth.access_denied", { userId: params.userId });
+    app.bus.publish({ type: "agent.activity", userId: params.userId!, agentId: "", message: b.approve ? "You're approved for real-money trading. Open Real wallet to start." : "Your real-money access request wasn't approved yet." });
+    return r;
   });
   route("POST", "/api/live/wallet", ({ uid }) => live().createWallet(uid, secured(uid)));
   route("POST", "/api/live/quote", ({ uid, body }) => {

@@ -12,6 +12,7 @@ import { TicketDesk } from "./tickets/desk.js";
 import { CreatorRegistry, LaunchService } from "./launch/service.js";
 import { AgentRuntime } from "./agents/runtime.js";
 import { StrategyLab } from "./strategy/lab.js";
+import { Growth } from "./live/growth.js";
 import { RANK_MIN_CLOSED_TRADES, RANK_MIN_HOURS, Marketplace } from "./market/listings.js";
 import type { HistoryProvider } from "./data/history.js";
 import { DEFAULT_POLICY, type PolicyConfig } from "./policy/engine.js";
@@ -74,7 +75,8 @@ export function createOutcry(overrides: Partial<OutcryConfig> = {}) {
     onSourceUpdated: (id) => marketplace.onSourceUpdated(id),
   };
 
-  return { config, audit, bus, market, signer, users, exec, registry, desk, agents, launches, lab, marketplace };
+  const growth = new Growth();
+  return { config, audit, bus, market, signer, users, exec, registry, desk, agents, launches, lab, marketplace, growth };
 }
 
 export type Outcry = ReturnType<typeof createOutcry>;

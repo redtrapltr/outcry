@@ -85,6 +85,7 @@ button,input{font:inherit;color:inherit}
 .lw-hint{margin:0}
 .lw-custody{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;font-size:13px;border:1px solid var(--line2);border-radius:10px;padding:10px 12px}
 .lw-custody.ok{border-color:rgba(61,220,151,.5)}
+.tier-bar{height:8px;border-radius:99px;background:var(--bg);border:1px solid var(--line2);overflow:hidden}.tier-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--voice),#3DDC97)}
 .lw-reclaim{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.lw-warn{margin:0;color:#ffb36b}
 .lw-list{display:flex;flex-direction:column}
 .lw-list>div{display:flex;justify-content:space-between;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--line);font-size:14px}
@@ -323,6 +324,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
     </div>
     <button class="btn btn-primary" type="button" id="newSession">+ New chat</button>
     <button class="btn" type="button" id="marketBtn">◆ Marketplace</button>
+    <button class="btn" type="button" id="adminBtn" hidden>⚑ Admin · access requests</button>
     <button class="btn" type="button" id="liveBtn">● Real wallet <span class="mono" style="font-size:10px;opacity:.7">PILOT</span></button>
     <div class="list" id="chatsBox" hidden>
       <span class="eyebrow" style="padding:0 10px 6px">Chats</span>
@@ -418,7 +420,7 @@ function drawAccount(st) {
 }
 async function loadAccount() {
   try { drawAccount(await api('/api/auth/status')); } catch { /* ignore */ }
-  try { const me = await api('/api/me'); myHandle = me.user.handle || null; $('handleBtn').textContent = myHandle ? `@${myHandle} · change` : 'Choose your @handle'; } catch {}
+  try { const me = await api('/api/me'); myHandle = me.user.handle || null; $('adminBtn').hidden = !me.isAdmin; $('handleBtn').textContent = myHandle ? `@${myHandle} · change` : 'Choose your @handle'; } catch {}
 }
 let myHandle = null;
 async function chooseHandle() {
@@ -1408,7 +1410,10 @@ async function openLive() {
     try { s = await api('/api/live'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
     const intro = `<p class="meta" style="margin:0">Real money on Solana. Pilot: up to $${s.limits?.maxOrderUsd ?? 25} per buy, $${s.limits?.maxDailyUsd ?? 100} of buys a day, every trade signed with your passkey. Keys are held by Turnkey; in this pilot Outcry's server can sign after your approval.</p>`;
     if (!s.eligible) {
-      body.innerHTML = `<div class="lw">` + intro + `<div class="lw-card"><b>Not available yet</b><span class="meta">${esc(s.reason || '')}</span></div>${/passkey/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-secure>Secure with a passkey</button>' : ''}${/handle/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-handle>Choose your @handle</button>' : ''}</div>`;
+      const canRequest = /pilot list/.test(s.reason || '');
+      body.innerHTML = `<div class="lw">` + intro + `<div class="lw-card"><b>Not available yet</b><span class="meta">${esc(s.reason || '')}</span>${canRequest ? (s.access === 'pending' ? '<span class="lw-pill">Request sent · waiting for approval</span>' : s.access === 'denied' ? '<span class="meta">Your last request wasn\'t approved. You can ask again later.</span>' : `<form class="lw-form lw-req"><label>Why do you want real-money access? (optional)<input name="note" maxlength="280" placeholder="e.g. I trade memes daily, want to run my sniper live"></label><button class="btn btn-primary lw-go" type="submit">Request access</button></form>`) : ''}</div>${/passkey/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-secure>Secure with a passkey</button>' : ''}${/handle/i.test(s.reason || '') ? '<button class="btn btn-primary" type="button" data-handle>Choose your @handle</button>' : ''}</div>`;
+      const rq = body.querySelector('.lw-req');
+      if (rq) rq.onsubmit = async ev => { ev.preventDefault(); try { await api('/api/live/access', { method: 'POST', body: { note: rq.note.value } }); toast('Request sent'); render(); } catch (e) { toast(e.message); } };
       return;
     }
     if (!s.wallet) {
@@ -1434,6 +1439,13 @@ async function openLive() {
         ${err ? `<p class="meta lw-warn">Some balances couldn't load: ${esc(err)}</p>` : ''}
         ${s.reclaimable?.count ? `<div class="lw-reclaim"><span class="meta">${s.reclaimable.count} empty token account${s.reclaimable.count > 1 ? 's' : ''} hold${s.reclaimable.count > 1 ? '' : 's'} ${fmt(s.reclaimable.sol, 4)} SOL of deposits${p?.sol ? ` (≈ ${usd(s.reclaimable.sol * p.solUsd / p.sol)})` : ''}.</span><button class="btn btn-sm" type="button" data-reclaim>Reclaim</button></div><div class="lw-reclaim-rev"></div>` : ''}
       </section>
+      ${s.tier ? `<section class="lw-card lw-tier"><div class="lw-row"><span class="eyebrow">Fee tier</span><span class="lw-pill">${esc(s.tier.name)} · ${(s.tier.feeBps / 100).toFixed(2)}%</span></div>
+        <div class="tier-bar"><i style="width:${s.tier.next ? Math.min(100, s.tier.volume30dUsd / (s.tier.volume30dUsd + s.tier.next.remainingUsd) * 100) : 100}%"></i></div>
+        <span class="meta">${usd(s.tier.volume30dUsd)} traded in 30 days${s.tier.next ? ` · ${usd(s.tier.next.remainingUsd)} more for ${esc(s.tier.next.name)} (${(s.tier.next.feeBps / 100).toFixed(2)}%)` : ' · top tier'}${s.tier.rebateOwedUsd > 0.005 ? ` · rebate earned ${usd(s.tier.rebateOwedUsd)}` : ''}</span>
+        <span class="meta">Every trade pays 0.5% on-chain; the difference to your tier comes back as a rebate.</span></section>` : ''}
+      ${s.referrals && myHandle ? `<section class="lw-card"><div class="lw-row"><span class="eyebrow">Invite friends</span><span class="lw-pill">${s.referrals.sharePct}% of Outcry's fee</span></div>
+        <div class="lw-addr"><code>${esc(location.origin + '/terminal.html?ref=' + myHandle)}</code><button class="btn btn-sm" type="button" data-reflink>Copy link</button></div>
+        <span class="meta">${s.referrals.invited} joined with your link · ${usd(s.referrals.rewardsUsd)} earned</span></section>` : ''}
       <section class="lw-card lw-wd" hidden>
         <div class="lw-row"><span class="eyebrow">Withdraw to your own wallet</span><button class="lw-icon" type="button" data-wdclose aria-label="Close withdraw">×</button></div>
         <form class="lw-form lw-wdform">
@@ -1464,6 +1476,8 @@ async function openLive() {
       try { if (await makeSelfCustodial(s.custodyResume)) render(); } catch (e) { toast(e.message); }
       cu.disabled = false;
     };
+    const rl = body.querySelector('[data-reflink]');
+    if (rl) rl.onclick = async () => { const u = location.origin + '/terminal.html?ref=' + myHandle; try { await navigator.clipboard.writeText(u); toast('Invite link copied'); } catch { prompt('Your invite link', u); } };
     const rc = body.querySelector('[data-reclaim]');
     if (rc) rc.onclick = async () => {
       const host = body.querySelector('.lw-reclaim-rev');
@@ -1524,7 +1538,21 @@ async function openLive() {
   obs.observe(document.body, { childList: true });
   await render();
 }
+async function openAdmin() {
+  const { body } = sheet('Live access requests');
+  const load = async () => {
+    let list;
+    try { list = await api('/api/admin/access'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
+    body.innerHTML = list.length ? `<div class="lw"><div class="lw-card"><div class="lw-list">${list.map(r => `<div><span><b>@${esc(r.handle || '?')}</b> ${r.secured ? '<span class="lw-pill">passkey ✓</span>' : '<span class="lw-pill red">no passkey</span>'}<br><span class="meta">${new Date(r.at).toLocaleString()}${r.note ? ' · ' + esc(r.note) : ''}</span></span><span><button class="btn btn-sm" type="button" data-ok="${r.userId}">Approve</button> <button class="btn btn-sm" type="button" data-no="${r.userId}">Deny</button></span></div>`).join('')}</div></div></div>` : '<p class="meta">No pending requests.</p>';
+  };
+  body.addEventListener('click', async e => {
+    const b = e.target.closest('[data-ok],[data-no]'); if (!b) return;
+    try { await api(`/api/admin/access/${b.dataset.ok || b.dataset.no}`, { method: 'POST', body: { approve: !!b.dataset.ok } }); toast(b.dataset.ok ? 'Approved' : 'Denied'); load(); } catch (err) { toast(err.message); }
+  });
+  load();
+}
 $('marketBtn').onclick = () => openMarket();
+$('adminBtn').onclick = () => openAdmin();
 $('liveBtn').onclick = () => openLive();
 $('handleBtn').onclick = () => chooseHandle();
 
@@ -1625,7 +1653,8 @@ function connectEvents() {
       token = saved;
       try { const me = await api('/api/me'); s = { token, user: me.user, llm: me.llm, market: me.market }; } catch { token = null; store.set(TOKEN_KEY, null); }
     }
-    if (!s) { s = await api('/api/session', { method: 'POST', body: { badge: 'LOUD', jacket: 'memes', residence: 'CH' } }); token = s.token; if (mode === 'server') store.set(TOKEN_KEY, token); }
+    const ref = new URLSearchParams(location.search).get('ref');
+    if (!s) { s = await api('/api/session', { method: 'POST', body: { badge: 'LOUD', jacket: 'memes', residence: 'CH', ...(ref ? { ref } : {}) } }); token = s.token; if (mode === 'server') store.set(TOKEN_KEY, token); }
     $('badge').textContent = s.user.badge;
     loadAccount();
     $('memberSub').textContent = 'Memes jacket · paper wallet';
