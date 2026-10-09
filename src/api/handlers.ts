@@ -47,6 +47,8 @@ export interface HandlerOptions {
   marketMode?: () => "real" | "simulated";
   /** Real-money pilot (Turnkey wallets + Jupiter), when configured. */
   live?: LivePilot;
+  /** Telegram alerts, when a bot is configured. */
+  telegram?: import("../live/telegram.js").TelegramAlerts;
 }
 
 export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRouter, newToken: () => string, opts: HandlerOptions = {}) {
@@ -131,7 +133,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     tokens.set(token, user.id);
     return { token, user, llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" };
   }, false);
-  route("GET", "/api/me", ({ uid }) => ({ isAdmin: isAdminEarly(uid), user: app.users.get(uid), portfolio: app.users.portfolio(uid), usage: router.spendOf(uid), llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" }));
+  route("GET", "/api/me", ({ uid }) => ({ isAdmin: isAdminEarly(uid), telegram: { available: !!opts.telegram, linked: !!opts.telegram?.isLinked(uid) }, user: app.users.get(uid), portfolio: app.users.portfolio(uid), usage: router.spendOf(uid), llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" }));
 
   // --- chat -------------------------------------------------------------------
   route("POST", "/api/chat", async ({ uid, body }) => {
@@ -363,6 +365,14 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   // Waitlist for real money; admins (OUTCRY_ADMINS handles) approve.
   const admins = () => String((typeof process !== "undefined" ? process.env.OUTCRY_ADMINS : "") ?? "").split(/[\s,]+/).map((h) => h.replace(/^@/, "").toLowerCase()).filter(Boolean);
   const isAdmin = (uid: string) => { const h = app.users.get(uid).handle; return !!h && admins().includes(h); };
+  route("POST", "/api/telegram/link", ({ uid }) => {
+    if (!opts.telegram) throw new HttpError(501, "Telegram alerts aren't set up on this server yet");
+    return { url: opts.telegram.linkFor(uid) };
+  });
+  route("DELETE", "/api/telegram", ({ uid }) => {
+    opts.telegram?.unlink(uid);
+    return { ok: true };
+  });
   route("POST", "/api/live/access", ({ uid, body }) => {
     const b = z.object({ note: z.string().max(280).default("") }).parse(body ?? {});
     const u = app.users.get(uid);

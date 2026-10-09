@@ -53,6 +53,12 @@ services:
         sync: false
       - key: OUTCRY_LIVE_ALLOWLIST
         sync: false
+      - key: OUTCRY_ADMINS
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_BOT_USERNAME
+        sync: false
       # Free key from twelvedata.com: real stock history for backtests (crypto works without it).
       - key: TWELVEDATA_API_KEY
         sync: false

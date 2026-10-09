@@ -16,6 +16,7 @@ import { turnkeyFromEnv } from "../wallet/turnkey.js";
 import { LivePilot, pilotConfigFromEnv, type TokenInfo } from "../live/pilot.js";
 import { JupiterSwap, SolanaRpc } from "../live/chain.js";
 import { SpreadScanner, type StockPair } from "../live/spreads.js";
+import { ALERT_WORTHY, TelegramAlerts } from "../live/telegram.js";
 
 /** Symbol, decimals and USD price for mints, from Jupiter's free token search. */
 async function jupiterTokenInfo(mints: string[]): Promise<Record<string, TokenInfo>> {
@@ -117,6 +118,18 @@ export async function buildServer(opts: ServerOptions = {}) {
     void checkRpc();
     setInterval(() => void checkRpc(), 5 * 60_000).unref();
   }
+  // Telegram alerts (optional): a bot DMs users about real trades, withdrawals and their agents.
+  const telegram = !opts.app && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_BOT_USERNAME
+    ? new TelegramAlerts({ token: process.env.TELEGRAM_BOT_TOKEN.trim(), username: process.env.TELEGRAM_BOT_USERNAME.trim().replace(/^@/, "") }).start()
+    : undefined;
+  if (telegram) {
+    app.bus.subscribe((e) => {
+      const ev = e as { type: string; userId?: string; agentId?: string; message?: string };
+      if (ev.type !== "agent.activity" || !ev.userId || !ev.message || !ALERT_WORTHY.test(ev.message)) return;
+      const name = ev.agentId ? app.agents.get(ev.agentId)?.spec.name : undefined;
+      void telegram.notify(ev.userId, `🤖 ${name && !ev.message.includes(name) ? `${name}: ` : ""}${ev.message}`);
+    });
+  }
   // Real-money pilot: Turnkey wallets + Jupiter swaps (only when the keys are set).
   const turnkey = turnkeyFromEnv(process.env);
   const pilotCfg = pilotConfigFromEnv(process.env);
@@ -139,6 +152,7 @@ export async function buildServer(opts: ServerOptions = {}) {
         solUsd: () => { try { return app.market.priceUsd("SOL"); } catch { return 0; } },
         tokenInfo: jupiterTokenInfo,
         growth: app.growth,
+        notify: (uid, text) => void telegram?.notify(uid, text),
       })
     : undefined;
   let liveStatus: Record<string, unknown> = { configured: false, missing: [!turnkey && "TURNKEY_ORGANIZATION_ID / TURNKEY_API_PUBLIC_KEY / TURNKEY_API_PRIVATE_KEY", !process.env.JUPITER_API_KEY && "JUPITER_API_KEY"].filter(Boolean) };
@@ -183,17 +197,19 @@ export async function buildServer(opts: ServerOptions = {}) {
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
     auth,
     live: livePilot,
+    telegram,
     // Only claim a real market while real data is actually arriving.
     marketMode: () => (live?.price("SOL") !== undefined || pump?.status().connected ? "real" : "simulated"),
     extraHealth: () => ({
       persistence: persistence?.status() ?? { store: "memory (data is lost on restart)" },
       marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", holders: holderPoll ? holderPoll.status() : null, stocks: stocks ? stocks.status() : null, solanaRpc: rpcStatus },
       liveTrading: liveStatus,
+      telegram: telegram ? telegram.status() : "off (set TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME)",
     }),
   });
   const store = opts.store === null ? undefined : opts.store ?? (await storeFromEnv());
   if (store) {
-    persistence = new Persistence(store, app, { router, orch, sessions: api.tokens, transcripts: api.transcripts, recaps: api.recaps, auth, live: livePilot });
+    persistence = new Persistence(store, app, { router, orch, sessions: api.tokens, transcripts: api.transcripts, recaps: api.recaps, auth, live: livePilot, telegram });
     const r = await persistence.restore();
     console.log(`[outcry] state store: ${store.kind}; restored ${r.users} users, ${r.agents} agents, ${r.auditEntries} audit entries`);
     persistence.start(Number(process.env.OUTCRY_SAVE_EVERY_MS ?? 5_000));
@@ -266,6 +282,7 @@ export async function buildServer(opts: ServerOptions = {}) {
     live?.stop();
     pump?.stop();
     holderPoll?.stop();
+    telegram?.stop();
     stocks?.stop();
     await persistence?.stop();
   });

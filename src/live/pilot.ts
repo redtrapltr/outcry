@@ -60,6 +60,8 @@ export interface PilotDeps {
   rpc: SolanaRpc;
   audit: AuditLog;
   solUsd: () => number;
+  /** Push a short alert to the user (Telegram), if they linked it. */
+  notify?: (userId: string, text: string) => void;
   /** Volume tiers, referrals and the live-access waitlist. */
   growth?: import("./growth.js").Growth;
   /** Mint address for a symbol the market knows (tokenized stocks, tracked memes). */
@@ -383,6 +385,7 @@ export class LivePilot {
     list.push(t);
     if (list.length > 500) list.splice(0, list.length - 500);
     this.trades.set(userId, list);
+    this.d.notify?.(userId, t.status === "confirmed" ? `✅ ${t.side === "buy" ? "BOUGHT" : "SOLD"} ${t.symbol} · $${t.usd.toFixed(2)}${t.signature ? `\nhttps://solscan.io/tx/${t.signature}` : ""}` : `⚠️ ${t.side.toUpperCase()} ${t.symbol} failed: ${t.error ?? "unknown"}`);
     this.d.audit.append(`user:${userId}`, t.status === "confirmed" ? "live.swap_confirmed" : "live.swap_failed", { quoteId, side: t.side, mint: t.mint, usd: t.usd, signature: t.signature, error: t.error, approval });
     return t;
   }
@@ -564,6 +567,7 @@ export class LivePilot {
     list.push(wd);
     if (list.length > 200) list.splice(0, list.length - 200);
     this.withdrawals.set(userId, list);
+    this.d.notify?.(userId, wd.status === "confirmed" ? `↗ Sent ${wd.amount} ${wd.asset} to ${wd.to.slice(0, 4)}…${wd.to.slice(-4)}${wd.signature ? `\nhttps://solscan.io/tx/${wd.signature}` : ""}` : `⚠️ Withdrawal of ${wd.amount} ${wd.asset} failed: ${wd.error ?? "unknown"}`);
     this.d.audit.append(`user:${userId}`, wd.status === "confirmed" ? "live.withdraw_confirmed" : "live.withdraw_failed", { id, asset: wd.asset, mint: wd.mint, amount: wd.amount, to: wd.to, signature: wd.signature, error: wd.error, approval });
     const { userId: _u, ...pub } = wd;
     return { ...pub, explorer: wd.signature ? `https://solscan.io/tx/${wd.signature}` : null };

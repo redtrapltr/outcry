@@ -25,7 +25,7 @@ export class Persistence {
   constructor(
     readonly store: StateStore,
     private app: Outcry,
-    private parts: { router: ModelRouter; orch: Orchestrator; sessions: Map<string, string>; transcripts?: Map<string, unknown>; recaps?: Map<string, unknown>; auth?: AuthService; live?: LivePilot },
+    private parts: { router: ModelRouter; orch: Orchestrator; sessions: Map<string, string>; transcripts?: Map<string, unknown>; recaps?: Map<string, unknown>; auth?: AuthService; live?: LivePilot; telegram?: { links: Map<string, number> } },
   ) {}
 
   private holders() {
@@ -47,6 +47,7 @@ export class Persistence {
       ...(this.parts.transcripts ? { transcripts: { obj: { lines: this.parts.transcripts }, fields: ["lines"] } } : {}),
       ...(this.parts.recaps ? { recaps: { obj: { items: this.parts.recaps }, fields: ["items"] } } : {}),
       ...(this.parts.auth ? { auth: { obj: this.parts.auth, fields: ["credentials"] } } : {}),
+      ...(this.parts.telegram ? { telegram: { obj: this.parts.telegram, fields: ["links"] } } : {}),
       ...(this.parts.live ? { live: { obj: this.parts.live, fields: ["trades", "withdrawals"] }, liveWallets: { obj: this.parts.live.wallets, fields: ["wallets"] } } : {}),
     };
   }

@@ -397,3 +397,26 @@ describe("growth: tiers, rebates, referrals, waitlist", () => {
     await srv.f.close();
   });
 });
+
+describe("telegram alerts", () => {
+  it("links a chat with a one-time code, sends alerts, rate-limits, and unlinks on /stop", async () => {
+    const { TelegramAlerts, ALERT_WORTHY } = await import("../src/live/telegram.js");
+    const sent: { chat_id: number; text: string }[] = [];
+    const tg = new TelegramAlerts({ token: "T", username: "OutcryBot" }, async (_u, init) => (sent.push(JSON.parse(String(init?.body))), { ok: true, status: 200, json: async () => ({ ok: true }) }));
+    const url = tg.linkFor("u1");
+    expect(url).toMatch(/^https:\/\/t\.me\/OutcryBot\?start=/);
+    const code = url.split("start=")[1]!;
+    await tg.handleUpdate({ update_id: 1, message: { chat: { id: 42 }, text: "/start wrongcode" } });
+    expect(tg.isLinked("u1")).toBe(false);
+    await tg.handleUpdate({ update_id: 2, message: { chat: { id: 42 }, text: `/start ${code}` } });
+    expect(tg.isLinked("u1")).toBe(true);
+    expect(await tg.notify("u1", "✅ BOUGHT USDC")).toBe(true);
+    expect(sent.at(-1)).toMatchObject({ chat_id: 42, text: "✅ BOUGHT USDC" });
+    for (let i = 0; i < 25; i++) await tg.notify("u1", "spam");
+    expect(sent.filter((m) => m.text === "spam").length).toBe(19);
+    await tg.handleUpdate({ update_id: 3, message: { chat: { id: 42 }, text: "/stop" } });
+    expect(tg.isLinked("u1")).toBe(false);
+    expect(ALERT_WORTHY.test("REAL · BUY BONK $10.00 confirmed")).toBe(true);
+    expect(ALERT_WORTHY.test("PAPER · BUY BONK $10.00 filled")).toBe(false);
+  });
+});

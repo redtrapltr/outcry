@@ -324,6 +324,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
     </div>
     <button class="btn btn-primary" type="button" id="newSession">+ New chat</button>
     <button class="btn" type="button" id="marketBtn">◆ Marketplace</button>
+    <button class="btn" type="button" id="tgBtn">🔔 Telegram alerts</button>
     <button class="btn" type="button" id="adminBtn" hidden>⚑ Admin · access requests</button>
     <button class="btn" type="button" id="liveBtn">● Real wallet <span class="mono" style="font-size:10px;opacity:.7">PILOT</span></button>
     <div class="list" id="chatsBox" hidden>
@@ -420,7 +421,7 @@ function drawAccount(st) {
 }
 async function loadAccount() {
   try { drawAccount(await api('/api/auth/status')); } catch { /* ignore */ }
-  try { const me = await api('/api/me'); myHandle = me.user.handle || null; $('adminBtn').hidden = !me.isAdmin; $('handleBtn').textContent = myHandle ? `@${myHandle} · change` : 'Choose your @handle'; } catch {}
+  try { const me = await api('/api/me'); myHandle = me.user.handle || null; $('adminBtn').hidden = !me.isAdmin; tgState = me.telegram; $('tgBtn').textContent = me.telegram?.linked ? '🔔 Telegram alerts · on' : '🔔 Telegram alerts'; $('handleBtn').textContent = myHandle ? `@${myHandle} · change` : 'Choose your @handle'; } catch {}
 }
 let myHandle = null;
 async function chooseHandle() {
@@ -1553,6 +1554,20 @@ async function openAdmin() {
 }
 $('marketBtn').onclick = () => openMarket();
 $('adminBtn').onclick = () => openAdmin();
+let tgState = null;
+$('tgBtn').onclick = async () => {
+  if (tgState?.linked) {
+    if (!confirm('Turn off Telegram alerts?')) return;
+    await api('/api/telegram', { method: 'DELETE' }).catch(() => {});
+    toast('Telegram alerts off'); loadAccount(); return;
+  }
+  try {
+    const { url } = await api('/api/telegram/link', { method: 'POST' });
+    window.open(url, '_blank', 'noopener');
+    toast('Press Start in Telegram to connect');
+    setTimeout(loadAccount, 15_000);
+  } catch (e) { toast(e.message); }
+};
 $('liveBtn').onclick = () => openLive();
 $('handleBtn').onclick = () => chooseHandle();
 
