@@ -106,6 +106,28 @@ button,input{font:inherit;color:inherit}
 .live-tk{display:flex;flex-direction:column;gap:10px;max-width:560px}
 .live-acts{display:flex;gap:8px;flex-wrap:wrap}
 .live-res a{color:var(--voice-text)}
+.live-cost{margin-top:4px;font:11px var(--mono);color:var(--muted)}
+.fill-fx{position:fixed;inset:0;z-index:80;display:grid;place-items:center;overflow:hidden;cursor:pointer;background:rgba(6,7,24,.72);animation:fxIn .18s ease-out}
+.fill-fx.out{opacity:0;transition:opacity .3s}
+.fx-flash{position:absolute;inset:0;animation:fxFlash .6s ease-out forwards}
+.is-buy .fx-flash{background:radial-gradient(circle at 50% 55%,rgba(61,220,151,.55),transparent 60%)}
+.is-sell .fx-flash{background:radial-gradient(circle at 50% 55%,rgba(255,90,90,.55),transparent 60%)}
+.fx-slip{position:absolute;top:-60px;left:var(--x);padding:4px 10px;background:var(--paper);color:var(--ink);font:700 calc(14px*var(--s)) var(--mono);letter-spacing:.08em;border-radius:3px;box-shadow:0 6px 18px rgba(0,0,0,.35);animation:fxFall var(--t) cubic-bezier(.3,.1,.5,1) var(--d) forwards;transform:rotate(var(--r))}
+.is-buy .fx-slip:nth-child(3n){background:#3DDC97}.is-sell .fx-slip:nth-child(3n){background:#ff8a8a}
+.fx-card{position:relative;z-index:2;display:flex;flex-direction:column;align-items:center;gap:6px;text-align:center;padding:24px}
+.fx-hand{color:var(--voice-text);animation:fxHand .5s cubic-bezier(.2,1.6,.4,1) both}
+.fx-stamp{font:900 clamp(72px,16vw,168px)/.9 var(--display);letter-spacing:.02em;padding:6px 26px;border:8px solid currentColor;border-radius:14px;transform:rotate(-6deg);animation:fxStamp .42s cubic-bezier(.2,1.8,.35,1) .22s both;text-shadow:0 0 40px currentColor}
+.is-buy .fx-stamp{color:#3DDC97}.is-sell .fx-stamp{color:#ff6b6b}
+.fx-what{margin-top:14px;font:800 clamp(26px,5vw,40px) var(--display);animation:fxUp .4s ease-out .5s both}
+.fx-sub{font:13px var(--mono);color:var(--soft);animation:fxUp .4s ease-out .62s both}
+.fx-tap{margin-top:10px;font:11px var(--mono);color:var(--muted);letter-spacing:.1em;text-transform:uppercase;animation:fxUp .4s ease-out 1s both}
+@keyframes fxIn{from{opacity:0}}
+@keyframes fxFlash{0%{opacity:0}25%{opacity:1}100%{opacity:.25}}
+@keyframes fxFall{to{transform:translateY(calc(100vh + 120px)) rotate(calc(var(--r) * -2))}}
+@keyframes fxHand{0%{transform:translateY(-40px) scale(.6) rotate(-20deg);opacity:0}70%{transform:translateY(6px) scale(1.15) rotate(8deg);opacity:1}100%{transform:none}}
+@keyframes fxStamp{0%{transform:scale(2.6) rotate(-14deg);opacity:0}100%{transform:scale(1) rotate(-6deg);opacity:1}}
+@keyframes fxUp{from{transform:translateY(12px);opacity:0}}
+@media (prefers-reduced-motion: reduce){.fill-fx *{animation:none!important}}
 @media (max-width:640px){.lw-total{font-size:42px}.lw-card{padding:14px}}
 .creator-head{display:flex;gap:16px;align-items:center}
 .cbadge{width:64px;height:64px;flex:none;border-radius:14px;display:grid;place-items:center;background:#ff5fa2;color:#1a0f2a;font:900 22px var(--display)}
@@ -1167,6 +1189,63 @@ async function openPublish(agentId, name) {
     } catch (err) { toast(err.message); }
   };
 }
+/** The Outcry "FILLED" moment: the pit shouts, ticker tape flies, the hand slams the stamp. */
+function celebrateFill(r) {
+  const buy = r.side === 'buy';
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const o = document.createElement('div');
+  o.className = 'fill-fx ' + (buy ? 'is-buy' : 'is-sell');
+  o.setAttribute('role', 'status');
+  o.setAttribute('aria-label', `${buy ? 'Bought' : 'Sold'} ${r.symbol}, confirmed on Solana`);
+  const tape = [];
+  for (let i = 0; i < (reduce ? 0 : 26); i++) {
+    const words = buy ? ['BUY', 'FILLED', 'BID', 'LONG', '▲', r.symbol] : ['SELL', 'FILLED', 'OFFER', 'OUT', '▼', r.symbol];
+    tape.push(`<span class="fx-slip" style="--x:${Math.random() * 100}vw;--d:${(Math.random() * 0.5).toFixed(2)}s;--r:${(Math.random() * 80 - 40).toFixed(0)}deg;--s:${(0.7 + Math.random() * 0.8).toFixed(2)};--t:${(1.6 + Math.random() * 1.2).toFixed(2)}s">${esc(words[i % words.length])}</span>`);
+  }
+  o.innerHTML = `<div class="fx-flash"></div>${tape.join('')}
+    <div class="fx-card">
+      <div class="fx-hand"><svg width="64" height="76" viewBox="0 0 40 48" fill="currentColor" aria-hidden="true"><rect x="7" y="6" width="6" height="24" rx="3"/><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="28" y="8" width="6" height="22" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/></svg></div>
+      <div class="fx-stamp">${buy ? 'BOUGHT' : 'SOLD'}</div>
+      <div class="fx-what">${esc(r.received || r.symbol)}</div>
+      <div class="fx-sub">${usd(r.usd)} · confirmed on Solana${r.costs ? ` · fees ${r.costs.totalCostUsd < 0.01 ? '$' + r.costs.totalCostUsd.toFixed(4) : usd(r.costs.totalCostUsd)}` : ''}</div>
+      <div class="fx-tap">tap to close</div>
+    </div>`;
+  document.body.appendChild(o);
+  const end = () => { o.classList.add('out'); setTimeout(() => o.remove(), 350); };
+  o.addEventListener('click', end);
+  setTimeout(end, reduce ? 2200 : 3600);
+  if (!reduce) pitSound(buy);
+}
+/** Synthesized pit sound: crowd roar swell, a thud as the stamp lands, then the exchange bell. */
+function pitSound(buy) {
+  try {
+    const A = window.AudioContext || window.webkitAudioContext; if (!A) return;
+    const ac = (pitSound.ac ??= new A()); if (ac.state === 'suspended') ac.resume();
+    const t0 = ac.currentTime + 0.02, out = ac.createGain(); out.gain.value = 0.55; out.connect(ac.destination);
+    // Crowd: band-passed noise swelling then falling.
+    const len = ac.sampleRate * 1.6, buf = ac.createBuffer(1, len, ac.sampleRate), d = buf.getChannelData(0);
+    for (let i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * (0.6 + 0.4 * Math.sin(i / 900));
+    const n = ac.createBufferSource(); n.buffer = buf;
+    const bp = ac.createBiquadFilter(); bp.type = 'bandpass'; bp.frequency.value = 900; bp.Q.value = 0.7;
+    const g = ac.createGain(); g.gain.setValueAtTime(0.0001, t0); g.gain.exponentialRampToValueAtTime(0.35, t0 + 0.25); g.gain.exponentialRampToValueAtTime(0.0001, t0 + 1.5);
+    n.connect(bp).connect(g).connect(out); n.start(t0); n.stop(t0 + 1.6);
+    // Stamp thud at 0.28s.
+    const th = ac.createOscillator(), tg = ac.createGain(); th.type = 'sine';
+    th.frequency.setValueAtTime(140, t0 + 0.28); th.frequency.exponentialRampToValueAtTime(45, t0 + 0.45);
+    tg.gain.setValueAtTime(0.0001, t0 + 0.27); tg.gain.exponentialRampToValueAtTime(0.9, t0 + 0.29); tg.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.55);
+    th.connect(tg).connect(out); th.start(t0 + 0.27); th.stop(t0 + 0.6);
+    // Exchange bell: two inharmonic partials, rising for a buy, falling for a sell.
+    const bell = (f, at) => { for (const [m, v] of [[1, 0.3], [2.76, 0.12], [5.4, 0.05]]) { const o = ac.createOscillator(), bg = ac.createGain(); o.frequency.value = f * m; bg.gain.setValueAtTime(0.0001, at); bg.gain.exponentialRampToValueAtTime(v, at + 0.01); bg.gain.exponentialRampToValueAtTime(0.0001, at + 1.4); o.connect(bg).connect(out); o.start(at); o.stop(at + 1.5); } };
+    const notes = buy ? [880, 1175] : [1175, 784];
+    bell(notes[0], t0 + 0.4); bell(notes[1], t0 + 0.62);
+  } catch { /* sound is optional */ }
+}
+/** "Costs: network $0.001 · price vs market −$0.004 · Outcry $0 · token account deposit $0.22 (refundable)" */
+function costLine(c) {
+  if (!c) return '';
+  const cents = n => (Math.abs(n) < 0.01 ? '$' + Math.abs(n).toFixed(4) : usd(Math.abs(n)));
+  return `<div class="live-cost">Costs: network ${cents(c.networkFeeUsd)} · price vs market ${c.swapEdgeUsd >= 0 ? '+' : '−'}${cents(c.swapEdgeUsd)} · Outcry ${cents(c.outcryFeeUsd)}${c.rentUsd > 0.0001 ? ` · new token account deposit ${cents(c.rentUsd)} (refundable)` : ''}</div>`;
+}
 /** A real-money order ticket (chat or wallet sheet): countdown, passkey signing, result. */
 function liveTicket(q, { onDone, onCancel } = {}) {
   const el = document.createElement('div');
@@ -1199,8 +1278,8 @@ function liveTicket(q, { onDone, onCancel } = {}) {
       el.querySelector('.live-acts').remove();
       if (r.status === 'confirmed') {
         ttl.textContent = 'confirmed';
-        res.innerHTML = `<span class="up">✓ Confirmed on Solana</span> · received ${esc(r.received)}${r.signature ? ` · <a href="https://solscan.io/tx/${esc(r.signature)}" target="_blank" rel="noopener">view tx ↗</a>` : ''}`;
-        toast(`Confirmed: ${r.side === 'buy' ? 'bought' : 'sold'} ${r.symbol}`); feed(`REAL ${r.side} ${r.symbol} ${usd(r.usd)} confirmed`);
+        res.innerHTML = `<span class="up">✓ Confirmed on Solana</span> · received ${esc(r.received)}${r.signature ? ` · <a href="https://solscan.io/tx/${esc(r.signature)}" target="_blank" rel="noopener">view tx ↗</a>` : ''}${costLine(r.costs)}`;
+        celebrateFill(r); feed(`REAL ${r.side} ${r.symbol} ${usd(r.usd)} confirmed`);
       } else {
         ttl.textContent = 'failed';
         res.innerHTML = `<span class="down">Failed:</span> ${esc(r.error || 'unknown')}${r.signature ? ` · <a href="https://solscan.io/tx/${esc(r.signature)}" target="_blank" rel="noopener">tx ↗</a>` : ''}`;
@@ -1254,7 +1333,7 @@ async function openLive() {
         </form>
         <div class="lw-quote"></div>
       </section>
-      <section class="lw-card"><span class="eyebrow">Real trades</span><div class="lw-list">${s.trades.length ? s.trades.map(t => `<div><span>${t.side === 'buy' ? 'Bought' : 'Sold'} <b>${esc(t.symbol)}</b> · ${usd(t.usd)}<br><span class="meta">${new Date(t.at).toLocaleString()}</span></span><span class="${t.status === 'confirmed' ? 'up' : 'down'}">${t.status === 'confirmed' ? 'Confirmed' : 'Failed'}${t.explorer ? ` · <a href="${esc(t.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}${t.error ? `<br><span class="meta">${esc(t.error)}</span>` : ''}</span></div>`).join('') : '<p class="meta" style="margin:0">No real trades yet.</p>'}</div></section>
+      <section class="lw-card"><span class="eyebrow">Real trades</span><div class="lw-list">${s.trades.length ? s.trades.map(t => `<div><span>${t.side === 'buy' ? 'Bought' : 'Sold'} <b>${esc(t.symbol)}</b> · ${usd(t.usd)}<br><span class="meta">${new Date(t.at).toLocaleString()}</span></span><span class="${t.status === 'confirmed' ? 'up' : 'down'}">${t.status === 'confirmed' ? 'Confirmed' : 'Failed'}${t.explorer ? ` · <a href="${esc(t.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}${t.error ? `<br><span class="meta">${esc(t.error)}</span>` : ''}${t.costs ? `<br><span class="meta">cost ${t.costs.totalCostUsd < 0.01 ? '$' + t.costs.totalCostUsd.toFixed(4) : usd(t.costs.totalCostUsd)}${t.costs.rentUsd > 0.0001 ? ' + ' + usd(t.costs.rentUsd) + ' deposit' : ''}</span>` : ''}</span></div>`).join('') : '<p class="meta" style="margin:0">No real trades yet.</p>'}</div></section>
     </div>`;
     const form = body.querySelector('.lw-form');
     let side = 'buy';

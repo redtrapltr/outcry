@@ -78,6 +78,16 @@ export interface LiveTrade {
   status: "confirmed" | "failed";
   signature?: string;
   error?: string;
+  /** What the trade really cost, read back from the chain. */
+  costs?: {
+    networkFeeUsd: number;
+    /** One-time deposit for a new token account (refundable when the account is closed). */
+    rentUsd: number;
+    /** Market value received minus market value paid, before network fee and rent: Jupiter's fee and slippage. */
+    swapEdgeUsd: number;
+    outcryFeeUsd: number;
+    totalCostUsd: number;
+  };
 }
 
 const QUOTE_TTL_MS = 40_000;
@@ -268,6 +278,7 @@ export class LivePilot {
           const dec = q.side === "buy" ? q.receiveAmount / (Number(q.outAmount) || 1) : 1e-9;
           t.received = `${(Number(r.totalOutputAmount) * dec).toPrecision(6)} ${q.receiveAsset}`;
         }
+        if (r.signature) t.costs = await this.costsOf(r.signature, userId, q).catch(() => undefined);
       } else {
         t.error = r.error ?? `Jupiter code ${r.code}`;
       }
@@ -282,6 +293,22 @@ export class LivePilot {
     this.trades.set(userId, list);
     this.d.audit.append(`user:${userId}`, t.status === "confirmed" ? "live.swap_confirmed" : "live.swap_failed", { quoteId, side: t.side, mint: t.mint, usd: t.usd, signature: t.signature, error: t.error, approval });
     return t;
+  }
+
+  /** Read the confirmed transaction back and price every part of its cost in USD. */
+  private async costsOf(signature: string, userId: string, q: LiveQuote): Promise<LiveTrade["costs"]> {
+    const w = this.d.wallets.get(userId)!;
+    const c = await this.d.rpc.txCosts(signature, w.address, q.mint);
+    if (!c) return undefined;
+    const sol = this.d.solUsd();
+    const tokUsd = (await this.d.tokenInfo([q.mint]).catch(() => ({} as Record<string, TokenInfo>)))[q.mint]?.usdPrice ?? (q.mint === USDC_MINT ? 1 : undefined);
+    if (!(sol > 0) || tokUsd === undefined) return undefined;
+    // SOL that went into (buy) or came out of (sell) the swap itself.
+    const swapSol = Math.abs(c.solChange + (q.side === "buy" ? c.feeSol + c.rentSol : c.feeSol + c.rentSol));
+    const paidUsd = q.side === "buy" ? swapSol * sol : Math.abs(c.tokenChange) * tokUsd;
+    const gotUsd = q.side === "buy" ? Math.abs(c.tokenChange) * tokUsd : swapSol * sol;
+    const networkFeeUsd = c.feeSol * sol, rentUsd = c.rentSol * sol, swapEdgeUsd = gotUsd - paidUsd;
+    return { networkFeeUsd, rentUsd, swapEdgeUsd, outcryFeeUsd: 0, totalCostUsd: networkFeeUsd + Math.max(0, -swapEdgeUsd) };
   }
 
   history(userId: string) {

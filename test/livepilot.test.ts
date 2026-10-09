@@ -32,6 +32,12 @@ function setup(over: Partial<{ allow: string[]; sol: number; tokenRaw: string; e
   const rpc = new SolanaRpc("http://rpc", async (_u, init) => {
     const m = JSON.parse(String(init?.body)).method;
     if (m === "getBalance") return json({ result: { value: Math.round((over.sol ?? 1) * 1e9) } });
+    if (m === "getTransaction") {
+      const spent = 100_000_000 + 5_000 + 2_039_280; // 0.1 SOL swap + fee + new token account
+      return json({ result: { meta: { err: null, fee: 5_000, preBalances: [1e9, 0, 0], postBalances: [1e9 - spent, 2_039_280, 0],
+        preTokenBalances: [], postTokenBalances: [{ owner: ADDR, mint: MINT, uiTokenAmount: { uiAmount: 199_000, uiAmountString: "199000" } }] },
+        transaction: { message: { accountKeys: [{ pubkey: ADDR }, { pubkey: "ata" }, { pubkey: "wsol" }] } } } });
+    }
     const prog = JSON.parse(String(init?.body)).params[1].programId;
     if (prog.startsWith("Tokenkeg") && over.tokenRaw) return json({ result: { value: [{ account: { data: { parsed: { info: { mint: MINT, tokenAmount: { amount: over.tokenRaw, decimals: 6, uiAmount: 0 } } } } } }] } });
     return json({ result: { value: [] } });
@@ -84,6 +90,13 @@ describe("live trading pilot", () => {
     expect(pilot.spentToday(u.id)).toBeCloseTo(20, 6);
     await expect(pilot.quote(u.id, true, { side: "buy", token: MINT, usd: 25 })).rejects.toThrow(/per day/);
     expect(pilot.history(u.id)[0]!.explorer).toContain("solscan.io/tx/5igSig");
+    // Costs read back from the chain: SOL $200, token $0.0001 -> paid $20 of SOL, got $19.90 of token.
+    const c = t.costs!;
+    expect(c.networkFeeUsd).toBeCloseTo(0.001, 6);
+    expect(c.rentUsd).toBeCloseTo(0.407856, 5);
+    expect(c.swapEdgeUsd).toBeCloseTo(-0.1, 6);
+    expect(c.outcryFeeUsd).toBe(0);
+    expect(c.totalCostUsd).toBeCloseTo(0.101, 6);
   });
 
   it("keeps a SOL reserve, sells a share of the holding, records failures", async () => {

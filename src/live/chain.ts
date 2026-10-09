@@ -115,4 +115,47 @@ export class SolanaRpc {
     if (!okCount && lastErr) throw lastErr;
     return out;
   }
+
+  /**
+   * What a confirmed transaction actually cost the wallet: network fee, SOL
+   * locked as rent in newly created token accounts, the wallet's SOL change and
+   * its change in one token. Retries briefly while the RPC catches up.
+   */
+  async txCosts(signature: string, owner: string, mint: string, tries = 4): Promise<TxCosts | undefined> {
+    for (let i = 0; i < tries; i++) {
+      const tx = await this.call<RpcTx | null>("getTransaction", [signature, { encoding: "jsonParsed", maxSupportedTransactionVersion: 0, commitment: "confirmed" }]).catch(() => null);
+      if (tx?.meta) {
+        const keys = tx.transaction.message.accountKeys.map((k) => (typeof k === "string" ? k : k.pubkey));
+        const me = keys.indexOf(owner);
+        const pre = tx.meta.preBalances, post = tx.meta.postBalances;
+        let rent = 0;
+        keys.forEach((_, j) => { if (j !== me && pre[j] === 0 && (post[j] ?? 0) > 0) rent += post[j]!; });
+        const tok = (list: RpcTokenBal[] | undefined) => (list ?? []).filter((b) => b.owner === owner && b.mint === mint).reduce((x, b) => x + Number(b.uiTokenAmount.uiAmountString ?? b.uiTokenAmount.uiAmount ?? 0), 0);
+        return {
+          ok: !tx.meta.err,
+          feeSol: tx.meta.fee / 1e9,
+          rentSol: rent / 1e9,
+          solChange: me >= 0 ? ((post[me] ?? 0) - (pre[me] ?? 0)) / 1e9 : 0,
+          tokenChange: tok(tx.meta.postTokenBalances) - tok(tx.meta.preTokenBalances),
+        };
+      }
+      await new Promise((r) => setTimeout(r, 1_500));
+    }
+    return undefined;
+  }
+}
+
+export interface TxCosts {
+  ok: boolean;
+  feeSol: number;
+  rentSol: number;
+  /** Net SOL change of the wallet (negative = spent), fee and rent included. */
+  solChange: number;
+  tokenChange: number;
+}
+
+interface RpcTokenBal { owner?: string; mint: string; uiTokenAmount: { uiAmount: number | null; uiAmountString?: string } }
+interface RpcTx {
+  meta: { err: unknown; fee: number; preBalances: number[]; postBalances: number[]; preTokenBalances?: RpcTokenBal[]; postTokenBalances?: RpcTokenBal[] } | null;
+  transaction: { message: { accountKeys: (string | { pubkey: string })[] } };
 }
