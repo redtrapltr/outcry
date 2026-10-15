@@ -472,3 +472,29 @@ describe("agent deposits and withdrawals", () => {
     expect(app.agents.perf(a.id)!.pnlUsd).toBeCloseTo(0, 6);
   });
 });
+
+describe("spread alerts", () => {
+  it("pings Pro users over their threshold, once per stock per hour", async () => {
+    const { Growth } = await import("../src/live/growth.js");
+    const { SpreadAlerts } = await import("../src/live/alerts.js");
+    const g = new Growth();
+    g.activate("pro1", "pro", 1, 49);
+    g.spreadAlerts.set("pro1", { minPct: 1, sizeUsd: 100, since: "" });
+    g.spreadAlerts.set("free1", { minPct: 0.1, sizeUsd: 100, since: "" }); // free plan: ignored
+    const sent: [string, string][] = [];
+    const rows = [
+      { ticker: "MSFT", cheap: "MSFTon", rich: "MSFTx", buyCheapPx: 500, sellRichPx: 510, displayedGapPct: 2, swapEdgePct: 0.96, discountPct: 1.96 },
+      { ticker: "AAPL", cheap: "AAPLx", rich: "AAPLon", buyCheapPx: 300, sellRichPx: 300.6, displayedGapPct: 0.2, swapEdgePct: -0.8, discountPct: 0.2 },
+    ];
+    const al = new SpreadAlerts({ growth: g, scanner: { scan: async () => ({ at: "", sizeUsd: 100, outcryFeeBps: 50, scanned: 2, rows, errors: [] }) } as never, notify: (u, t) => (sent.push([u, t]), true), linked: () => true });
+    const now = Date.now();
+    await al.runOnce(now);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]![0]).toBe("pro1");
+    expect(sent[0]![1]).toContain("MSFT");
+    await al.runOnce(now + 60_000);
+    expect(sent).toHaveLength(1); // deduped within the hour
+    await al.runOnce(now + 3_700_000);
+    expect(sent).toHaveLength(2);
+  });
+});

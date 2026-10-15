@@ -394,6 +394,15 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     app.audit.append(`user:${uid}`, "plan.activated", { plan: pp.plan, months: pp.months, usd: pp.usd, signature: paid.signature });
     return { plan: sub.plan, until: new Date(sub.until).toISOString() };
   });
+  route("POST", "/api/alerts/spreads", ({ uid, body }) => {
+    const b = z.object({ minPct: z.number().min(0.1).max(20).optional(), sizeUsd: z.number().min(10).max(10_000).optional(), off: z.boolean().optional() }).parse(body ?? {});
+    if (b.off) { app.growth.spreadAlerts.delete(uid); return { on: false }; }
+    if (app.growth.planOf(uid).id === "free") throw new HttpError(402, "Spread alerts are a Pro perk");
+    if (!opts.telegram?.isLinked(uid)) throw new HttpError(400, "Connect Telegram alerts first (🔔 in the sidebar)");
+    const s = { minPct: b.minPct ?? 1, sizeUsd: b.sizeUsd ?? 100, since: new Date().toISOString() };
+    app.growth.spreadAlerts.set(uid, s);
+    return { on: true, ...s };
+  });
   route("POST", "/api/telegram/link", ({ uid }) => {
     if (!opts.telegram) throw new HttpError(501, "Telegram alerts aren't set up on this server yet");
     return { url: opts.telegram.linkFor(uid) };

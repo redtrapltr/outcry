@@ -17,6 +17,7 @@ import { LivePilot, pilotConfigFromEnv, type TokenInfo } from "../live/pilot.js"
 import { JupiterSwap, SolanaRpc } from "../live/chain.js";
 import { SpreadScanner, type StockPair } from "../live/spreads.js";
 import { ALERT_WORTHY, TelegramAlerts } from "../live/telegram.js";
+import { SpreadAlerts } from "../live/alerts.js";
 
 /** Symbol, decimals and USD price for mints, from Jupiter's free token search. */
 async function jupiterTokenInfo(mints: string[]): Promise<Record<string, TokenInfo>> {
@@ -130,6 +131,7 @@ export async function buildServer(opts: ServerOptions = {}) {
       void telegram.notify(ev.userId, `🤖 ${name && !ev.message.includes(name) ? `${name}: ` : ""}${ev.message}`);
     });
   }
+  let spreadAlerts: SpreadAlerts | undefined;
   // Real-money pilot: Turnkey wallets + Jupiter swaps (only when the keys are set).
   const turnkey = turnkeyFromEnv(process.env);
   const pilotCfg = pilotConfigFromEnv(process.env);
@@ -195,7 +197,11 @@ export async function buildServer(opts: ServerOptions = {}) {
       },
       () => (process.env.JUPITER_REFERRAL_ACCOUNT ? Math.min(255, Math.max(50, Number(process.env.JUPITER_REFERRAL_FEE_BPS ?? 50))) : 0),
     );
+    if (telegram) {
+      spreadAlerts = new SpreadAlerts({ growth: app.growth, scanner: orch.tools.spreads, notify: (uid, text) => telegram.notify(uid, text), linked: (uid) => telegram.isLinked(uid) }).start();
+    }
   }
+  if (telegram) orch.tools.telegramLinked = (uid) => telegram.isLinked(uid);
   let persistence: Persistence | undefined;
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
     auth,
@@ -208,6 +214,7 @@ export async function buildServer(opts: ServerOptions = {}) {
       marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", holders: holderPoll ? holderPoll.status() : null, stocks: stocks ? stocks.status() : null, solanaRpc: rpcStatus },
       liveTrading: liveStatus,
       telegram: telegram ? telegram.status() : "off (set TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME)",
+      spreadAlerts: spreadAlerts?.lastRun ?? null,
     }),
   });
   const store = opts.store === null ? undefined : opts.store ?? (await storeFromEnv());
@@ -286,6 +293,7 @@ export async function buildServer(opts: ServerOptions = {}) {
     pump?.stop();
     holderPoll?.stop();
     telegram?.stop();
+    spreadAlerts?.stop();
     stocks?.stop();
     await persistence?.stop();
   });

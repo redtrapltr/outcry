@@ -117,6 +117,12 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "set_spread_alert",
+    kind: "write",
+    description: "Pro perk: ping the user on Telegram when an xStocks/Ondo price gap (executable, after fees) passes min_pct. off=true turns it off.",
+    input_schema: { type: "object", properties: { min_pct: { type: "number", default: 1 }, size_usd: { type: "number", default: 100 }, off: { type: "boolean" } } },
+  },
+  {
     name: "fund_agent",
     kind: "write",
     description: "REAL MONEY. Deposit SOL into a real-money agent from the user's real wallet, or withdraw SOL from the agent back to the real wallet, while it keeps running. Give usd, or max=true. The user signs/approves the ticket.",

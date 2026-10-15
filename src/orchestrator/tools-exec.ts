@@ -119,6 +119,8 @@ export class ToolExecutor {
   stocks?: { ensureFrom(text: string): Promise<string[]> };
   /** Stock spread scanner (real Jupiter quotes), when live trading is configured. */
   spreads?: import("../live/spreads.js").SpreadScanner;
+  /** Telegram link check, for alert tools. */
+  telegramLinked?: (userId: string) => boolean;
   /** Real-money pilot, when configured on the server. */
   live?: { pilot: import("../live/pilot.js").LivePilot; secured: (userId: string) => boolean };
   constructor(private app: Outcry) {}
@@ -226,6 +228,15 @@ export class ToolExecutor {
             result: { summary: `Ticket ready: ${lines.join("; ")}. Total ≈ $${t.totalUsd.toFixed(2)}.${t.warnings.length ? " Check: " + t.warnings.join("; ") + "." : ""} Nothing moves until you sign.`, ticketId: t.id, status: t.status },
             card: { type: "order", ticket: t },
           };
+        }
+        case "set_spread_alert": {
+          if (i.off) { app.growth.spreadAlerts.delete(userId); return { ok: true, result: { summary: "Spread alerts are off." } }; }
+          if (app.growth.planOf(userId).id === "free") return { ok: false, result: { error: "Spread alerts are a Pro perk. Plans are under ★ Plans in the sidebar." } };
+          if (!this.telegramLinked?.(userId)) return { ok: false, result: { error: "Connect Telegram first (🔔 Telegram alerts in the sidebar), then ask again." } };
+          const minPct = Math.min(20, Math.max(0.1, Number(i.min_pct ?? 1)));
+          const sizeUsd = Math.min(10_000, Math.max(10, Number(i.size_usd ?? 100)));
+          app.growth.spreadAlerts.set(userId, { minPct, sizeUsd, since: new Date().toISOString() });
+          return { ok: true, result: { summary: `Done: I'll ping you on Telegram when an xStocks/Ondo gap passes ${minPct}% (executable quotes for $${sizeUsd}, after Outcry's fees), at most once per stock per hour.` } };
         }
         case "fund_agent": {
           if (!this.live) return { ok: false, result: { error: "Real-money wallets aren't set up on this server." } };
