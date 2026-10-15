@@ -518,6 +518,7 @@ async function refresh() {
         x.update?.available ? `<button type="button" data-act="update" data-id="${a.id}" data-name="${esc(a.spec.name)}" style="color:var(--up)">Update to v${x.update.version}</button>` : '',
         !a.hiddenStrategy && (running || a.state === 'paused') ? `<button type="button" data-act="publish" data-id="${a.id}" data-name="${esc(a.spec.name)}">${x.listing ? 'Listed ✓' : 'Publish'}</button>` : '',
         !a.hiddenStrategy && !a.real && (running || a.state === 'paused') ? `<button type="button" data-act="goreal" data-id="${a.id}" data-name="${esc(a.spec.name)}" style="color:#ffb3b3">Go real $</button>` : '',
+        a.real ? `<button type="button" data-act="deposit" data-id="${a.id}" data-name="${esc(a.spec.name)}">Deposit</button><button type="button" data-act="withdraw" data-id="${a.id}" data-name="${esc(a.spec.name)}">Withdraw</button>` : '',
         a.real ? `<button type="button" data-act="stopreal" data-id="${a.id}" data-name="${esc(a.spec.name)}" style="color:#ffb3b3">Stop & withdraw</button>` : '',
         `<button type="button" class="del" data-act="delete" data-id="${a.id}" data-name="${esc(a.spec.name)}">Delete</button>`,
       ].join('');
@@ -919,6 +920,7 @@ $('chats').addEventListener('dblclick', async e => {
 async function agentAction(id, act, name) {
   if (act === 'publish') return openPublish(id, name);
   if (act === 'goreal') return openGoReal(id, name);
+  if (act === 'deposit' || act === 'withdraw') return openAgentFunds(id, name, act);
   if (act === 'stopreal') {
     if (!confirm(`Stop ${name}? It sells its open positions, then sends all its SOL back to your real wallet.`)) return;
     toast(`Stopping ${name}: selling positions…`);
@@ -1194,13 +1196,13 @@ async function openGoReal(agentId, name) {
   let st;
   try { st = await api('/api/live'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
   if (!st.eligible || !st.wallet) { body.innerHTML = `<div class="lw"><div class="lw-card"><b>Real money isn't available yet</b><span class="meta">${esc(st.reason || 'Create your real wallet first (Real wallet in the sidebar).')}</span></div></div>`; return; }
-  const max = st.limits?.maxAgentUsd ?? 50;
+  const max = st.limits?.maxAgentUsd || Infinity;
   body.innerHTML = `<div class="lw">
-    <div class="lw-pills"><span class="lw-pill red">REAL MONEY</span><span class="lw-pill">own wallet per agent</span><span class="lw-pill">max $${max} budget</span></div>
+    <div class="lw-pills"><span class="lw-pill red">REAL MONEY</span><span class="lw-pill">own wallet per agent</span><span class="lw-pill">${max === Infinity ? 'any budget' : 'max $' + max}</span><span class="lw-pill">deposit / withdraw any time</span></div>
     <div class="lw-card">
       <p style="margin:0">${esc(name)} gets <b>its own Solana account</b> inside your Turnkey wallet. You fund it from your real wallet; it trades only that money, with its own limits (trade size, open positions, drawdown pause). Outcry's 0.5% fee applies to each trade.</p>
-      <p class="meta" style="margin:0">Losses are real and can be total. Start small. You can stop it any time: it sells its positions and sends the SOL back to your real wallet.</p>
-      <form class="lw-form lw-greal"><div><span class="lw-lbl">Budget</span><div class="lw-chips">${[10, 20, 50].filter(v => v <= max).map(v => `<button type="button" class="chip${v === 10 ? ' on' : ''}" data-b="${v}">$${v}</button>`).join('')}<input name="budget" type="number" min="5" max="${max}" step="1" value="10" aria-label="Budget in USD"></div></div>
+      <p class="meta" style="margin:0">Losses are real and can be total. Start small. Add or take out money any time while it runs (here or in the chat: "deposit $20 into ${esc(name)}"). Stop it to sell everything and send the SOL back.</p>
+      <form class="lw-form lw-greal"><div><span class="lw-lbl">Budget</span><div class="lw-chips">${[10, 25, 50, 100, 250].filter(v => v <= max).map(v => `<button type="button" class="chip${v === 10 ? ' on' : ''}" data-b="${v}">$${v}</button>`).join('')}<input name="budget" type="number" min="5" ${max === Infinity ? '' : `max="${max}"`} step="any" value="10" aria-label="Budget in USD"></div></div>
       <button class="btn btn-primary lw-go" type="submit">Create agent wallet & fund it</button></form>
       <div class="gr-host"></div>
     </div></div>`;
@@ -1217,6 +1219,31 @@ async function openGoReal(agentId, name) {
         try { await api(`/api/agents/${agentId}/real/start`, { method: 'POST' }); toast(`${name} is trading real money`); feed(`${name} went REAL`); close(); refresh(); pollAgents(); }
         catch (e) { host.insertAdjacentHTML('beforeend', `<p class="meta down">${esc(e.message)} (funding arrived; press Start again in a few seconds)</p><button class="btn" type="button" data-restart>Start</button>`); host.querySelector('[data-restart]').onclick = async () => { try { await api(`/api/agents/${agentId}/real/start`, { method: 'POST' }); close(); refresh(); } catch (er) { toast(er.message); } }; }
       } }));
+    } catch (e) { host.innerHTML = `<p class="meta down">${esc(e.message)}</p>`; }
+  };
+}
+/** Deposit into / withdraw from a running real-money agent (also possible from the chat). */
+async function openAgentFunds(agentId, name, direction) {
+  const { body, close } = sheet(`${direction === 'deposit' ? 'Deposit into' : 'Withdraw from'} ${name}`);
+  body.innerHTML = `<div class="lw"><div class="lw-card">
+    <p style="margin:0">${direction === 'deposit' ? `Send SOL from your real wallet to ${esc(name)}. It can use it on its next trades.` : `Send SOL from ${esc(name)} back to your real wallet. Open positions stay; 0.01 SOL stays for fees while it holds any.`}</p>
+    <form class="lw-form lw-af"><div><span class="lw-lbl">Amount</span><div class="lw-chips">${[5, 10, 25, 50].map(v => `<button type="button" class="chip" data-u="${v}">$${v}</button>`).join('')}<button type="button" class="chip" data-max>Max</button><input name="usd" type="number" min="1" step="any" placeholder="$" aria-label="Amount in USD"></div></div>
+    <button class="btn btn-primary lw-go" type="submit">Review</button></form><div class="af-host"></div>
+    <span class="meta">Tip: you can also type "${direction === 'deposit' ? 'deposit $20 into' : 'withdraw $10 from'} ${esc(name)}" in the chat.</span></div></div>`;
+  const f = body.querySelector('.lw-af'), host = body.querySelector('.af-host');
+  let max = false;
+  f.addEventListener('click', e => {
+    const c = e.target.closest('[data-u],[data-max]'); if (!c) return;
+    max = c.hasAttribute('data-max'); if (!max) f.usd.value = c.dataset.u; else f.usd.value = '';
+    f.querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === c));
+  });
+  f.usd.oninput = () => { max = false; f.querySelectorAll('.chip').forEach(x => x.classList.remove('on')); };
+  f.onsubmit = async ev => {
+    ev.preventDefault();
+    try {
+      const w = await api(`/api/agents/${agentId}/real/funding`, { method: 'POST', body: { direction, ...(max ? { max: true } : { usd: +f.usd.value }) } });
+      host.innerHTML = '';
+      host.appendChild(withdrawTicket(w, { onDone: (x) => { if (x.status === 'confirmed') { toast(direction === 'deposit' ? `Deposited into ${name}` : `Withdrawn from ${name}`); setTimeout(() => { close(); refresh(); pollAgents(); }, 1500); } } }));
     } catch (e) { host.innerHTML = `<p class="meta down">${esc(e.message)}</p>`; }
   };
 }

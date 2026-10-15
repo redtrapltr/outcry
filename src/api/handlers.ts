@@ -464,7 +464,8 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     return p.executeWithdrawal(uid, secured(uid), wd.id, `webauthn:${wd.id}`);
   });
   // Real-money agents: own on-chain account, funded by a (passkey-signed) transfer from the real wallet.
-  const maxAgentUsd = Number((typeof process !== "undefined" ? process.env.OUTCRY_LIVE_AGENT_MAX_USD : undefined) ?? 50);
+  const envMax = typeof process !== "undefined" ? process.env.OUTCRY_LIVE_AGENT_MAX_USD : undefined;
+  const maxAgentUsd = envMax ? Number(envMax) : Infinity;
   route("POST", "/api/agents/:id/real/prepare", async ({ uid, params, body }) => {
     const b = z.object({ budgetUsd: z.number().min(5) }).parse(body);
     const a = own(app.agents.get(params.id!), uid, "Agent");
@@ -487,6 +488,14 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     const sol = await p.agentSolBalance(address);
     if (sol < 0.02) throw new HttpError(400, `The agent wallet holds ${sol.toFixed(4)} SOL: fund it first`);
     return redactAgent(app.agents.goReal(uid, a.id, address, sol));
+  });
+  route("POST", "/api/agents/:id/real/funding", async ({ uid, params, body }) => {
+    const b = z.object({ direction: z.enum(["deposit", "withdraw"]), usd: z.number().positive().optional(), max: z.boolean().optional() }).parse(body);
+    const a = own(app.agents.get(params.id!), uid, "Agent");
+    if (!a.real) throw new HttpError(400, `${a.spec.name} doesn't trade real money yet: use Go real first`);
+    if (!b.max && !b.usd) throw new HttpError(400, "How much?");
+    const amountSol = b.usd ? Number((b.usd / app.market.priceUsd("SOL")).toFixed(6)) : undefined;
+    return live().prepareAgentFunding(uid, secured(uid), { agentId: a.id, agentName: a.spec.name, address: a.real.address, direction: b.direction, amountSol, max: b.max, openPositions: app.agents.positionsOf(a.id).length });
   });
   route("POST", "/api/agents/:id/real/stop", async ({ uid, params }) => {
     const a = own(app.agents.get(params.id!), uid, "Agent");

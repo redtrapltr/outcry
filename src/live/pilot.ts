@@ -33,6 +33,10 @@ export interface Withdrawal {
   createsAccountSol: number;
   /** Self-custodial wallets: the request the owner's passkey stamps (sent to Turnkey as is). */
   turnkey?: { body: string; credentialId?: string };
+  /** Sender when it isn't the main account (an agent's account, for agent withdrawals). */
+  from?: string;
+  /** Set when this moves money into or out of a real-money agent. */
+  agent?: { id: string; direction: "deposit" | "withdraw" };
 }
 
 export interface PilotConfig {
@@ -60,6 +64,8 @@ export interface PilotDeps {
   rpc: SolanaRpc;
   audit: AuditLog;
   solUsd: () => number;
+  /** A deposit to / withdrawal from a real agent was confirmed (SOL; negative = withdrawn). */
+  onAgentFunding?: (userId: string, agentId: string, deltaSol: number) => void;
   /** Push a short alert to the user (Telegram), if they linked it. */
   notify?: (userId: string, text: string) => void;
   /** Volume tiers, referrals and the live-access waitlist. */
@@ -163,7 +169,7 @@ export class LivePilot {
       eligible: !reason,
       reason: reason ?? null,
       wallet: w ? { address: w.address, createdAt: w.createdAt } : null,
-      limits: { maxOrderUsd: this.cfg.maxOrderUsd, maxDailyUsd: this.cfg.maxDailyUsd, spentTodayUsd: this.spentToday(userId), reserveSol: this.cfg.reserveSol, maxAgentUsd: this.cfg.maxAgentUsd ?? 50 },
+      limits: { maxOrderUsd: this.cfg.maxOrderUsd, maxDailyUsd: this.cfg.maxDailyUsd, spentTodayUsd: this.spentToday(userId), reserveSol: this.cfg.reserveSol, maxAgentUsd: this.cfg.maxAgentUsd ?? null },
       custody: w?.custody ?? (w ? "server" : null),
       tier: this.d.growth?.tierFor(userId) ?? null,
       referrals: this.d.growth?.referralStats(userId) ?? null,
@@ -550,7 +556,7 @@ export class LivePilot {
     wd.tx = undefined;
     this.pendingWithdrawals.delete(id);
     try {
-      const signed = wd.turnkey ? await this.d.wallets.submitStampedSign(userId, wd.turnkey.body, stamp!) : await this.d.wallets.signSolana(userId, tx);
+      const signed = wd.turnkey ? await this.d.wallets.submitStampedSign(userId, wd.turnkey.body, stamp!) : await this.d.wallets.signSolana(userId, tx, wd.from);
       wd.signature = await this.d.rpc.send(signed);
       const err = await this.d.rpc.confirm(wd.signature);
       wd.status = err ? "failed" : "confirmed";
@@ -563,6 +569,7 @@ export class LivePilot {
     }
     delete wd.expiresAt;
     delete wd.turnkey;
+    if (wd.status === "confirmed" && wd.agent && wd.mint === null) this.d.onAgentFunding?.(userId, wd.agent.id, wd.agent.direction === "deposit" ? wd.amount : -wd.amount);
     const list = this.withdrawals.get(userId) ?? [];
     list.push(wd);
     if (list.length > 200) list.splice(0, list.length - 200);
@@ -622,6 +629,39 @@ export class LivePilot {
     }
   }
 
+  /**
+   * Move SOL into a real agent (from the main wallet, signed like any withdrawal) or out of it
+   * (from the agent's account back to the main wallet; server-signed after the user's approval).
+   * While the agent holds positions, 0.01 SOL stays in its account for fees.
+   */
+  async prepareAgentFunding(userId: string, hasPasskey: boolean, req: { agentId: string; agentName: string; address: string; direction: "deposit" | "withdraw"; amountSol?: number; max?: boolean; openPositions: number }) {
+    this.must(userId, hasPasskey);
+    const w = this.d.wallets.get(userId);
+    if (!w) throw new Error("You don't have a real wallet yet");
+    if (req.direction === "deposit") {
+      const wd = await this.prepareWithdrawal(userId, hasPasskey, { to: req.address, token: "SOL", amount: req.amountSol, max: req.max });
+      const rec = this.pendingWithdrawals.get(wd.id)!;
+      rec.agent = { id: req.agentId, direction: "deposit" };
+      rec.asset = `SOL → ${req.agentName}`;
+      return { ...wd, asset: rec.asset, agent: rec.agent };
+    }
+    const sol = await this.d.rpc.solBalance(req.address);
+    const keep = req.openPositions > 0 ? 0.01 : 0;
+    const max = Math.max(0, sol - WITHDRAW_FEE_SOL - 0.000001 - keep);
+    const amount = req.max ? max : Number(req.amountSol);
+    if (!(amount > 0)) throw new Error(`${req.agentName} has nothing to withdraw`);
+    if (amount > max + 1e-12) throw new Error(`${req.agentName} can send back at most ${max.toFixed(6)} SOL${keep ? " (0.01 SOL stays for fees while it holds positions)" : ""}`);
+    const { blockhash } = await this.d.rpc.latestBlockhash();
+    const wd: Withdrawal = {
+      id: newId("wd"), userId, at: nowIso(), asset: `SOL ← ${req.agentName}`, mint: null, amount, to: w.address, status: "pending",
+      tx: buildSolTransfer({ from: req.address, to: w.address, lamports: BigInt(Math.floor(amount * 1e9)), blockhash }),
+      expiresAt: Date.now() + 60_000, feeSol: WITHDRAW_FEE_SOL, createsAccountSol: 0, from: req.address, agent: { id: req.agentId, direction: "withdraw" },
+    };
+    this.pendingWithdrawals.set(wd.id, wd);
+    const { tx: _t, userId: _u, ...pub } = wd;
+    return pub;
+  }
+
   /** Send an agent's SOL back to the main wallet (after its positions are sold). */
   async sweepAgent(userId: string, address: string) {
     const w = this.d.wallets.get(userId);
@@ -651,6 +691,7 @@ export function pilotConfigFromEnv(env: Record<string, string | undefined>): Pil
     maxOrderUsd: Number(env.OUTCRY_LIVE_MAX_ORDER_USD ?? 25),
     maxDailyUsd: Number(env.OUTCRY_LIVE_MAX_DAILY_USD ?? 100),
     reserveSol: Number(env.OUTCRY_LIVE_RESERVE_SOL ?? 0.01),
-    maxAgentUsd: Number(env.OUTCRY_LIVE_AGENT_MAX_USD ?? 50),
+    // No per-agent cap unless set: the user decides how much an agent trades.
+    maxAgentUsd: env.OUTCRY_LIVE_AGENT_MAX_USD ? Number(env.OUTCRY_LIVE_AGENT_MAX_USD) : undefined,
   };
 }

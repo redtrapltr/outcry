@@ -159,6 +159,18 @@ export function parseControl(t: string) {
   return { agent, action };
 }
 
+/** "deposit $20 into SNIPER", "add 10 dollars to my sniper", "withdraw $5 from SNIPER", "take everything out of SNIPER". */
+export function parseAgentFunding(text: string) {
+  const dep = text.match(/\b(?:deposit|add|top up|fund|put)\b.*?\b(?:into|to|in)\s+(?:my\s+)?(?:agent\s+)?([A-Za-z0-9 ]{2,18}?)(?:\s+agent)?\s*$/i);
+  const wdr = text.match(/\b(?:withdraw|take|pull|remove)\b.*?\b(?:from|out of)\s+(?:my\s+)?(?:agent\s+)?([A-Za-z0-9 ]{2,18}?)(?:\s+agent)?\s*$/i);
+  const m = dep ?? wdr;
+  if (!m || /\b[1-9A-HJ-NP-Za-km-z]{32,44}\b/.test(text)) return undefined;
+  const usd = Number(text.match(/\$\s*(\d+(?:\.\d+)?)/)?.[1] ?? text.match(/(\d+(?:\.\d+)?)\s*(?:\$|usd\b|dollars?\b|bucks\b)/i)?.[1] ?? NaN);
+  const max = /\b(all|everything|max)\b/i.test(text);
+  if (!max && !Number.isFinite(usd)) return undefined;
+  return { agent: m[1]!.trim().toUpperCase(), direction: dep ? "deposit" : "withdraw", ...(max ? { max: true } : { usd }) };
+}
+
 /** "send 0.005 SOL to <address>", "withdraw all my USDC to <address>". */
 export function parseWithdrawal(text: string) {
   if (!/\b(withdraw|send|transfer|move)\b/i.test(text)) return undefined;
@@ -208,6 +220,8 @@ export class OfflineProvider implements ModelProvider {
     const text = raw.replace(/<context>[\s\S]*?<\/context>/g, "").trim();
     const intent = classify(text);
     const call = (name: string, input: unknown): ChatResponse => ({ content: [{ type: "tool_use", id: id(), name, input }], stopReason: "tool_use", usage, model: "offline" });
+    const fa = parseAgentFunding(text);
+    if (fa) return call("fund_agent", fa);
     const wd = parseWithdrawal(text);
     if (wd) return call("propose_withdrawal", wd);
     switch (intent) {

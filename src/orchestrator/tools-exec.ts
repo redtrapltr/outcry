@@ -227,6 +227,26 @@ export class ToolExecutor {
             card: { type: "order", ticket: t },
           };
         }
+        case "fund_agent": {
+          if (!this.live) return { ok: false, result: { error: "Real-money wallets aren't set up on this server." } };
+          const name = String(i.agent ?? "").trim().toUpperCase();
+          const mine = app.agents.listForUser(userId).filter((x) => x.state !== "killed");
+          const a = mine.find((x) => x.spec.name === name) ?? mine.find((x) => x.spec.name.includes(name));
+          if (!a) return { ok: false, result: { error: `No agent named ${name}. Your agents: ${mine.map((x) => x.spec.name).join(", ") || "none"}` } };
+          if (!a.real) return { ok: false, result: { error: `${a.spec.name} trades paper money. Use "Go real $" on it first; after that you can deposit and withdraw any time.` } };
+          const direction = i.direction === "withdraw" ? "withdraw" : "deposit";
+          try {
+            const amountSol = i.usd ? Number((Number(i.usd) / app.market.priceUsd("SOL")).toFixed(6)) : undefined;
+            const w = await this.live.pilot.prepareAgentFunding(userId, this.live.secured(userId), { agentId: a.id, agentName: a.spec.name, address: a.real.address, direction, amountSol, max: !!i.max, openPositions: app.agents.positionsOf(a.id).length });
+            return {
+              ok: true,
+              result: { summary: `${direction === "deposit" ? "Deposit" : "Withdrawal"} ready: ${w.amount.toFixed(4)} SOL ${direction === "deposit" ? `into ${a.spec.name}` : `from ${a.spec.name} back to your real wallet`}. Confirm with your passkey within 60 seconds. The agent keeps running.` },
+              card: { type: "live_withdraw", withdrawal: w as unknown as Record<string, unknown> },
+            };
+          } catch (e) {
+            return { ok: false, result: { error: (e as Error).message } };
+          }
+        }
         case "propose_withdrawal": {
           if (!this.live) return { ok: false, result: { error: "Real-money wallets aren't set up on this server." } };
           const to = String(i.to ?? "").trim();

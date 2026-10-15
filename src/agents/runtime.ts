@@ -490,6 +490,21 @@ export class AgentRuntime {
     return a;
   }
 
+  /** A confirmed deposit (+) or withdrawal (-) of SOL: not profit or loss, so the baseline moves with it. */
+  adjustRealFunding(userId: string, agentId: string, deltaSol: number) {
+    const a = this.mustOwn(userId, agentId);
+    if (!a.real) return;
+    const usd = deltaSol * this.d.market.priceUsd("SOL");
+    a.balances.SOL = Math.max(0, (a.balances.SOL ?? 0) + deltaSol);
+    a.real.fundedUsd += usd;
+    this.startUsd.set(a.id, (this.startUsd.get(a.id) ?? 0) + usd);
+    a.stats.equityUsd = this.equityUsd(a);
+    a.stats.peakEquityUsd = Math.max(a.stats.equityUsd, a.stats.peakEquityUsd + usd);
+    this.realRefreshed.delete(a.id);
+    this.d.audit.append(`user:${userId}`, "agent.real_funding", { agentId, deltaSol, usd });
+    this.activity(a, `${deltaSol >= 0 ? "Deposited" : "Withdrew"} ${Math.abs(deltaSol).toFixed(4)} SOL (${fmtUsd(Math.abs(usd))}) ${deltaSol >= 0 ? "into" : "from"} ${a.spec.name}`);
+  }
+
   private async refreshReal(a: Agent) {
     if (!a.real || !this.realExec) return;
     const last = this.realRefreshed.get(a.id) ?? 0;

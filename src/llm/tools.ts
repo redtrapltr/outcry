@@ -117,6 +117,21 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "fund_agent",
+    kind: "write",
+    description: "REAL MONEY. Deposit SOL into a real-money agent from the user's real wallet, or withdraw SOL from the agent back to the real wallet, while it keeps running. Give usd, or max=true. The user signs/approves the ticket.",
+    input_schema: {
+      type: "object",
+      properties: {
+        agent: { type: "string", description: "Agent name" },
+        direction: { type: "string", enum: ["deposit", "withdraw"] },
+        usd: { type: "number" },
+        max: { type: "boolean" },
+      },
+      required: ["agent", "direction"],
+    },
+  },
+  {
     name: "propose_withdrawal",
     kind: "write",
     description: "REAL MONEY. Prepare a withdrawal from the user's real Solana wallet to an address they pasted in this message. token: SOL, USDC, a held token's symbol or mint. Give amount, or max=true for everything. The user reviews the full address and signs with their passkey; nothing moves before that.",

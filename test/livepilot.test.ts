@@ -438,3 +438,37 @@ describe("plans", () => {
     expect(g.planOf("u", now + 61 * 86_400_000).id).toBe("free");
   });
 });
+
+describe("agent deposits and withdrawals", () => {
+  it("moves SOL in and out of a running agent without counting it as P&L", async () => {
+    const { Keypair } = await import("@solana/web3.js");
+    const s = setup({ sol: 1 });
+    await s.pilot.createWallet(s.u.id, true);
+    const funding: number[] = [];
+    (s.pilot as unknown as { d: { onAgentFunding: unknown } }).d.onAgentFunding = (_u: string, _a: string, d: number) => funding.push(d);
+    const agentAddr = Keypair.generate().publicKey.toBase58();
+    // Agent accounts must belong to the wallet to be signed for.
+    (s.wallets.get(s.u.id)! as { agentAccounts?: unknown[] }).agentAccounts = [{ agentId: "agt1", address: agentAddr, path: "m/44'/501'/1'/0'", createdAt: "" }];
+    const dep = await s.pilot.prepareAgentFunding(s.u.id, true, { agentId: "agt1", agentName: "SNIPER", address: agentAddr, direction: "deposit", amountSol: 0.1, openPositions: 0 });
+    expect(dep.to).toBe(agentAddr);
+    await s.pilot.executeWithdrawal(s.u.id, true, dep.id, "webauthn:x");
+    const wd = await s.pilot.prepareAgentFunding(s.u.id, true, { agentId: "agt1", agentName: "SNIPER", address: agentAddr, direction: "withdraw", max: true, openPositions: 2 });
+    expect(wd.to).toBe(ADDR);
+    expect(wd.amount).toBeCloseTo(1 - 0.01 - 0.000008 - 0.000001, 5); // keeps 0.01 SOL while positions are open
+    await s.pilot.executeWithdrawal(s.u.id, true, wd.id, "webauthn:x");
+    expect(s.calls.sign.at(-1)!.signWith).toBe(agentAddr);
+    expect(funding).toEqual([0.1, -wd.amount]);
+
+    // Runtime: deposits move the baseline, so P&L stays 0.
+    const app = createOutcry({ mode: "paper" } as never);
+    const u = app.users.create({ badge: "THI", jacket: "memes", residence: "CH" });
+    const a = app.agents.propose(u.id, { name: "FUNDME", goal: "t", markets: ["memes"], kind: "sniper", universe: { venue: "pumpfun", minHolders: 7 }, sizeUsd: 10, exit: { stopLossPct: 20, takeProfitPct: 50 }, limits: { maxPerTradeUsd: 10, maxPerDayUsd: 50, maxOpenPositions: 3, maxDrawdownPct: 90 }, mode: "paper" }).agent;
+    app.agents.deploy(u.id, a.id, { mode: "paper" });
+    app.agents.goReal(u.id, a.id, agentAddr, 0.5);
+    app.agents.adjustRealFunding(u.id, a.id, 0.25);
+    expect(app.agents.perf(a.id)!.pnlUsd).toBeCloseTo(0, 6);
+    expect(app.agents.get(a.id)!.balances.SOL).toBeCloseTo(0.75, 9);
+    app.agents.adjustRealFunding(u.id, a.id, -0.5);
+    expect(app.agents.perf(a.id)!.pnlUsd).toBeCloseTo(0, 6);
+  });
+});

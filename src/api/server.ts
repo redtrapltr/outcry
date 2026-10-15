@@ -153,6 +153,9 @@ export async function buildServer(opts: ServerOptions = {}) {
         tokenInfo: jupiterTokenInfo,
         growth: app.growth,
         notify: (uid, text) => void telegram?.notify(uid, text),
+        onAgentFunding: (uid, agentId, deltaSol) => {
+          try { app.agents.adjustRealFunding(uid, agentId, deltaSol); } catch { /* agent deleted */ }
+        },
       })
     : undefined;
   let liveStatus: Record<string, unknown> = { configured: false, missing: [!turnkey && "TURNKEY_ORGANIZATION_ID / TURNKEY_API_PUBLIC_KEY / TURNKEY_API_PRIVATE_KEY", !process.env.JUPITER_API_KEY && "JUPITER_API_KEY"].filter(Boolean) };
