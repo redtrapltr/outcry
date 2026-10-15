@@ -13,7 +13,7 @@ import { newId, nowIso, type AuditLog } from "../core/infra.js";
 import type { UserStore } from "../core/users.js";
 import type { TurnkeyWallets } from "../wallet/turnkey.js";
 import { SOL_MINT, USDC_MINT, type JupiterSwap, type SolanaRpc } from "./chain.js";
-import { ATA_RENT_SOL, TOKEN_PROGRAMS, WITHDRAW_FEE_SOL, buildCloseAccounts, buildSolTransfer, buildTokenTransfer, checkDestination } from "./withdraw.js";
+import { ATA_RENT_SOL, TOKEN_PROGRAMS, WITHDRAW_FEE_SOL, buildCloseAccounts, buildMultiTransfer, buildSolTransfer, buildTokenTransfer, checkDestination } from "./withdraw.js";
 
 export interface Withdrawal {
   id: string;
@@ -657,6 +657,26 @@ export class LivePilot {
       tx: buildSolTransfer({ from: req.address, to: w.address, lamports: BigInt(Math.floor(amount * 1e9)), blockhash }),
       expiresAt: Date.now() + 60_000, feeSol: WITHDRAW_FEE_SOL, createsAccountSol: 0, from: req.address, agent: { id: req.agentId, direction: "withdraw" },
     };
+    this.pendingWithdrawals.set(wd.id, wd);
+    const { tx: _t, userId: _u, ...pub } = wd;
+    return pub;
+  }
+
+  /** One transfer from the real wallet to several of the user's own accounts (funding launch wallets). */
+  async prepareMultiFunding(userId: string, hasPasskey: boolean, to: { address: string; sol: number }[], label: string) {
+    this.must(userId, hasPasskey);
+    const w = this.d.wallets.get(userId);
+    if (!w) throw new Error("You don't have a real wallet yet");
+    const total = to.reduce((x, t) => x + t.sol, 0);
+    const sol = await this.d.rpc.solBalance(w.address);
+    if (sol < total + WITHDRAW_FEE_SOL + this.cfg.reserveSol) throw new Error(`Not enough SOL: this needs ${total.toFixed(4)} SOL plus fees, you have ${sol.toFixed(4)}`);
+    const { blockhash } = await this.d.rpc.latestBlockhash();
+    const wd: Withdrawal = {
+      id: newId("wd"), userId, at: nowIso(), asset: `SOL → ${label}`, mint: null, amount: total, to: to.map((t) => t.address).join(","), status: "pending",
+      tx: buildMultiTransfer({ from: w.address, to: to.map((t) => ({ address: t.address, lamports: BigInt(Math.floor(t.sol * 1e9)) })), blockhash }),
+      expiresAt: Date.now() + 60_000, feeSol: WITHDRAW_FEE_SOL, createsAccountSol: 0,
+    };
+    this.attachPasskeySigning(wd);
     this.pendingWithdrawals.set(wd.id, wd);
     const { tx: _t, userId: _u, ...pub } = wd;
     return pub;

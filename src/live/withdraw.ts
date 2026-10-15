@@ -61,3 +61,13 @@ export function buildCloseAccounts(p: { owner: string; accounts: { pubkey: strin
   }
   return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
 }
+
+/** One transaction, several SOL transfers from the same sender (funding launch wallets). */
+export function buildMultiTransfer(p: { from: string; to: { address: string; lamports: bigint }[]; blockhash: string }): string {
+  const from = new PublicKey(p.from);
+  const tx = new Transaction({ feePayer: from, recentBlockhash: p.blockhash });
+  tx.add(ComputeBudgetProgram.setComputeUnitLimit({ units: COMPUTE_UNITS }));
+  tx.add(ComputeBudgetProgram.setComputeUnitPrice({ microLamports: PRIORITY_MICRO_LAMPORTS }));
+  for (const t of p.to) tx.add(SystemProgram.transfer({ fromPubkey: from, toPubkey: new PublicKey(t.address), lamports: t.lamports }));
+  return tx.serialize({ requireAllSignatures: false, verifySignatures: false }).toString("base64");
+}

@@ -18,6 +18,7 @@ import { JupiterSwap, SolanaRpc } from "../live/chain.js";
 import { SpreadScanner, type StockPair } from "../live/spreads.js";
 import { ALERT_WORTHY, TelegramAlerts } from "../live/telegram.js";
 import { SpreadAlerts } from "../live/alerts.js";
+import { RealLauncher } from "../live/launch.js";
 
 /** Symbol, decimals and USD price for mints, from Jupiter's free token search. */
 async function jupiterTokenInfo(mints: string[]): Promise<Record<string, TokenInfo>> {
@@ -160,6 +161,18 @@ export async function buildServer(opts: ServerOptions = {}) {
         },
       })
     : undefined;
+  const launcher = turnkey
+    ? new RealLauncher({
+        wallets: turnkey,
+        rpc: new SolanaRpc(rpcUrl ?? "https://api.mainnet-beta.solana.com"),
+        registry: app.registry,
+        audit: app.audit,
+        creatorBadge: (uid) => app.users.get(uid).badge,
+        pinataJwt: process.env.PINATA_JWT?.trim() || undefined,
+        jitoUrl: process.env.JITO_BUNDLE_URL?.trim() || undefined,
+        notify: (uid, text) => void telegram?.notify(uid, text),
+      })
+    : undefined;
   let liveStatus: Record<string, unknown> = { configured: false, missing: [!turnkey && "TURNKEY_ORGANIZATION_ID / TURNKEY_API_PUBLIC_KEY / TURNKEY_API_PRIVATE_KEY", !process.env.JUPITER_API_KEY && "JUPITER_API_KEY"].filter(Boolean) };
   if (livePilot && turnkey) {
     const refresh = async () => {
@@ -206,6 +219,7 @@ export async function buildServer(opts: ServerOptions = {}) {
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
     auth,
     live: livePilot,
+    launcher,
     telegram,
     // Only claim a real market while real data is actually arriving.
     marketMode: () => (live?.price("SOL") !== undefined || pump?.status().connected ? "real" : "simulated"),
@@ -219,7 +233,7 @@ export async function buildServer(opts: ServerOptions = {}) {
   });
   const store = opts.store === null ? undefined : opts.store ?? (await storeFromEnv());
   if (store) {
-    persistence = new Persistence(store, app, { router, orch, sessions: api.tokens, transcripts: api.transcripts, recaps: api.recaps, auth, live: livePilot, telegram });
+    persistence = new Persistence(store, app, { router, orch, sessions: api.tokens, transcripts: api.transcripts, recaps: api.recaps, auth, live: livePilot, telegram, launcher });
     const r = await persistence.restore();
     console.log(`[outcry] state store: ${store.kind}; restored ${r.users} users, ${r.agents} agents, ${r.auditEntries} audit entries`);
     persistence.start(Number(process.env.OUTCRY_SAVE_EVERY_MS ?? 5_000));

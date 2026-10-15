@@ -55,6 +55,8 @@ services:
         sync: false
       - key: OUTCRY_ADMINS
         sync: false
+      - key: PINATA_JWT
+        sync: false
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_BOT_USERNAME

@@ -498,3 +498,77 @@ describe("spread alerts", () => {
     expect(sent).toHaveLength(2);
   });
 });
+
+describe("real pump.fun launches", () => {
+  async function launcherSetup(wallets: number) {
+    const { Keypair, TransactionMessage, VersionedTransaction, SystemProgram, PublicKey } = await import("@solana/web3.js");
+    const bs58 = (await import("bs58")).default;
+    const { RealLauncher } = await import("../src/live/launch.js");
+    const { CreatorRegistry } = await import("../src/launch/service.js");
+    const app = createOutcry({ mode: "paper" } as never);
+    const creator = Keypair.generate();
+    const calls = { pinned: 0, pump: [] as unknown[], jito: [] as unknown[], sent: [] as string[], signedWith: [] as string[] };
+    let n = 0;
+    const api: TurnkeyApi = {
+      getWhoami: async (i) => ({ organizationId: i.organizationId, userId: "server" }),
+      createSubOrganization: async () => ({ subOrganizationId: "sub", wallet: { walletId: "w", addresses: [creator.publicKey.toBase58()] } }),
+      signTransaction: async (i) => (calls.signedWith.push(i.signWith), { signedTransaction: i.unsignedTransaction }),
+      createUsers: async () => ({ userIds: [] }), createPolicy: async () => ({ policyId: "" }), updateRootQuorum: async () => ({}),
+      createWalletAccounts: async () => ({ addresses: [Keypair.generate().publicKey.toBase58()] }),
+    };
+    const tw = new TurnkeyWallets({ organizationId: "org", apiPublicKey: "p", apiPrivateKey: "k" }, api);
+    await tw.ensure("u1");
+    let mintPk = "";
+    const unsignedFor = (payer: string, withMint: boolean) => {
+      const ix = withMint
+        ? SystemProgram.createAccount({ fromPubkey: new PublicKey(payer), newAccountPubkey: new PublicKey(mintPk), lamports: 1, space: 0, programId: SystemProgram.programId })
+        : SystemProgram.transfer({ fromPubkey: new PublicKey(payer), toPubkey: new PublicKey(mintPk), lamports: 1 });
+      const msg = new TransactionMessage({ payerKey: new PublicKey(payer), recentBlockhash: "11111111111111111111111111111111", instructions: [ix] }).compileToV0Message();
+      return new VersionedTransaction(msg).serialize();
+    };
+    const fetchMock = async (url: string, init?: { body?: unknown }) => {
+      const ok = (j: unknown) => ({ ok: true, status: 200, json: async () => j, text: async () => "", arrayBuffer: async () => new ArrayBuffer(0) });
+      if (url.includes("pinata")) return (calls.pinned++, ok({ data: { cid: `cid${++n}` } }));
+      if (url.includes("pumpportal")) {
+        const body = JSON.parse(String(init?.body));
+        calls.pump.push(body);
+        if (!Array.isArray(body)) { mintPk = body.mint; const b = unsignedFor(body.publicKey, true); return { ok: true, status: 200, json: async () => ({}), text: async () => "", arrayBuffer: async () => b.buffer.slice(b.byteOffset, b.byteOffset + b.byteLength) }; }
+        mintPk = body[0].mint;
+        return ok(body.map((x: { publicKey: string; action: string }) => bs58.encode(unsignedFor(x.publicKey, x.action === "create"))));
+      }
+      calls.jito.push(JSON.parse(String(init?.body)));
+      return ok({ result: "bundle-id" });
+    };
+    const rpc = { solBalance: async () => 1, send: async (b: string) => (calls.sent.push(b), "sig"), confirm: async () => undefined } as never;
+    const launcher = new RealLauncher({ wallets: tw, rpc, registry: app.registry as InstanceType<typeof CreatorRegistry>, audit: app.audit, creatorBadge: () => "THI", pinataJwt: "jwt", fetch: fetchMock as never });
+    const req = { name: "Work", ticker: "WORK", description: "gm", wallets, solPerWallet: 0.1 };
+    return { app, launcher, calls, req, creator, VersionedTransaction, bs58 };
+  }
+
+  it("single wallet: pins metadata, creates with dev buy, signs with creator and mint", async () => {
+    const s = await launcherSetup(1);
+    const p = await s.launcher.prepare("u1", "tkt1", s.req as never, "Creator holds ~3% via Outcry.", async () => ({ id: "never" }));
+    expect(p.funding).toBeUndefined();
+    expect(s.calls.pinned).toBe(2); // image + metadata JSON
+    const r = await s.launcher.build("u1", p.launch.id) as { status: string; mint: string };
+    expect(r.status).toBe("confirmed");
+    const sent = s.VersionedTransaction.deserialize(Buffer.from(s.calls.sent[0]!, "base64"));
+    const mintIdx = sent.message.staticAccountKeys.findIndex((k) => k.toBase58() === r.mint);
+    expect(sent.signatures[mintIdx]!.some((b) => b !== 0)).toBe(true); // mint key signed
+    expect(s.app.registry.get(r.mint)?.wallets).toHaveLength(1);
+    expect(JSON.stringify(s.launcher.listFor("u1"))).not.toContain("mintSecret");
+  });
+
+  it("several wallets: funds them first, then one Jito bundle", async () => {
+    const s = await launcherSetup(3);
+    let fundedTo: { address: string; sol: number }[] = [];
+    const p = await s.launcher.prepare("u1", "tkt2", s.req as never, "disclosed", async (to) => ((fundedTo = to), { id: "wd1" }));
+    expect(fundedTo).toHaveLength(2);
+    expect(fundedTo[0]!.sol).toBeCloseTo(0.112, 6);
+    const r = await s.launcher.build("u1", p.launch.id) as { status: string; mint: string };
+    expect(r.status).toBe("confirmed");
+    expect((s.calls.pump[0] as unknown[]).length).toBe(3);
+    expect((s.calls.jito[0] as { params: string[][] }).params[0]).toHaveLength(3);
+    expect(s.app.registry.get(r.mint)?.wallets).toHaveLength(3);
+  });
+});

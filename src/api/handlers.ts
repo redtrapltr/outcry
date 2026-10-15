@@ -48,6 +48,8 @@ export interface HandlerOptions {
   marketMode?: () => "real" | "simulated";
   /** Real-money pilot (Turnkey wallets + Jupiter), when configured. */
   live?: LivePilot;
+  /** Real pump.fun launches (PumpPortal + Jito), when live trading is configured. */
+  launcher?: import("../live/launch.js").RealLauncher;
   /** Telegram alerts, when a bot is configured. */
   telegram?: import("../live/telegram.js").TelegramAlerts;
 }
@@ -394,6 +396,27 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     app.audit.append(`user:${uid}`, "plan.activated", { plan: pp.plan, months: pp.months, usd: pp.usd, signature: paid.signature });
     return { plan: sub.plan, until: new Date(sub.until).toISOString() };
   });
+  // Real pump.fun launches from a launch ticket.
+  const launcher = () => {
+    if (!opts.launcher) throw new HttpError(501, "Real launches aren't set up on this server");
+    return opts.launcher;
+  };
+  route("POST", "/api/launch/:id/real", async ({ uid, params, body }) => {
+    const b = z.object({ disclosureAccepted: z.boolean() }).parse(body ?? {});
+    const t = own(app.desk.tickets.get(params.id!), uid, "Ticket");
+    if (t.kind !== "launch") throw new HttpError(400, "Not a launch ticket");
+    if (!b.disclosureAccepted) throw new HttpError(400, "Accept the creator-wallet disclosure to launch");
+    const p = live();
+    const blocked = p.blockedReason(uid, secured(uid));
+    if (blocked) throw new HttpError(403, blocked);
+    return launcher().prepare(uid, t.id, t.request, t.disclosure, (to, label) => p.prepareMultiFunding(uid, secured(uid), to, label));
+  });
+  route("POST", "/api/launch/real/:id/send", async ({ uid, params }) => launcher().build(uid, params.id!));
+  route("POST", "/api/launch/real/:id/stamp", async ({ uid, params, body }) => {
+    const b = z.object({ body: z.string().max(20_000), stamp: z.string().max(10_000) }).parse(body);
+    return launcher().sendWithStamp(uid, params.id!, b.body, b.stamp);
+  });
+  route("GET", "/api/launch/real", ({ uid }) => (opts.launcher ? opts.launcher.listFor(uid) : []));
   route("POST", "/api/alerts/spreads", ({ uid, body }) => {
     const b = z.object({ minPct: z.number().min(0.1).max(20).optional(), sizeUsd: z.number().min(10).max(10_000).optional(), off: z.boolean().optional() }).parse(body ?? {});
     if (b.off) { app.growth.spreadAlerts.delete(uid); return { on: false }; }

@@ -40,7 +40,7 @@ export interface Plan {
 export const PLANS: Record<PlanId, Plan> = {
   free: { id: "free", name: "Floor", priceUsd: 0, feeBps: 50, realAgents: 2, perks: ["Paper trading, unlimited", "Real trading at 0.5%", "2 real-money agents", "Volume tiers and referrals"] },
   pro: { id: "pro", name: "Pro", priceUsd: 49, feeBps: 35, realAgents: 10, perks: ["Fee 0.35% (rebated)", "10 real-money agents", "Telegram alerts", "Stock spread alerts on Telegram", "Priority execution (soon)"] },
-  sniper: { id: "sniper", name: "Sniper", priceUsd: 199, feeBps: 25, realAgents: 25, perks: ["Fee 0.25% (rebated)", "25 real-money agents", "Everything in Pro", "Sub-second launch detection (soon)", "Jito bundles for snipes (soon)", "Real pump.fun launches with disclosed multi-wallet buys (soon)"] },
+  sniper: { id: "sniper", name: "Sniper", priceUsd: 199, feeBps: 25, realAgents: 25, perks: ["Fee 0.25% (rebated)", "25 real-money agents", "Everything in Pro", "Sub-second launch detection (soon)", "Jito bundles for snipes (soon)", "Real pump.fun launches with disclosed multi-wallet Jito bundles"] },
 };
 
 export interface Subscription {

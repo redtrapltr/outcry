@@ -568,6 +568,38 @@ function orderCard(t) {
   return wrap;
 }
 
+/** Real pump.fun launch from a launch ticket: metadata to IPFS, fund extra wallets, create (+ Jito bundle). */
+async function realLaunch(t, wrap, btn) {
+  const r = t.request || {};
+  const total = (r.wallets || 1) * (r.solPerWallet || 0);
+  if (!confirm(`REAL MONEY: create $${r.ticker} on pump.fun with a ${total} SOL dev buy across ${r.wallets} disclosed wallet${r.wallets > 1 ? 's' : ''}, from your real wallet.\n\nPumpPortal charges 0.5% on the dev buys. This can't be undone.`)) return;
+  const host = document.createElement('div'); host.className = 'live-tk'; wrap.appendChild(host);
+  const say = (h) => { host.innerHTML = h; };
+  btn.disabled = true;
+  try {
+    say('<p class="meta">Uploading the image and metadata to IPFS…</p>');
+    const p = await api(`/api/launch/${t.id}/real`, { method: 'POST', body: { disclosureAccepted: true } });
+    const send = async () => {
+      say('<p class="meta">Building the launch with PumpPortal…</p>');
+      let res = await api(`/api/launch/real/${p.launch.id}/send`, { method: 'POST' });
+      if (res.needsPasskey) {
+        say('<p class="meta">Sign the create transaction with your wallet passkey…</p>');
+        const stamp = await tkStamp(res.body, res.credentialId);
+        res = await api(`/api/launch/real/${p.launch.id}/stamp`, { method: 'POST', body: { body: res.body, stamp } });
+      }
+      if (res.status === 'confirmed') {
+        say(`<p><span class="up">✓ $${esc(r.ticker)} is live on pump.fun.</span> <a href="${esc(res.pumpUrl)}" target="_blank" rel="noopener">Open on pump.fun ↗</a>${res.explorer ? ` · <a href="${esc(res.explorer)}" target="_blank" rel="noopener">tx ↗</a>` : ''}</p><p class="meta">Mint ${esc(res.mint)}. Every launch wallet is listed in the public creator registry.</p>`);
+        celebrateFill({ side: 'buy', stamp: 'LAUNCHED', symbol: '$' + r.ticker, received: `$${r.ticker} on pump.fun`, usd: 0 });
+        feed(`$${r.ticker} launched for real on pump.fun`);
+      } else say(`<p class="down">Launch failed: ${esc(res.error || res.status)}</p>`);
+    };
+    if (p.funding) {
+      say('');
+      host.insertAdjacentHTML('afterbegin', `<p class="meta">Step 1 of 2: fund ${r.wallets - 1} disclosed launch wallet${r.wallets > 2 ? 's' : ''} from your real wallet.</p>`);
+      host.appendChild(withdrawTicket(p.funding, { onDone: (x) => { if (x.status === 'confirmed') send().catch(e => say(`<p class="down">${esc(e.message)}</p>`)); } }));
+    } else await send();
+  } catch (e) { say(`<p class="down">${esc(e.message)}</p>`); btn.disabled = false; }
+}
 function launchCard(t0, devShare0) {
   if (devShare0 == null) devShare0 = shareOf(t0.totalSol || 0);
   const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px';
@@ -588,9 +620,12 @@ function launchCard(t0, devShare0) {
     const acts = wrap.querySelector('.actions');
     if (t.status === 'needs_confirmation') {
       const b = document.createElement('button'); b.className = 'btn btn-primary'; b.type = 'button'; b.textContent = 'Sign & launch'; b.disabled = true;
-      wrap.querySelector('.acc').onchange = e => { b.disabled = !e.target.checked; };
+      const rb = document.createElement('button'); rb.className = 'btn'; rb.type = 'button'; rb.textContent = '🚀 Launch for real'; rb.disabled = true; rb.style.cssText = 'border-color:#ff5a5a;color:#ffb3b3';
+      rb.title = 'Real pump.fun launch with real SOL from your real wallet';
+      wrap.querySelector('.acc').onchange = e => { b.disabled = !e.target.checked; rb.disabled = !e.target.checked; };
       b.onclick = () => go(b);
-      acts.append(b);
+      rb.onclick = () => realLaunch(t, wrap, rb);
+      acts.append(b, rb);
     }
     const steps = [0.05, 0.1, 0.2, 0.25, 0.5, 0.75, 1, 1.5, 2];
     wrap.querySelectorAll('.stepper button').forEach(btn => btn.onclick = async () => {
@@ -1291,9 +1326,9 @@ function celebrateFill(r) {
   o.innerHTML = `<div class="fx-flash"></div>${tape.join('')}
     <div class="fx-card">
       <div class="fx-hand"><svg width="64" height="76" viewBox="0 0 40 48" fill="currentColor" aria-hidden="true"><rect x="7" y="6" width="6" height="24" rx="3"/><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="28" y="8" width="6" height="22" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/></svg></div>
-      <div class="fx-stamp">${buy ? 'BOUGHT' : 'SOLD'}</div>
+      <div class="fx-stamp">${esc(r.stamp || (buy ? 'BOUGHT' : 'SOLD'))}</div>
       <div class="fx-what">${esc(r.received || r.symbol)}</div>
-      <div class="fx-sub">${usd(r.usd)} · confirmed on Solana${r.costs ? ` · fees ${r.costs.totalCostUsd < 0.01 ? '$' + r.costs.totalCostUsd.toFixed(4) : usd(r.costs.totalCostUsd)}` : ''}</div>
+      <div class="fx-sub">${r.usd ? usd(r.usd) + ' · ' : ''}confirmed on Solana${r.costs ? ` · fees ${r.costs.totalCostUsd < 0.01 ? '$' + r.costs.totalCostUsd.toFixed(4) : usd(r.costs.totalCostUsd)}` : ''}</div>
       <div class="fx-tap">tap to close</div>
     </div>`;
   document.body.appendChild(o);
