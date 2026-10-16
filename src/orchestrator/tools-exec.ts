@@ -277,6 +277,14 @@ export class ToolExecutor {
             return { ok: false, result: { error: (e as Error).message } };
           }
         }
+        case "get_real_wallet": {
+          if (!this.live) return { ok: false, result: { error: "Real-money wallets aren't set up on this server." } };
+          const p = await this.live.pilot.portfolio(userId).catch((e: Error) => ({ error: e.message }));
+          if (!p) return { ok: true, result: { summary: "No real wallet yet: create one under Real wallet in the sidebar." } };
+          if ("error" in p) return { ok: false, result: { error: String(p.error) } };
+          const toks = p.tokens.map((t) => `${t.symbol} ${t.amount}${t.usd !== null ? ` ($${t.usd.toFixed(2)})` : ""} [mint ${t.mint}]`).join(", ") || "no tokens";
+          return { ok: true, result: { summary: `Real wallet ${p.address}: ${p.sol.toFixed(4)} SOL ($${p.solUsd.toFixed(2)}), tokens: ${toks}. Total ≈ $${p.totalUsd.toFixed(2)}.` } };
+        }
         case "scan_stock_spreads": {
           if (!this.spreads) return { ok: false, result: { error: "The spread scanner needs live trading (Jupiter key) on this server." } };
           const size = Math.min(1_000, Math.max(10, Number(i.size_usd ?? 100)));

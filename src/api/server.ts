@@ -171,6 +171,15 @@ export async function buildServer(opts: ServerOptions = {}) {
         pinataJwt: process.env.PINATA_JWT?.trim() || undefined,
         jitoUrl: process.env.JITO_BUNDLE_URL?.trim() || undefined,
         notify: (uid, text) => void telegram?.notify(uid, text),
+        // The paper launch ticket this came from is done: it was launched for real.
+        onLaunched: (l) => {
+          const t = app.desk.tickets.get(l.ticketId);
+          if (t && t.kind === "launch") {
+            t.mint = l.mint;
+            t.notes = [...(t.notes ?? []), `Launched for real on pump.fun: https://pump.fun/coin/${l.mint}`];
+            app.desk.setStatus(t, "filled");
+          }
+        },
       })
     : undefined;
   // Pinata key check for real launches (read-only auth test, refreshed every 10 minutes).
@@ -251,6 +260,14 @@ export async function buildServer(opts: ServerOptions = {}) {
   if (store) {
     persistence = new Persistence(store, app, { router, orch, sessions: api.tokens, transcripts: api.transcripts, recaps: api.recaps, auth, live: livePilot, telegram, launcher });
     const r = await persistence.restore();
+    // Launch tickets that were launched for real before tickets were closed automatically.
+    for (const l of launcher?.launches.values() ?? []) {
+      const t = l.status === "confirmed" ? app.desk.tickets.get(l.ticketId) : undefined;
+      if (t && t.kind === "launch" && ["needs_confirmation", "needs_second_confirmation"].includes(t.status)) {
+        t.mint = l.mint;
+        app.desk.setStatus(t, "filled");
+      }
+    }
     console.log(`[outcry] state store: ${store.kind}; restored ${r.users} users, ${r.agents} agents, ${r.auditEntries} audit entries`);
     persistence.start(Number(process.env.OUTCRY_SAVE_EVERY_MS ?? 5_000));
   }
