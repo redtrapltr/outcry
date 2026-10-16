@@ -103,7 +103,8 @@ export class RealLauncher {
       imageName = `${req.ticker}.svg`;
     }
     const imageCid = await this.pinFile(image, imageName);
-    const meta = { name: req.name, symbol: req.ticker, description, image: `https://ipfs.io/ipfs/${imageCid}`, showName: true, createdOn: "https://outcry.app" };
+    const link = (u?: string) => (u && /^https?:\/\//i.test(u.trim()) ? u.trim() : undefined);
+    const meta = { name: req.name, symbol: req.ticker, description, image: `https://ipfs.io/ipfs/${imageCid}`, showName: true, createdOn: "https://outcry.app", twitter: link(req.twitter), telegram: link(req.telegram), website: link(req.website) };
     const metaCid = await this.pinFile(new Blob([JSON.stringify(meta)], { type: "application/json" }), "metadata.json");
     return `https://ipfs.io/ipfs/${metaCid}`;
   }

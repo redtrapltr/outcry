@@ -193,7 +193,12 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   });
   route("POST", "/api/tickets/:id/cancel", ({ uid, params }) => app.desk.cancel(params.id!, uid));
   route("PATCH", "/api/launch/:id", ({ uid, params, body }) => {
-    const b = z.object({ wallets: z.number().int().optional(), solPerWallet: z.number().optional(), name: z.string().optional(), ticker: z.string().optional(), imageDataUrl: z.string().optional() }).parse(body);
+    const b = z.object({
+      wallets: z.number().int().optional(), solPerWallet: z.number().optional(), name: z.string().optional(), ticker: z.string().optional(),
+      imageDataUrl: z.string().max(1_500_000).regex(/^data:image\/(png|jpeg|webp|gif);base64,/, "image must be PNG, JPEG, WebP or GIF").optional(),
+      description: z.string().max(500).optional(),
+      twitter: z.string().max(200).optional(), telegram: z.string().max(200).optional(), website: z.string().max(200).optional(),
+    }).parse(body);
     return app.launches.revise(uid, params.id!, b);
   });
 

@@ -307,7 +307,7 @@ export class ToolExecutor {
           if (t.status === "rejected") return { ok: false, validationError: !t.totalSol, result: { error: t.rejection }, card: { type: "launch", ticket: t, devSharePct: share } };
           return {
             ok: true,
-            result: { summary: `Launch ticket for $${t.request.ticker}: ${t.request.wallets} launch wallets × ${t.request.solPerWallet} SOL = ${t.totalSol.toFixed(2)} SOL dev buy, about ${share.toFixed(1)}% of supply, disclosed as creator wallets on the token page. Adjust it, then sign.`, ticketId: t.id },
+            result: { summary: `Launch ticket for $${t.request.ticker}: ${t.request.wallets} launch wallets × ${t.request.solPerWallet} SOL = ${t.totalSol.toFixed(2)} SOL dev buy, about ${share.toFixed(1)}% of supply, disclosed as creator wallets on the token page. Add an image, a description and your X / Telegram / website links on the card, adjust it, then sign (paper) or press Launch for real.`, ticketId: t.id },
             card: { type: "launch", ticket: t, devSharePct: share },
           };
         }

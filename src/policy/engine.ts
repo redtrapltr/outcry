@@ -183,7 +183,7 @@ export function evaluateLaunch(req: LaunchRequest, solBalance: number, cfg = DEF
     notes: [
       ...notes,
       `Estimated dev share: ${share.pct.toFixed(1)}% of supply across ${req.wallets} disclosed wallet${req.wallets > 1 ? "s" : ""}`,
-      "Create instruction and all dev buys land in one Jito bundle",
+      req.wallets > 1 ? "Create and all dev buys land in one Jito bundle: all or nothing" : "Create and dev buy happen in one transaction",
       "Mint authority is revoked at launch (pump.fun standard)",
     ],
   };

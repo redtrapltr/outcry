@@ -93,6 +93,14 @@ button,input{font:inherit;color:inherit}
 .plan ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:14px;flex:1}
 .plans-top{display:flex;flex-direction:column;gap:10px}.plans-seg{max-width:420px}
 @media (max-width:760px){.plans{grid-template-columns:1fr}}
+.tk-details{display:grid;grid-template-columns:120px 1fr;gap:12px;padding:12px 14px;border-bottom:1px dashed rgba(0,0,0,.18)}
+.tk-img{display:flex;flex-direction:column;gap:6px;align-items:stretch}
+.tk-img img,.tk-img span{width:120px;height:120px;border-radius:12px;object-fit:cover;border:1px solid rgba(0,0,0,.15)}
+.tk-img span{display:grid;place-items:center;font:11px var(--mono);color:rgba(0,0,0,.45);background:rgba(0,0,0,.04)}
+.tk-btn{border:1px solid rgba(0,0,0,.25);background:transparent;border-radius:8px;padding:6px;font:12px var(--mono);cursor:pointer;color:var(--ink)}
+.tk-fields{display:flex;flex-direction:column;gap:6px}
+.tk-fields textarea,.tk-fields input{border:1px solid rgba(0,0,0,.2);background:#fff;border-radius:8px;padding:7px 9px;font:13px var(--sans,inherit);color:var(--ink);resize:vertical}
+@media (max-width:560px){.tk-details{grid-template-columns:1fr}.tk-img img,.tk-img span{width:100%;height:160px}}
 .tier-bar{height:8px;border-radius:99px;background:var(--bg);border:1px solid var(--line2);overflow:hidden}.tier-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--voice),#3DDC97)}
 .lw-reclaim{display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap}.lw-warn{margin:0;color:#ffb36b}
 .lw-list{display:flex;flex-direction:column}
@@ -600,6 +608,22 @@ async function realLaunch(t, wrap, btn) {
     } else await send();
   } catch (e) { say(`<p class="down">${esc(e.message)}</p>`); btn.disabled = false; }
 }
+/** Resize a picked image to max 512 px (keeps launches fast and under IPFS limits). */
+function shrinkImage(file) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 512 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas'); c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      URL.revokeObjectURL(img.src);
+      const png = c.toDataURL('image/png');
+      resolve(png.length < 900_000 ? png : c.toDataURL('image/jpeg', 0.88));
+    };
+    img.onerror = () => reject(new Error("Couldn't read that image"));
+    img.src = URL.createObjectURL(file);
+  });
+}
 function launchCard(t0, devShare0) {
   if (devShare0 == null) devShare0 = shareOf(t0.totalSol || 0);
   const wrap = document.createElement('div'); wrap.style.cssText = 'display:flex;flex-direction:column;gap:10px';
@@ -610,6 +634,15 @@ function launchCard(t0, devShare0) {
       ${t.rejection ? `<div class="t-reject"><b>Can't launch yet.</b> ${esc(t.rejection)}</div>` : ''}
       ${(t.warnings || []).map(w => `<div class="t-warn">${esc(w)}</div>`).join('')}
       <div class="t-row"><span><b style="font:900 28px/1 var(--display)">$${esc(r.ticker)}</b><small>${esc(r.name)}</small></span><span class="t-muted">1,000,000,000 supply</span></div>
+      <div class="tk-details">
+        <div class="tk-img">${r.imageDataUrl ? `<img src="${esc(r.imageDataUrl)}" alt="Token image">` : '<span>No image yet</span>'}<button type="button" class="tk-btn" data-img>${r.imageDataUrl ? 'Change image' : 'Add image'}</button><input type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden data-file></div>
+        <div class="tk-fields">
+          <textarea data-f="description" maxlength="500" rows="2" placeholder="Description (shown on pump.fun)">${esc(r.description || '')}</textarea>
+          <input data-f="twitter" maxlength="200" placeholder="X / Twitter link" value="${esc(r.twitter || '')}">
+          <input data-f="telegram" maxlength="200" placeholder="Telegram link" value="${esc(r.telegram || '')}">
+          <input data-f="website" maxlength="200" placeholder="Website" value="${esc(r.website || '')}">
+        </div>
+      </div>
       <div class="t-row"><span class="t-muted">Launch wallets</span><span class="stepper"><button type="button" data-k="w" data-d="-1" aria-label="Fewer wallets">−</button><output>${r.wallets}</output><button type="button" data-k="w" data-d="1" aria-label="More wallets">+</button></span></div>
       <div class="t-row"><span class="t-muted">SOL per wallet</span><span class="stepper"><button type="button" data-k="s" data-d="-1" aria-label="Less SOL per wallet">−</button><output>${r.solPerWallet} SOL</output><button type="button" data-k="s" data-d="1" aria-label="More SOL per wallet">+</button></span></div>
       <div class="wallets">${Array.from({ length: r.wallets || 0 }, (_, i) => `<div class="wal"><small>W${String(i + 1).padStart(2, '0')}</small><b>${r.solPerWallet}</b></div>`).join('')}</div>
@@ -627,6 +660,20 @@ function launchCard(t0, devShare0) {
       rb.onclick = () => realLaunch(t, wrap, rb);
       acts.append(b, rb);
     }
+    const editable = ['needs_confirmation', 'rejected'].includes(t.status);
+    const save = async (patch) => {
+      if (!editable) return;
+      try { t = await api(`/api/launch/${t.id}`, { method: 'PATCH', body: patch }); devShare = shareOf(t.totalSol); render(); } catch (e) { toast(e.message); }
+    };
+    wrap.querySelectorAll('[data-f]').forEach(el => { el.disabled = !editable; el.onchange = () => save({ [el.dataset.f]: el.value.trim() }); });
+    const file = wrap.querySelector('[data-file]');
+    wrap.querySelector('[data-img]').disabled = !editable;
+    wrap.querySelector('[data-img]').onclick = () => file.click();
+    file.onchange = async () => {
+      const f = file.files?.[0]; if (!f) return;
+      if (f.size > 8_000_000) return toast('Image too large (max 8 MB)');
+      try { await save({ imageDataUrl: await shrinkImage(f) }); toast('Image added'); } catch (e) { toast(e.message); }
+    };
     const steps = [0.05, 0.1, 0.2, 0.25, 0.5, 0.75, 1, 1.5, 2];
     wrap.querySelectorAll('.stepper button').forEach(btn => btn.onclick = async () => {
       if (!['needs_confirmation', 'rejected'].includes(t.status)) return;

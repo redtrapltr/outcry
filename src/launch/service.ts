@@ -104,7 +104,7 @@ export class LaunchService {
       request: req,
       totalSol,
       disclosure: disclosureLine(req, share.pct),
-      notes: verdict.decision === "reject" ? [] : [...verdict.notes, `Outcry launch fee: ${this.d.launchFeeSol} SOL (covers Jito tip, wallet signatures, IPFS)`],
+      notes: verdict.decision === "reject" ? [] : [...verdict.notes, `Fees: paper launch ${this.d.launchFeeSol} SOL simulated · real launch: PumpPortal 0.5% of the dev buys, plus Solana network fees`],
       warnings: verdict.decision === "allow" ? verdict.warnings : [],
     };
     this.d.desk.tickets.set(t.id, t);
@@ -113,7 +113,7 @@ export class LaunchService {
   }
 
   /** Update the steppers on an unsigned launch ticket (wallet count, SOL each, name). */
-  revise(userId: string, ticketId: string, patch: Partial<Pick<LaunchRequest, "wallets" | "solPerWallet" | "name" | "ticker" | "description" | "imageDataUrl">>): LaunchTicket {
+  revise(userId: string, ticketId: string, patch: Partial<Pick<LaunchRequest, "wallets" | "solPerWallet" | "name" | "ticker" | "description" | "imageDataUrl" | "twitter" | "telegram" | "website">>): LaunchTicket {
     const old = this.d.desk.get(ticketId);
     if (old.kind !== "launch" || old.userId !== userId) throw new Error("Not your launch ticket");
     if (old.status !== "needs_confirmation" && old.status !== "rejected") throw new Error(`Ticket is ${old.status}`);

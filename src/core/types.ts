@@ -121,7 +121,10 @@ export const LaunchRequest = z.object({
     .transform((s) => s.replace(/^\$/, "").toUpperCase())
     .pipe(z.string().regex(/^[A-Z0-9]+$/, "ticker must be letters and digits")),
   description: z.string().max(500).default(""),
-  imageDataUrl: z.string().optional(),
+  imageDataUrl: z.string().max(1_500_000).optional(),
+  twitter: z.string().max(200).optional(),
+  telegram: z.string().max(200).optional(),
+  website: z.string().max(200).optional(),
   /** Max 16: create + buys must fit one Jito bundle (5 transactions). */
   wallets: z.number().int().min(1).max(16),
   solPerWallet: z.number().positive().max(50),
