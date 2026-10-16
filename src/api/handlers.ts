@@ -209,7 +209,8 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     return { agent: redactAgent(a), blueprint: blueprint(a) };
   });
   route("PATCH", "/api/me", ({ uid, body }) => {
-    const b = z.object({ handle: z.string().max(17).optional(), bio: z.string().max(400).optional() }).parse(body);
+    const b = z.object({ handle: z.string().max(17).optional(), bio: z.string().max(400).optional(), onboardingDismissed: z.boolean().optional() }).parse(body);
+    if (b.onboardingDismissed !== undefined) app.users.get(uid).onboardingDismissed = b.onboardingDismissed;
     if (b.handle !== undefined) app.users.setHandle(uid, b.handle);
     if (b.bio !== undefined) app.users.setBio(uid, b.bio);
     return { user: app.users.get(uid) };

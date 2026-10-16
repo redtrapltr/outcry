@@ -324,6 +324,8 @@ export interface UserProfile {
   handle?: string;
   /** Short public bio on the creator profile. */
   bio?: string;
+  /** The user hid the "Start here" checklist. */
+  onboardingDismissed?: boolean;
   mainWallet: { solana: string; evm: string };
   balances: WalletBalance;
   /** Median order size in USD, used by the amount-sanity check. */
