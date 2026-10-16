@@ -173,6 +173,21 @@ export async function buildServer(opts: ServerOptions = {}) {
         notify: (uid, text) => void telegram?.notify(uid, text),
       })
     : undefined;
+  // Pinata key check for real launches (read-only auth test, refreshed every 10 minutes).
+  let pinataStatus: Record<string, unknown> = { configured: !!process.env.PINATA_JWT };
+  const checkPinata = async () => {
+    if (!process.env.PINATA_JWT) return;
+    try {
+      const r = await fetch("https://api.pinata.cloud/data/testAuthentication", { headers: { Authorization: `Bearer ${process.env.PINATA_JWT.trim()}` }, signal: AbortSignal.timeout(8_000) });
+      pinataStatus = { configured: true, ok: r.ok, status: r.status, checkedAt: new Date().toISOString() };
+    } catch (e) {
+      pinataStatus = { configured: true, ok: false, error: (e as Error).message, checkedAt: new Date().toISOString() };
+    }
+  };
+  if (!opts.app) {
+    void checkPinata();
+    setInterval(() => void checkPinata(), 10 * 60_000).unref();
+  }
   let liveStatus: Record<string, unknown> = { configured: false, missing: [!turnkey && "TURNKEY_ORGANIZATION_ID / TURNKEY_API_PUBLIC_KEY / TURNKEY_API_PRIVATE_KEY", !process.env.JUPITER_API_KEY && "JUPITER_API_KEY"].filter(Boolean) };
   if (livePilot && turnkey) {
     const refresh = async () => {
@@ -227,6 +242,7 @@ export async function buildServer(opts: ServerOptions = {}) {
       persistence: persistence?.status() ?? { store: "memory (data is lost on restart)" },
       marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", holders: holderPoll ? holderPoll.status() : null, stocks: stocks ? stocks.status() : null, solanaRpc: rpcStatus },
       liveTrading: liveStatus,
+      realLaunches: { configured: !!launcher, pinata: pinataStatus, jito: process.env.JITO_BUNDLE_URL ? "custom" : "default block engine" },
       telegram: telegram ? telegram.status() : "off (set TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME)",
       spreadAlerts: spreadAlerts?.lastRun ?? null,
     }),
