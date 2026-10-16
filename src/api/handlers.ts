@@ -422,6 +422,14 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     return launcher().sendWithStamp(uid, params.id!, b.body, b.stamp);
   });
   route("GET", "/api/launch/real", ({ uid }) => (opts.launcher ? opts.launcher.listFor(uid) : []));
+  route("GET", "/api/launch/real/:id/wallets", ({ uid, params }) => launcher().walletsOf(uid, params.id!));
+  route("POST", "/api/launch/real/:id/manage", async ({ uid, params, body }) => {
+    const b = z.object({ action: z.enum(["sell", "consolidate", "recover"]) }).parse(body);
+    const p = live();
+    const blocked = p.blockedReason(uid, secured(uid));
+    if (blocked) throw new HttpError(403, blocked);
+    return launcher().manage(uid, params.id!, b.action);
+  });
   route("POST", "/api/alerts/spreads", ({ uid, body }) => {
     const b = z.object({ minPct: z.number().min(0.1).max(20).optional(), sizeUsd: z.number().min(10).max(10_000).optional(), off: z.boolean().optional() }).parse(body ?? {});
     if (b.off) { app.growth.spreadAlerts.delete(uid); return { on: false }; }

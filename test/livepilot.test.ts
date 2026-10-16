@@ -500,7 +500,7 @@ describe("spread alerts", () => {
 });
 
 describe("real pump.fun launches", () => {
-  async function launcherSetup(wallets: number) {
+  async function launcherSetup(wallets: number, withFee = false) {
     const { Keypair, TransactionMessage, VersionedTransaction, SystemProgram, PublicKey } = await import("@solana/web3.js");
     const bs58 = (await import("bs58")).default;
     const { RealLauncher } = await import("../src/live/launch.js");
@@ -540,9 +540,18 @@ describe("real pump.fun launches", () => {
       return ok({ result: "bundle-id" });
     };
     const rpc = { solBalance: async () => 1, send: async (b: string) => (calls.sent.push(b), "sig"), confirm: async () => undefined } as never;
-    const launcher = new RealLauncher({ wallets: tw, rpc, registry: app.registry as InstanceType<typeof CreatorRegistry>, audit: app.audit, creatorBadge: () => "THI", pinataJwt: "jwt", fetch: fetchMock as never });
+    const swaps: unknown[] = [], sweeps: string[] = [];
+    let confirmed = false;
+    const launcher = new RealLauncher({
+      wallets: tw, rpc, registry: app.registry as InstanceType<typeof CreatorRegistry>, audit: app.audit, creatorBadge: () => "THI", pinataJwt: "jwt", fetch: fetchMock as never,
+      ...(withFee ? { feeSol: 0.02, treasury: "Treasury1111111111111111111111111111111111", fundingConfirmed: () => confirmed } : {}),
+      swap: async (_u, address, side, mint, size) => (swaps.push({ address, side, mint, size }), { ok: true, solAmount: 0.05, signature: "s" }),
+      sweep: async (_u, address) => (sweeps.push(address), { sent: 0.06, signature: "w" }),
+    });
+    (rpc as unknown as { tokens: unknown }).tokens = async () => [{ mint: mintPk, amount: 1000, decimals: 6, raw: "1000000000" }];
+    const ctl = { swaps, sweeps, confirm: () => (confirmed = true) };
     const req = { name: "Work", ticker: "WORK", description: "gm", wallets, solPerWallet: 0.1 };
-    return { app, launcher, calls, req, creator, VersionedTransaction, bs58 };
+    return { app, launcher, calls, req, creator, VersionedTransaction, bs58, ctl };
   }
 
   it("single wallet: pins metadata, creates with dev buy, signs with creator and mint", async () => {
@@ -570,5 +579,21 @@ describe("real pump.fun launches", () => {
     expect((s.calls.pump[0] as unknown[]).length).toBe(3);
     expect((s.calls.jito[0] as { params: string[][] }).params[0]).toHaveLength(3);
     expect(s.app.registry.get(r.mint)?.wallets).toHaveLength(3);
+    // After the launch: sell what the launch wallets bought, SOL back to the main wallet.
+    const m = await s.launcher.manage("u1", p.launch.id, "sell");
+    expect(s.ctl.swaps).toHaveLength(2);
+    expect(s.ctl.sweeps).toHaveLength(2);
+    expect(m.results.every((x) => x.ok)).toBe(true);
+  });
+
+  it("charges Outcry's launch fee in the funding transfer and waits for it", async () => {
+    const s = await launcherSetup(1, true);
+    let to: { address: string; sol: number }[] = [];
+    const p = await s.launcher.prepare("u1", "tkt3", s.req as never, "disclosed", async (t) => ((to = t), { id: "wdfee" }));
+    expect(to).toEqual([{ address: "Treasury1111111111111111111111111111111111", sol: 0.02 }]);
+    expect(p.launch.status).toBe("funding");
+    await expect(s.launcher.build("u1", p.launch.id)).rejects.toThrow(/funding transfer/);
+    s.ctl.confirm();
+    expect(((await s.launcher.build("u1", p.launch.id)) as { status: string }).status).toBe("confirmed");
   });
 });

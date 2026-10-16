@@ -171,6 +171,11 @@ export async function buildServer(opts: ServerOptions = {}) {
         pinataJwt: process.env.PINATA_JWT?.trim() || undefined,
         jitoUrl: process.env.JITO_BUNDLE_URL?.trim() || undefined,
         notify: (uid, text) => void telegram?.notify(uid, text),
+        feeSol: Number(process.env.OUTCRY_LAUNCH_FEE_SOL ?? 0.02),
+        treasury: process.env.OUTCRY_TREASURY_ADDRESS?.trim() || undefined,
+        fundingConfirmed: (uid, wid) => !!livePilot?.withdrawalHistory(uid).some((w) => w.id === wid && w.status === "confirmed"),
+        swap: (uid, address, side, mint, size) => livePilot!.agentSwap(uid, address, side, mint, size),
+        sweep: (uid, address) => livePilot!.sweepAgent(uid, address),
         // The paper launch ticket this came from is done: it was launched for real.
         onLaunched: (l) => {
           const t = app.desk.tickets.get(l.ticketId);

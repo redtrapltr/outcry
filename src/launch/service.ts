@@ -104,7 +104,7 @@ export class LaunchService {
       request: req,
       totalSol,
       disclosure: disclosureLine(req, share.pct),
-      notes: verdict.decision === "reject" ? [] : [...verdict.notes, `Fees: paper launch ${this.d.launchFeeSol} SOL simulated · real launch: PumpPortal 0.5% of the dev buys, plus Solana network fees`],
+      notes: verdict.decision === "reject" ? [] : [...verdict.notes, `Fees: Outcry launch fee ${this.d.launchFeeSol} SOL · PumpPortal 0.5% of the dev buys (real launches) · Solana network fees`],
       warnings: verdict.decision === "allow" ? verdict.warnings : [],
     };
     this.d.desk.tickets.set(t.id, t);

@@ -20,7 +20,7 @@ import type { LaunchRequest } from "../core/types.js";
 import type { CreatorRegistry } from "../launch/service.js";
 import type { TurnkeyWallets } from "../wallet/turnkey.js";
 import type { SolanaRpc } from "./chain.js";
-import { buildMultiTransfer } from "./withdraw.js";
+import { buildTokenTransfer } from "./withdraw.js";
 
 type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: unknown; signal?: AbortSignal }) => Promise<{ ok: boolean; status: number; statusText?: string; json(): Promise<unknown>; text(): Promise<string>; arrayBuffer(): Promise<ArrayBuffer> }>;
 
@@ -47,6 +47,7 @@ export interface RealLaunch {
   pendingCreateTx?: string;
   pendingRest?: string[];
   error?: string;
+  feeSol?: number;
   createdAt: string;
 }
 
@@ -61,6 +62,14 @@ export interface LauncherDeps {
   fetch?: FetchLike;
   notify?: (userId: string, text: string) => void;
   onLaunched?: (l: RealLaunch, totalSol: number) => void;
+  /** Outcry's launch fee (SOL), paid to `treasury` in the funding transfer. 0 or no treasury = no fee. */
+  feeSol?: number;
+  treasury?: string;
+  /** Was the funding / fee transfer confirmed on-chain? */
+  fundingConfirmed?: (userId: string, withdrawalId: string) => boolean;
+  /** Real swap and SOL sweep from one of the user's accounts (provided by the pilot). */
+  swap?: (userId: string, address: string, side: "buy" | "sell", mint: string, size: { usd?: number; pct?: number }) => Promise<{ ok: boolean; error?: string; signature?: string; solAmount?: number }>;
+  sweep?: (userId: string, address: string) => Promise<{ sent: number; signature?: string }>;
 }
 
 export class RealLauncher {
@@ -124,14 +133,18 @@ export class RealLauncher {
     const id = newId("rl");
     const extraAccounts: string[] = [];
     for (let i = 1; i < req.wallets; i++) extraAccounts.push(await this.d.wallets.agentAccount(userId, `launch:${id}:${i}`));
+    const fee = this.d.treasury && (this.d.feeSol ?? 0) > 0 ? this.d.feeSol! : 0;
+    const transfers = extraAccounts.map((a) => ({ address: a, sol: req.solPerWallet + LAUNCH_ACCOUNT_OVERHEAD_SOL }));
+    if (fee) transfers.push({ address: this.d.treasury!, sol: fee });
     const l: RealLaunch = {
       id, userId, ticketId, request: req, disclosure, mint: mint.publicKey.toBase58(), mintSecret: [...mint.secretKey], uri,
-      creator: w.address, extraAccounts, status: extraAccounts.length ? "funding" : "ready", createdAt: nowIso(),
+      creator: w.address, extraAccounts, status: transfers.length ? "funding" : "ready", feeSol: fee || undefined, createdAt: nowIso(),
     };
     this.launches.set(id, l);
     let funding;
-    if (extraAccounts.length) {
-      funding = await prepareFunding(extraAccounts.map((a) => ({ address: a, sol: req.solPerWallet + LAUNCH_ACCOUNT_OVERHEAD_SOL })), `$${req.ticker} launch wallets`);
+    if (transfers.length) {
+      const what = [extraAccounts.length ? `${extraAccounts.length} launch wallet${extraAccounts.length > 1 ? "s" : ""}` : "", fee ? `Outcry fee ${fee} SOL` : ""].filter(Boolean).join(" + ");
+      funding = await prepareFunding(transfers, `$${req.ticker} launch (${what})`);
       l.fundingWithdrawalId = funding.id;
     }
     this.d.audit.append(`user:${userId}`, "launch.real_prepared", { launchId: id, mint: l.mint, wallets: req.wallets, uri });
@@ -155,6 +168,7 @@ export class RealLauncher {
   async build(userId: string, id: string) {
     const l = this.get(userId, id);
     if (l.status === "funding") {
+      if (l.fundingWithdrawalId && this.d.fundingConfirmed && !this.d.fundingConfirmed(userId, l.fundingWithdrawalId)) throw new Error("Sign the funding transfer first");
       for (const a of l.extraAccounts) {
         const sol = await this.d.rpc.solBalance(a);
         if (sol + 1e-9 < l.request.solPerWallet + LAUNCH_ACCOUNT_OVERHEAD_SOL * 0.9) throw new Error("Launch wallets aren't funded yet: sign the funding transfer first");
@@ -240,6 +254,55 @@ export class RealLauncher {
     }
     this.d.audit.append(`user:${userId}`, l.status === "confirmed" ? "launch.real_confirmed" : "launch.real_failed", { launchId: id, mint: l.mint, signatures: l.signatures, error: l.error });
     return this.publicView(l);
+  }
+
+  // --- after the launch: the extra launch wallets ------------------------------------
+  /** SOL and launched-token balance of each extra launch wallet. */
+  async walletsOf(userId: string, id: string) {
+    const l = this.get(userId, id);
+    return Promise.all(l.extraAccounts.map(async (address) => {
+      const [sol, toks] = await Promise.all([this.d.rpc.solBalance(address), this.d.rpc.tokens(address).catch(() => [])]);
+      const t = toks.find((x) => x.mint === l.mint);
+      return { address, sol, tokens: t?.amount ?? 0 };
+    }));
+  }
+
+  /**
+   * sell: sell each wallet's tokens, then send its SOL to the main wallet.
+   * consolidate: move each wallet's tokens to the main wallet, then its SOL.
+   * recover: send only the SOL back (e.g. after a bundle that didn't land).
+   */
+  async manage(userId: string, id: string, action: "sell" | "consolidate" | "recover") {
+    const l = this.get(userId, id);
+    if (!l.extraAccounts.length) throw new Error("This launch used only your main wallet: sell from Real wallet → Tokens");
+    const results: { address: string; step: string; ok: boolean; detail?: string; signature?: string }[] = [];
+    for (const w of await this.walletsOf(userId, id)) {
+      if (w.tokens > 0 && action === "sell") {
+        const r = await this.d.swap!(userId, w.address, "sell", l.mint, { pct: 100 });
+        results.push({ address: w.address, step: "sell", ok: r.ok, detail: r.ok ? `${(r.solAmount ?? 0).toFixed(5)} SOL` : r.error, signature: r.signature });
+      }
+      if (w.tokens > 0 && action === "consolidate") {
+        try {
+          const held = (await this.d.rpc.tokens(w.address)).find((t) => t.mint === l.mint)!;
+          const program = await this.d.rpc.accountOwner(l.mint);
+          const { blockhash } = await this.d.rpc.latestBlockhash();
+          const tx = buildTokenTransfer({ from: w.address, to: l.creator, mint: l.mint, decimals: held.decimals, amountRaw: BigInt(held.raw), tokenProgram: program ?? "", blockhash });
+          const sig = await this.d.rpc.send(await this.d.wallets.signSolana(userId, tx, w.address));
+          const err = await this.d.rpc.confirm(sig);
+          results.push({ address: w.address, step: "move tokens", ok: !err, detail: err, signature: sig });
+        } catch (e) {
+          results.push({ address: w.address, step: "move tokens", ok: false, detail: (e as Error).message });
+        }
+      }
+      try {
+        const r = await this.d.sweep!(userId, w.address);
+        if (r.sent > 0) results.push({ address: w.address, step: "SOL back", ok: true, detail: `${r.sent.toFixed(5)} SOL`, signature: r.signature });
+      } catch (e) {
+        results.push({ address: w.address, step: "SOL back", ok: false, detail: (e as Error).message });
+      }
+    }
+    this.d.audit.append(`user:${userId}`, `launch.wallets_${action}`, { launchId: id, mint: l.mint, results });
+    return { action, results };
   }
 
   publicView(l: RealLaunch) {
