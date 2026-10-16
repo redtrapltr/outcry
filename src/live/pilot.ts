@@ -230,6 +230,17 @@ export class LivePilot {
       const m = this.d.resolveMint?.(raw.replace(/^\$/, ""));
       if (m && isMint(m) && !m.startsWith("sim")) mint = m;
     }
+    if (!isMint(mint)) {
+      // A token the wallet already holds (e.g. one you just launched): match it by its ticker.
+      const held = await this.d.rpc.tokens(w.address).catch(() => []);
+      if (held.length) {
+        const info = await this.d.tokenInfo(held.map((t) => t.mint)).catch(() => ({} as Record<string, TokenInfo>));
+        const R = raw.replace(/^\$/, "").toUpperCase();
+        const hit = held.filter((t) => (info[t.mint]?.symbol ?? this.symbolCache.get(t.mint) ?? "").toUpperCase() === R);
+        if (hit.length > 1) throw new Error(`You hold several tokens called ${R}: paste the mint address of the one you mean`);
+        if (hit[0]) mint = hit[0].mint;
+      }
+    }
     if (!isMint(mint)) throw new Error(`I don't know a real Solana token for "${raw}". Paste its mint address, or use USDC or a stock ticker like MSFT`);
     if (mint === SOL_MINT) throw new Error("Pick a token other than SOL: trades are against SOL");
     const solUsd = this.d.solUsd();
