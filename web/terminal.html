@@ -215,6 +215,25 @@ button,input{font:inherit;color:inherit}
 .chat-head h1{margin:0;font:800 24px/1 var(--display);text-transform:uppercase}
 .pill{font:10.5px var(--mono);letter-spacing:.08em;border:1px solid var(--line2);border-radius:999px;padding:5px 10px;color:var(--muted)}
 .log{flex:1;min-height:0;overflow-y:auto;padding:24px;display:flex;flex-direction:column;gap:20px}
+.fund-amts{display:flex;gap:8px;flex-wrap:wrap}
+.fund-amt{flex:1;min-width:56px;padding:11px 0;border-radius:10px;border:1px solid var(--line2);background:var(--bg);color:var(--text);font:600 15px var(--mono);cursor:pointer}
+.fund-amt.on{border-color:var(--voice);background:rgba(47,60,255,.25)}
+.fund-other{flex:1.4;min-width:80px;padding:11px 10px;border-radius:10px;border:1px solid var(--line2);background:var(--bg);color:var(--text);font:15px var(--mono)}
+.fund-row{display:flex;gap:10px;flex-wrap:wrap}
+.fund-cur{display:flex;flex-direction:column;gap:6px;font-size:12px;color:var(--soft);flex:1;min-width:120px}
+.fund-cur select{background:var(--bg);border:1px solid var(--line2);border-radius:10px;color:var(--text);padding:10px;font:14px var(--mono)}
+.fund-fine{font-size:11px}
+.fund-recv{display:flex;gap:14px;align-items:center;flex-wrap:wrap}
+.fund-qr{width:132px;height:132px;border-radius:12px;overflow:hidden;background:#fff;flex:none}.fund-qr svg{width:100%;height:100%;display:block}
+.fund-addr-col{display:flex;flex-direction:column;gap:8px;min-width:0;flex:1}
+.fund-addr{font:12px var(--mono);word-break:break-all;background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:8px 10px}
+.fund-wait{display:flex;gap:10px;align-items:center;font-size:13px;color:var(--soft);padding:4px 2px}
+.fund-dot{width:10px;height:10px;border-radius:50%;background:#3DDC97;flex:none;animation:fundPulse 1.4s ease-in-out infinite}
+@keyframes fundPulse{0%,100%{opacity:.3;transform:scale(.8)}50%{opacity:1;transform:scale(1.15)}}
+.fund-done{align-items:center;text-align:center}.fund-big{font-size:44px}
+.fund-later{opacity:.5}
+.fund-chat{display:flex;align-items:center;justify-content:space-between;gap:12px;border:1px solid var(--line2);border-radius:14px;padding:12px 14px;background:var(--card);margin-top:10px;flex-wrap:wrap}
+.fund-chat span{display:flex;flex-direction:column;gap:2px}.fund-chat small{color:var(--soft);font-size:12px}
 .onboard{margin:12px 24px 0;border:1px solid var(--line2);border-radius:16px;background:linear-gradient(180deg,var(--card2),var(--card));padding:10px 14px}
 .ob-head{display:flex;align-items:center;gap:8px}
 .ob-toggle{flex:1;display:flex;align-items:center;gap:12px;background:transparent;border:0;color:inherit;font:inherit;cursor:pointer;padding:4px 0;text-align:left}
@@ -533,8 +552,10 @@ async function updateOnboarding() {
     { id: 'handle', done: !!me.user.handle, title: 'Pick your @handle', why: 'Your name on the marketplace, leaderboard and invite link.', cta: 'Choose', run: () => chooseHandle().then(refresh) },
     { id: 'passkey', done: !!secured, title: 'Secure your account with a passkey', why: 'Face ID / Touch ID instead of a password. It signs your trades and keeps your account on every device.', cta: 'Secure', run: () => $('secureBtn').click() },
     { id: 'trade', done: (me.portfolio?.positions || []).length > 0, title: 'Make a practice trade', why: 'You start with 24 SOL and 2,480 USDC of paper money. Just type what you want.', cta: 'Try “buy $100 of SOL”', run: () => send('Buy $100 of SOL') },
-    { id: 'agent', done: obState.agents > 0, title: 'Build an AI agent', why: 'Describe a strategy in plain words; it trades paper money 24/7 and you watch it live.', cta: 'Build a sniper', run: () => send('Build me an agent that snipes new pump.fun memes with 200+ holders, $20 per trade') },
-    ...(live && live.enabled !== false ? [{ id: 'real', done: !!live.wallet, optional: true, title: 'Go real', why: live.eligible ? 'Your own Solana wallet: deposit a little SOL, every real trade is signed with your passkey.' : 'Real money is invite-only for now: request access in one click.', cta: live.eligible ? 'Open real wallet' : 'Request access', run: () => openLive() }] : []),
+    { id: 'agent', done: obState.agents > 0, title: 'Build an AI trading agent', why: 'It trades paper money for you 24/7 and you watch every move. Change its rules any time in plain words.', cta: 'Build my agent', run: () => send('Build me an AI trading agent') },
+    ...(live && live.enabled !== false ? [live.eligible
+      ? { id: 'fund', done: !!live.wallet && ((live.portfolio?.totalUsd ?? 0) >= 1), optional: true, title: 'Add money for real trading', why: 'Card, Apple Pay, Google Pay or a transfer from an exchange, straight into your own wallet. Start small: $20 is plenty.', cta: 'Add funds', run: () => openFund() }
+      : { id: 'real', done: false, optional: true, title: 'Unlock real-money trading', why: 'Real money is invite-only for now. Ask in one tap; you\'ll be able to add funds by card once you\'re in.', cta: live.access === 'pending' ? 'Request sent' : 'Request access', run: () => openLive() }] : []),
     ...(me.telegram?.available ? [{ id: 'tg', done: !!me.telegram.linked, optional: true, title: 'Get alerts on Telegram', why: 'Fills, withdrawals and your agents, straight to your phone.', cta: 'Connect', run: () => $('tgBtn').click() }] : []),
   ];
   const done = steps.filter(x => x.done).length;
@@ -921,6 +942,7 @@ async function renderCards(body, cards, instant = false) {
     if (c.type === 'order') body.appendChild(orderCard(c.ticket));
     else if (c.type === 'live_order') body.appendChild(liveTicket(c.quote));
     else if (c.type === 'live_withdraw') body.appendChild(withdrawTicket(c.withdrawal));
+    else if (c.type === 'fund_wallet') { const d = document.createElement('div'); d.className = 'fund-chat'; d.innerHTML = '<span><b>Add money to your real wallet</b><small>Card · Apple Pay · Google Pay · or from an exchange</small></span><button type="button" class="btn btn-primary">Add funds</button>'; d.querySelector('button').onclick = () => openFund({ amountUsd: c.amountUsd }); body.appendChild(d); }
     else if (c.type === 'launch') body.appendChild(launchCard(c.ticket, c.devSharePct));
     else if (c.type === 'agent') body.appendChild(await agentCard(c, instant));
     else if (c.type === 'strategy') body.appendChild(strategyCard(c));
@@ -1567,6 +1589,106 @@ function liveTicket(q, { onDone, onCancel } = {}) {
   };
   return el;
 }
+// ---------------- add funds: card (MoonPay) or send from an exchange ----------------
+function fiatGuess() {
+  const l = (navigator.languages || [navigator.language || 'en-US']).join(' ');
+  if (/-CH\b/i.test(l)) return 'chf';
+  if (/-GB\b/i.test(l)) return 'gbp';
+  if (/\b(de|fr|it|es|nl|pt|fi|el|sk|sl|et|lv|lt|ro|hr)(-[A-Z]{2})?\b/.test(l.split(' ')[0])) return 'eur';
+  return 'usd';
+}
+const FIAT_SIGN = { usd: '$', eur: '€', chf: 'CHF ', gbp: '£' };
+function holdings(s) {
+  const p = s?.portfolio; if (!p) return { sol: 0, usdc: 0 };
+  const u = (p.tokens || []).find(t => t.symbol === 'USDC');
+  return { sol: p.sol || 0, usdc: u ? Number(u.amount) || 0 : 0, solUsd: p.solUsd, sol1: p.sol ? p.solUsd / p.sol : 0 };
+}
+async function openFund(opts = {}) {
+  const { body, close } = sheet('Add funds');
+  let poll = null, start = null, amount = opts.amountUsd || 50, fiat = fiatGuess();
+  const stop = () => { if (poll) clearInterval(poll); poll = null; };
+  const arrived = (s, got) => {
+    stop();
+    const parts = [got.sol > 0.0005 ? `+${fmt(got.sol, 4)} SOL` : '', got.usdc > 0.5 ? `+${fmt(got.usdc, 2)} USDC` : ''].filter(Boolean).join(' and ');
+    try { pitSound(true); } catch {}
+    body.innerHTML = `<div class="lw fund"><section class="lw-card fund-done"><div class="fund-big">🎉</div><b>Your money arrived</b><span class="lw-total">${esc(parts)}</span><span class="meta">It's in your own wallet now. Every real trade still asks for your passkey.</span>
+      <button class="btn btn-primary lw-go" type="button" data-next="wallet">Open my real wallet</button>
+      <button class="btn lw-go" type="button" data-next="trade">Make my first real trade ($5)</button></section></div>`;
+    body.querySelector('[data-next="wallet"]').onclick = () => { close(); openLive(); };
+    body.querySelector('[data-next="trade"]').onclick = () => { close(); send('Buy $5 of USDC for real'); };
+    refresh();
+  };
+  const watch = () => {
+    if (poll) return;
+    poll = setInterval(async () => {
+      if (!document.body.contains(body)) return stop();
+      try {
+        const s = await api('/api/live'); const h = holdings(s);
+        if (!start) { start = h; return; }
+        const got = { sol: h.sol - start.sol, usdc: h.usdc - start.usdc };
+        if (got.sol > 0.0005 || got.usdc > 0.5) arrived(s, got);
+      } catch {}
+    }, 10_000);
+  };
+  const render = async () => {
+    body.innerHTML = '<p class="meta">Loading…</p>';
+    let s;
+    try { s = await api('/api/live'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
+    if (!s.enabled) { body.innerHTML = '<div class="lw"><section class="lw-card"><b>Real money isn\'t switched on yet</b><span class="meta">You can keep trading with paper money in the meantime.</span></section></div>'; return; }
+    if (!s.eligible) { close(); openLive(); return; }
+    if (!s.wallet) {
+      body.innerHTML = `<div class="lw fund"><section class="lw-card"><div class="lw-row"><b>Step 1 · Your own wallet</b><span class="lw-pill">10 seconds</span></div><span class="meta">Outcry makes you a personal Solana wallet. The money you add lands there, and sending it out always needs your passkey.</span><button class="btn btn-primary lw-go" type="button" data-mk>Create my wallet</button></section>
+        <section class="lw-card fund-later"><b>Step 2 · Add money</b><span class="meta">Card, Apple Pay, Google Pay, or a transfer from an exchange.</span></section></div>`;
+      const b = body.querySelector('[data-mk]');
+      b.onclick = async () => { b.disabled = true; b.textContent = 'Creating your wallet…'; try { await api('/api/live/wallet', { method: 'POST' }); render(); refresh(); } catch (e) { toast(e.message); b.disabled = false; b.textContent = 'Create my wallet'; } };
+      return;
+    }
+    start = start || holdings(s);
+    const addr = s.wallet.address;
+    const ramp = s.onramp;
+    body.innerHTML = `<div class="lw fund">
+      <p class="meta" style="margin:0">Money goes straight into <b>your own</b> Solana wallet. Pick whichever is easier for you.</p>
+      ${ramp ? `<section class="lw-card">
+        <div class="lw-row"><b>💳 Card, Apple Pay or Google Pay</b><span class="lw-pill">Easiest</span></div>
+        <span class="meta">Pay in your currency and receive SOL in a few minutes. The first time, MoonPay checks your ID (about 2 minutes). Their fee is shown before you pay.</span>
+        <div class="fund-amts" role="group" aria-label="Amount">${[25, 50, 100, 250].map(a => `<button type="button" class="fund-amt ${a === amount ? 'on' : ''}" data-amt="${a}">${a}</button>`).join('')}<input class="fund-other" type="number" inputmode="numeric" min="20" max="5000" placeholder="Other" aria-label="Other amount"></div>
+        <div class="fund-row"><label class="fund-cur">Currency <select data-fiat>${['usd', 'eur', 'chf', 'gbp'].map(f => `<option value="${f}" ${f === fiat ? 'selected' : ''}>${f.toUpperCase()}</option>`).join('')}</select></label><label class="fund-cur">Receive <select data-asset><option value="sol">SOL</option><option value="usdc">USDC (dollar)</option></select></label></div>
+        <button class="btn btn-primary lw-go" type="button" data-buy>Buy ${FIAT_SIGN[fiat]}${amount} with MoonPay</button>
+        <span class="meta fund-fine">Payment and ID check by MoonPay${ramp.sandbox ? ' · <b>TEST MODE, no real money</b>' : ''}. Outcry never sees your card.</span>
+      </section>` : ''}
+      <section class="lw-card">
+        <div class="lw-row"><b>${ramp ? '↗ ' : ''}Send from an exchange or another wallet</b>${ramp ? '' : '<span class="lw-pill">Easiest</span>'}</div>
+        <span class="meta">On Coinbase, Binance, Kraken, Revolut or Phantom: <b>Withdraw / Send → SOL</b>, choose the <b>Solana</b> network, and paste or scan this address.</span>
+        <div class="fund-recv"><div class="fund-qr" aria-label="QR code of your wallet address"></div><div class="fund-addr-col"><code class="fund-addr">${esc(addr)}</code><button class="btn btn-sm" type="button" data-copyaddr>Copy address</button></div></div>
+        <p class="meta lw-warn">Only use the <b>Solana</b> network. Coins sent on another network (Ethereum, BNB, Base…) can be lost.</p>
+      </section>
+      <div class="fund-wait" hidden><span class="fund-dot"></span><span>Watching your wallet. This updates by itself when the money lands; you can close this.</span></div>
+    </div>`;
+    import('./qr.js').then(m => m.qrSvg(addr)).then(svg => { const q = body.querySelector('.fund-qr'); if (q) q.innerHTML = svg; }).catch(() => { body.querySelector('.fund-qr')?.remove(); });
+    const waiting = () => { const w = body.querySelector('.fund-wait'); if (w) w.hidden = false; watch(); };
+    const buyBtn = body.querySelector('[data-buy]');
+    const label = () => { if (buyBtn) buyBtn.textContent = `Buy ${FIAT_SIGN[fiat]}${amount} with MoonPay`; };
+    body.querySelectorAll('[data-amt]').forEach(b => b.onclick = () => { amount = Number(b.dataset.amt); body.querySelectorAll('[data-amt]').forEach(x => x.classList.toggle('on', x === b)); body.querySelector('.fund-other').value = ''; label(); });
+    const other = body.querySelector('.fund-other');
+    if (other) other.oninput = () => { const v = Math.round(Number(other.value)); if (v > 0) { amount = v; body.querySelectorAll('[data-amt]').forEach(x => x.classList.remove('on')); label(); } };
+    const fs = body.querySelector('[data-fiat]'); if (fs) fs.onchange = () => { fiat = fs.value; label(); };
+    if (buyBtn) buyBtn.onclick = async () => {
+      if (amount < 20 || amount > 5000) return toast('Pick an amount between 20 and 5,000');
+      const win = window.open('about:blank', '_blank'); // open now so the browser doesn't block it
+      buyBtn.disabled = true; buyBtn.textContent = 'Opening MoonPay…';
+      try {
+        const r = await api(`/api/live/onramp?amount=${amount}&fiat=${fiat}&asset=${body.querySelector('[data-asset]').value}`);
+        if (win) win.location.href = r.url; else location.href = r.url;
+        waiting();
+      } catch (e) { win?.close(); toast(e.message); }
+      buyBtn.disabled = false; label();
+    };
+    body.querySelector('[data-copyaddr]').onclick = async () => { try { await navigator.clipboard.writeText(addr); toast('Address copied'); } catch { prompt('Your wallet address', addr); } waiting(); };
+    if (opts.watch) waiting();
+  };
+  await render();
+}
+
 async function openLive() {
   const { body, close } = sheet('Real wallet');
   let quote = null, timer = null;
@@ -1599,11 +1721,11 @@ async function openLive() {
         <div class="lw-row"><span class="eyebrow">Balance</span><button class="lw-icon" type="button" data-reload title="Refresh" aria-label="Refresh balance">↻</button></div>
         <div class="lw-total">${p ? usd(p.totalUsd) : '—'}</div>
         <div class="meta">${p ? `${fmt(p.sol, 4)} SOL · ${usd(p.solUsd)}` : 'Balance unavailable right now'}</div>
-        <div class="lw-addr"><code title="${esc(addr)}">${esc(shortAddr)}</code><button class="btn btn-sm" type="button" data-copy>Copy address</button><a class="btn btn-sm" href="https://solscan.io/account/${esc(addr)}" target="_blank" rel="noopener">Solscan ↗</a><button class="btn btn-sm" type="button" data-wdopen>Withdraw ↗</button></div>
+        <div class="lw-addr"><code title="${esc(addr)}">${esc(shortAddr)}</code><button class="btn btn-sm btn-primary" type="button" data-fund>+ Add funds</button><button class="btn btn-sm" type="button" data-copy>Copy address</button><a class="btn btn-sm" href="https://solscan.io/account/${esc(addr)}" target="_blank" rel="noopener">Solscan ↗</a><button class="btn btn-sm" type="button" data-wdopen>Withdraw ↗</button></div>
         <div class="lw-custody ${s.custody === 'passkey' ? 'ok' : ''}">${s.custody === 'passkey'
           ? '<span>🔐 <b>Passkey-owned.</b> Withdrawals need your wallet passkey. Outcry\'s server can still sign swaps for you (direct transfers out are blocked), so keep here only what you trade.</span>'
           : `<span>Custody: <b>${s.custody === 'enrolled' ? 'passkey enrolled, not verified yet' : "Outcry's server key (pilot)"}</b>. Hand ownership to your passkey so withdrawals need it.</span><button class="btn btn-sm" type="button" data-custody>${s.custody === 'enrolled' ? 'Finish setup' : 'Make it self-custodial'}</button>`}</div>
-        <p class="meta lw-hint">${p && p.sol < 0.02 ? 'To start, send a little SOL (0.05–0.1) to this address on the <b>Solana</b> network, then refresh.' : 'Send SOL on the Solana network to add funds.'}</p>
+        <p class="meta lw-hint">${p && p.sol < 0.02 ? 'To start, tap <b>+ Add funds</b>: pay by card or Apple Pay, or send SOL from an exchange (Solana network).' : 'Tap <b>+ Add funds</b> to top up by card or from an exchange.'}</p>
         ${err ? `<p class="meta lw-warn">Some balances couldn't load: ${esc(err)}</p>` : ''}
         ${s.reclaimable?.count ? `<div class="lw-reclaim"><span class="meta">${s.reclaimable.count} empty token account${s.reclaimable.count > 1 ? 's' : ''} hold${s.reclaimable.count > 1 ? '' : 's'} ${fmt(s.reclaimable.sol, 4)} SOL of deposits${p?.sol ? ` (≈ ${usd(s.reclaimable.sol * p.solUsd / p.sol)})` : ''}.</span><button class="btn btn-sm" type="button" data-reclaim>Reclaim</button></div><div class="lw-reclaim-rev"></div>` : ''}
       </section>
@@ -1727,6 +1849,7 @@ async function openLive() {
     if (t.closest('[data-secure]')) { close(); $('secureBtn')?.click(); return; }
     if (t.closest('[data-handle]')) { if (await chooseHandle()) render(); return; }
     if (t.closest('[data-reload]')) { render(); return; }
+    if (t.closest('[data-fund]')) { openFund(); return; }
     if (t.closest('[data-copy]')) { const a = body.querySelector('.lw-addr code').title; try { await navigator.clipboard.writeText(a); toast('Address copied'); } catch { prompt('Your wallet address', a); } return; }
     if (t.closest('[data-create]')) {
       t.disabled = true; t.textContent = 'Creating on Turnkey…';
@@ -1901,6 +2024,7 @@ function connectEvents() {
       try { const me = await api('/api/me'); s = { token, user: me.user, llm: me.llm, market: me.market }; } catch { token = null; store.set(TOKEN_KEY, null); }
     }
     const ref = new URLSearchParams(location.search).get('ref');
+    if (new URLSearchParams(location.search).has('funded')) { history.replaceState(null, '', location.pathname); setTimeout(() => { toast('Payment sent. Your coins usually arrive within a few minutes.'); openFund({ watch: true }); }, 1500); }
     if (!s) { s = await api('/api/session', { method: 'POST', body: { badge: 'LOUD', jacket: 'memes', residence: 'CH', ...(ref ? { ref } : {}) } }); token = s.token; if (mode === 'server') store.set(TOKEN_KEY, token); }
     $('badge').textContent = s.user.badge;
     loadAccount();

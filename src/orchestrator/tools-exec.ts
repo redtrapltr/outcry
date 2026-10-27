@@ -23,7 +23,8 @@ export type Card =
   | { type: "portfolio"; data: ReturnType<Outcry["users"]["portfolio"]> }
   | { type: "agent_control"; agent: Agent }
   | { type: "live_order"; quote: Record<string, unknown> }
-  | { type: "live_withdraw"; withdrawal: Record<string, unknown> };
+  | { type: "live_withdraw"; withdrawal: Record<string, unknown> }
+  | { type: "fund_wallet"; amountUsd?: number };
 
 export interface BlueprintNode {
   key: "goal" | "markets" | "signals" | "risk" | "execution";
@@ -276,6 +277,12 @@ export class ToolExecutor {
           } catch (e) {
             return { ok: false, result: { error: (e as Error).message } };
           }
+        }
+        case "open_add_funds": {
+          if (!this.live) return { ok: false, result: { error: "Real-money wallets aren't set up on this server." } };
+          const amt = Number(i.amount_usd);
+          const has = !!this.live.pilot.status(userId, this.live.secured(userId)).wallet;
+          return { ok: true, card: { type: "fund_wallet", ...(amt > 0 ? { amountUsd: Math.round(amt) } : {}) }, result: { summary: has ? "Here's how to add money to your real wallet: pay by card, Apple Pay or Google Pay, or send SOL from an exchange. The coins go straight to your own wallet." : "First you'll create your real wallet (one tap), then you can add money by card, Apple Pay or Google Pay, or send SOL from an exchange." } };
         }
         case "get_real_wallet": {
           if (!this.live) return { ok: false, result: { error: "Real-money wallets aren't set up on this server." } };

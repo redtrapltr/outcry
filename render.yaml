@@ -61,6 +61,11 @@ services:
         sync: false
       - key: TELEGRAM_BOT_USERNAME
         sync: false
+      # Card / Apple Pay deposits via MoonPay (pk_test_/sk_test_ = sandbox).
+      - key: MOONPAY_API_KEY
+        sync: false
+      - key: MOONPAY_SECRET_KEY
+        sync: false
       # Free key from twelvedata.com: real stock history for backtests (crypto works without it).
       - key: TWELVEDATA_API_KEY
         sync: false

@@ -185,6 +185,8 @@ export function parseWithdrawal(text: string) {
 }
 
 /** "with real money", "for real", "live buy", "real trade". */
+/** "add money", "fund my wallet", "buy SOL with my card", "top up", "apple pay". */
+export const ADD_FUNDS = /\b(add|deposit|put in|load)\s+(some\s+)?(money|funds|cash|euros?|dollars?|francs?)\b(?!.*\b(agent|bot|sniper)\b)|\b(fund|top up|top-up|topup|load)\s+(up\s+)?(my\s+)?(real\s+)?(wallet|account)\b|\b(with|by|using)\s+(my\s+|a\s+)?(credit\s+|debit\s+)?(card|apple pay|google pay)\b|\bon-?ramp\b|\bbuy crypto\b/i;
 export const REAL_MONEY = /\b(real|live)\s+(money|sol|wallet|trade|order|buy|sell|swap)\b|\bfor real\b|\bwith real\b/i;
 
 export function parseRealOrder(text: string) {
@@ -220,6 +222,7 @@ export class OfflineProvider implements ModelProvider {
     const text = raw.replace(/<context>[\s\S]*?<\/context>/g, "").trim();
     const intent = classify(text);
     const call = (name: string, input: unknown): ChatResponse => ({ content: [{ type: "tool_use", id: id(), name, input }], stopReason: "tool_use", usage, model: "offline" });
+    if (ADD_FUNDS.test(text)) return call("open_add_funds", {});
     const fa = parseAgentFunding(text);
     if (fa) return call("fund_agent", fa);
     const wd = parseWithdrawal(text);

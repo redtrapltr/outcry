@@ -48,6 +48,8 @@ export interface HandlerOptions {
   marketMode?: () => "real" | "simulated";
   /** Real-money pilot (Turnkey wallets + Jupiter), when configured. */
   live?: LivePilot;
+  /** Card on-ramp (MoonPay) into the user's real wallet. */
+  onramp?: import("../live/onramp.js").MoonPayOnramp;
   /** Real pump.fun launches (PumpPortal + Jito), when live trading is configured. */
   launcher?: import("../live/launch.js").RealLauncher;
   /** Telegram alerts, when a bot is configured. */
@@ -362,14 +364,14 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   };
   const secured = (uid: string) => !!auth?.hasPasskey(uid);
   route("GET", "/api/live", async ({ uid }) => {
-    if (!opts.live) return { enabled: false, eligible: false, reason: "Live trading isn't set up on this server yet", wallet: null };
+    if (!opts.live) return { enabled: false, eligible: false, reason: "Live trading isn't set up on this server yet", wallet: null, onramp: null };
     const st = opts.live.status(uid, secured(uid));
     let portfolio = null, portfolioError: string | null = null;
     if (st.wallet) {
       try { portfolio = await opts.live.portfolio(uid); } catch (e) { portfolioError = (e as Error).message; }
     }
     const reclaimable = st.wallet ? await opts.live.reclaimable(uid).catch(() => null) : null;
-    return { ...st, portfolio, portfolioError, reclaimable, trades: opts.live.history(uid).slice(0, 30), withdrawals: opts.live.withdrawalHistory(uid).slice(0, 20) };
+    return { ...st, onramp: opts.onramp?.status() ?? null, portfolio, portfolioError, reclaimable, trades: opts.live.history(uid).slice(0, 30), withdrawals: opts.live.withdrawalHistory(uid).slice(0, 20) };
   });
   // Waitlist for real money; admins (OUTCRY_ADMINS handles) approve.
   const admins = () => String((typeof process !== "undefined" ? process.env.OUTCRY_ADMINS : "") ?? "").split(/[\s,]+/).map((h) => h.replace(/^@/, "").toLowerCase()).filter(Boolean);
@@ -489,6 +491,17 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   route("POST", "/api/live/withdraw", ({ uid, body }) => {
     const b = z.object({ to: z.string().min(32).max(64), token: z.string().min(2).max(64), amount: z.number().positive().optional(), max: z.boolean().optional() }).parse(body);
     return live().prepareWithdrawal(uid, secured(uid), b);
+  });
+  // Buy SOL/USDC with a card, Apple Pay or Google Pay, delivered straight to the user's own wallet.
+  route("GET", "/api/live/onramp", ({ uid, query }) => {
+    if (!opts.onramp) throw new HttpError(501, "Card deposits aren't switched on yet. You can still send SOL from any exchange or wallet.");
+    const q = z.object({ amount: z.coerce.number().min(20).max(5000).default(50), fiat: z.enum(["usd", "eur", "chf", "gbp"]).default("usd"), asset: z.enum(["sol", "usdc"]).default("sol") }).parse(query);
+    const w = live().status(uid, secured(uid)).wallet;
+    if (!w) throw new HttpError(409, "Create your real wallet first, then add funds to it.");
+    const origin = (process.env.OUTCRY_PUBLIC_URL || process.env.RENDER_EXTERNAL_URL || "").replace(/\/$/, "");
+    const url = opts.onramp.buyUrl({ address: w.address, asset: q.asset, fiat: q.fiat, amount: q.amount, userRef: uid, redirectUrl: origin ? `${origin}/terminal.html?funded=1` : undefined });
+    app.audit.append(`user:${uid}`, "live.onramp_opened", { provider: opts.onramp.provider, amount: q.amount, fiat: q.fiat, asset: q.asset });
+    return { url, provider: opts.onramp.provider, address: w.address };
   });
   route("GET", "/api/live/reclaim", ({ uid }) => live().reclaimable(uid));
   route("POST", "/api/live/reclaim", ({ uid }) => live().prepareReclaim(uid, secured(uid)));

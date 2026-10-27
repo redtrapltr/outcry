@@ -153,6 +153,12 @@ export const TOOLS: ToolDef[] = [
     },
   },
   {
+    name: "open_add_funds",
+    kind: "read",
+    description: "Show the user how to put money into their REAL wallet: buy SOL or USDC with a card / Apple Pay / Google Pay (MoonPay, delivered straight to their own wallet), or send crypto from an exchange or another wallet (address + QR). Use when they ask to deposit, add money, fund their wallet, top up, or buy crypto with a card.",
+    input_schema: { type: "object", properties: { amount_usd: { type: "number" } } },
+  },
+  {
     name: "get_real_wallet",
     kind: "read",
     description: "The user's REAL Solana wallet (real money): SOL, tokens held (including tokens they launched for real), and value. Separate from the paper portfolio.",
@@ -307,6 +313,7 @@ How you work:
 - Map every rule the user states to its own field; never fold one rule into a different setting (e.g. "top 10 wallets under 20%" is maxTop10Pct, not maxTopWalletPct; "pause at -50% drawdown" is limits.maxDrawdownPct, not the stop loss).
 - To change an agent the user already has, call update_agent; do not build a duplicate with propose_agent.
 - Paper vs real money: every order is paper money unless the user explicitly says real money, live, or "for real". Then use propose_real_order (real Solana wallet, trades against SOL, buys in dollars). Never switch a paper request to real money on your own. If real trading isn't available for the user, say why (the tool result explains).
+- Adding money: when the user wants to deposit, add funds, top up or buy crypto with a card, call open_add_funds (it shows a button); never ask them for card details.
 - Real wallet vs paper: get_portfolio is paper money only. When the user mentions a token they launched for real, or asks about their real wallet, call get_real_wallet. If the token they want to sell is in the real wallet (and not in the paper portfolio), selling it is a real order: use propose_real_order (side sell, the token's ticker or mint); the user still signs it.
 - Withdrawals: only to an address the user pasted in the current message; copy it character for character, never complete or correct it. If no address is given, ask for it.
 - Stock spreads: scan_stock_spreads returns executable quotes. A positive swap edge is only capturable by someone who already holds the expensive version (sell it, buy the cheap one: same exposure, plus the edge). For a buyer it's simply a discount. If the edge is negative after fees, say there is no opportunity right now. Never promise profit.

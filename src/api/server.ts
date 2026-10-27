@@ -13,6 +13,7 @@ import { LiveFeeds } from "../data/live.js";
 import { PumpPortalFeed } from "../data/pumpfeed.js";
 import { TokenLookup } from "../data/lookup.js";
 import { turnkeyFromEnv } from "../wallet/turnkey.js";
+import { onrampFromEnv } from "../live/onramp.js";
 import { LivePilot, pilotConfigFromEnv, type TokenInfo } from "../live/pilot.js";
 import { JupiterSwap, SolanaRpc } from "../live/chain.js";
 import { SpreadScanner, type StockPair } from "../live/spreads.js";
@@ -248,6 +249,7 @@ export async function buildServer(opts: ServerOptions = {}) {
   const api = createHandlers(app, orch, router, () => randomBytes(24).toString("base64url"), {
     auth,
     live: livePilot,
+    onramp: onrampFromEnv(process.env),
     launcher,
     telegram,
     // Only claim a real market while real data is actually arriving.
@@ -256,6 +258,7 @@ export async function buildServer(opts: ServerOptions = {}) {
       persistence: persistence?.status() ?? { store: "memory (data is lost on restart)" },
       marketData: { prices: live ? live.status() : "simulated", pumpfun: pump ? pump.status() : "simulated launches", holders: holderPoll ? holderPoll.status() : null, stocks: stocks ? stocks.status() : null, solanaRpc: rpcStatus },
       liveTrading: liveStatus,
+      cardDeposits: onrampFromEnv(process.env)?.status() ?? "off (set MOONPAY_API_KEY and MOONPAY_SECRET_KEY)",
       realLaunches: { configured: !!launcher, pinata: pinataStatus, jito: process.env.JITO_BUNDLE_URL ? "custom" : "default block engine" },
       telegram: telegram ? telegram.status() : "off (set TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_USERNAME)",
       spreadAlerts: spreadAlerts?.lastRun ?? null,
