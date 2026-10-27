@@ -31,6 +31,45 @@ export function decode<T = unknown>(s: string): T {
   }) as T;
 }
 
+/**
+ * A Map that remembers which keys changed since the last save. Big, per-user
+ * collections (chat transcripts, saved strategies) use it so each save writes
+ * only the rows that changed instead of re-serialising everything.
+ * Mutating a value in place doesn't mark it: call `touch(key)` (or `set` again).
+ */
+export class DirtyMap<V> extends Map<string, V> {
+  private changed?: Set<string>;
+  override set(k: string, v: V) {
+    (this.changed ??= new Set()).add(k);
+    return super.set(k, v);
+  }
+  override delete(k: string) {
+    (this.changed ??= new Set()).add(k);
+    return super.delete(k);
+  }
+  override clear() {
+    for (const k of this.keys()) (this.changed ??= new Set()).add(k);
+    super.clear();
+  }
+  touch(k: string) {
+    (this.changed ??= new Set()).add(k);
+  }
+  /** Keys changed since the last call (and forget them). */
+  drain(): string[] {
+    const out = [...(this.changed ?? [])];
+    this.changed?.clear();
+    return out;
+  }
+  /** Load without marking dirty (boot). */
+  load(k: string, v: V) {
+    super.set(k, v);
+    this.changed?.delete(k);
+  }
+}
+
+/** One changed row of a keyed collection; `data: null` deletes it. */
+export type Row = { ns: string; key: string; data: string | null };
+
 // ---------------------------------------------------------------------------
 // Which fields of which services hold state
 // ---------------------------------------------------------------------------
@@ -79,7 +118,9 @@ export interface StateStore {
   /** Become the only writer. A previous instance (e.g. during a deploy) is fenced off. */
   claim(instanceId: string): Promise<void>;
   /** Returns false when another instance has claimed the store since (this one must stop writing). */
-  save(state: string, newAudit: AuditEntry[], instanceId: string): Promise<boolean>;
+  save(state: string, newAudit: AuditEntry[], instanceId: string, rows?: Row[]): Promise<boolean>;
+  /** Rows of keyed collections (see DirtyMap). */
+  loadRows(ns: string): Promise<[string, string][]>;
   /** Move audit entries from `fromSeq` on out of the live log (kept for inspection). */
   quarantine(fromSeq: number): Promise<number>;
   close?(): Promise<void>;
@@ -98,6 +139,17 @@ export class FileStore implements StateStore {
     }
   }
   private audit: AuditEntry[] | undefined;
+  private rows: Record<string, Record<string, string>> | undefined;
+  private async allRows() {
+    if (!this.rows) {
+      const fs = await import("node:fs/promises");
+      try { this.rows = (JSON.parse(await fs.readFile(this.path, "utf8")) as { rows?: Record<string, Record<string, string>> }).rows ?? {}; } catch { this.rows = {}; }
+    }
+    return this.rows;
+  }
+  async loadRows(ns: string) {
+    return Object.entries((await this.allRows())[ns] ?? {});
+  }
   async claim() {}
   async quarantine(fromSeq: number) {
     this.audit ??= (await this.load()).audit;
@@ -105,15 +157,20 @@ export class FileStore implements StateStore {
     this.audit = this.audit.filter((e) => e.seq < fromSeq);
     return before - this.audit.length;
   }
-  async save(state: string, newAudit: AuditEntry[]) {
+  async save(state: string, newAudit: AuditEntry[], _instanceId?: string, rows: Row[] = []) {
     const fs = await import("node:fs/promises");
     const path = await import("node:path");
     this.audit ??= (await this.load()).audit;
+    const all = await this.allRows();
+    for (const r of rows) {
+      const ns = (all[r.ns] ??= {});
+      if (r.data === null) delete ns[r.key]; else ns[r.key] = r.data;
+    }
     const have = new Set(this.audit.map((e) => e.seq));
     this.audit.push(...newAudit.filter((e) => !have.has(e.seq)));
     await fs.mkdir(path.dirname(this.path), { recursive: true });
     const tmp = `${this.path}.tmp`;
-    await fs.writeFile(tmp, JSON.stringify({ state, audit: this.audit }));
+    await fs.writeFile(tmp, JSON.stringify({ state, audit: this.audit, rows: all }));
     await fs.rename(tmp, this.path);
     return true;
   }
@@ -170,6 +227,7 @@ export class PostgresStore implements StateStore {
     if (stale.rowCount) console.warn(`[outcry] ended ${stale.rowCount} stuck database session(s) left by a previous instance`);
     await this.pool.query(`create table if not exists outcry_state (id text primary key, data text not null, updated_at timestamptz not null default now())`);
     await this.pool.query(`create table if not exists outcry_audit (seq integer primary key, entry text not null)`);
+    await this.pool.query(`create table if not exists outcry_rows (ns text not null, key text not null, data text not null, updated_at timestamptz not null default now(), primary key (ns, key))`);
     // ALTER TABLE takes an exclusive lock even when the column exists, so only run it when needed.
     const col = await this.pool.query(`select 1 from information_schema.columns where table_name = 'outcry_state' and column_name = 'owner'`);
     if (!col.rowCount) await this.pool.query(`alter table outcry_state add column if not exists owner text`);
@@ -224,6 +282,12 @@ export class PostgresStore implements StateStore {
     }
   }
 
+  async loadRows(ns: string) {
+    await this.ready;
+    const r = await this.pool.query(`select key, data from outcry_rows where ns = $1`, [ns]);
+    return r.rows.map((x) => [String(x.key), String(x.data)] as [string, string]);
+  }
+
   async load() {
     await this.ready;
     const s = await this.pool.query(`select data from outcry_state where id = 'main'`);
@@ -232,7 +296,7 @@ export class PostgresStore implements StateStore {
     return { state: (s.rows[0]?.data as string | undefined) || undefined, audit: a.rows.map((r) => (typeof r.entry === "string" ? JSON.parse(r.entry) : r.entry) as AuditEntry) };
   }
 
-  async save(state: string, newAudit: AuditEntry[], instanceId: string) {
+  async save(state: string, newAudit: AuditEntry[], instanceId: string, rows: Row[] = []) {
     await this.ready;
     // One connection for the whole transaction (pool.query would spread it across connections).
     const c = await this.pool.connect();
@@ -252,6 +316,19 @@ export class PostgresStore implements StateStore {
         });
         await c.query(`insert into outcry_audit (seq, entry) values ${values.join(",")} on conflict (seq) do nothing`, params);
       }
+      // Changed rows only, in the same transaction (so a fenced instance can't write them either).
+      const upserts = rows.filter((r) => r.data !== null);
+      for (let i = 0; i < upserts.length; i += 100) {
+        const chunk = upserts.slice(i, i + 100);
+        const params: unknown[] = [];
+        const values = chunk.map((r, j) => {
+          params.push(r.ns, r.key, r.data);
+          return `($${j * 3 + 1}, $${j * 3 + 2}, $${j * 3 + 3}, now())`;
+        });
+        await c.query(`insert into outcry_rows (ns, key, data, updated_at) values ${values.join(",")} on conflict (ns, key) do update set data = excluded.data, updated_at = now()`, params);
+      }
+      const dels = rows.filter((r) => r.data === null);
+      for (const r of dels) await c.query(`delete from outcry_rows where ns = $1 and key = $2`, [r.ns, r.key]);
       await c.query("commit");
       return true;
     } catch (e) {

@@ -12,6 +12,7 @@ import { Growth, PLANS } from "../live/growth.js";
 import type { AuthService, RequestMeta } from "./auth.js";
 import { blueprint } from "../orchestrator/tools-exec.js";
 import { redactAgent } from "../market/listings.js";
+import { DirtyMap } from "../core/persist.js";
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -61,7 +62,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   const auth = opts.auth;
   /** What the user saw in each chat (text + cards), keyed `${userId}:${sessionId}`. Persisted. */
   type Line = { role: "user" | "ai"; text: string; at: string; cards?: unknown[]; meta?: unknown };
-  const transcripts = new Map<string, Line[]>();
+  const transcripts = new DirtyMap<Line[]>();
   /** Public recap snapshots (shareable links). No user ids or wallet addresses inside. Persisted. */
   const recaps = new Map<string, Record<string, unknown>>();
   const recapData = (agentId: string) => {
@@ -163,6 +164,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     const l = transcripts.get(`${uid}:${params.sessionId}`);
     if (!l) throw new HttpError(404, "Chat not found");
     (l as (Line & { title?: string })[])[0]!.title = b.title;
+    transcripts.touch(`${uid}:${params.sessionId}`);
     return { ok: true };
   });
   route("GET", "/api/chat", ({ uid }) =>

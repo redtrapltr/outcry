@@ -3,7 +3,7 @@
  * save every few seconds when something changed, and once more on shutdown.
  */
 import type { Outcry } from "../app.js";
-import { decode, encode, restore, snapshot, type StateStore } from "../core/persist.js";
+import { decode, encode, restore, snapshot, type DirtyMap, type Row, type StateStore } from "../core/persist.js";
 import type { ModelRouter } from "../llm/router.js";
 import type { Orchestrator } from "../orchestrator/orchestrator.js";
 import type { AuthService } from "./auth.js";
@@ -25,7 +25,7 @@ export class Persistence {
   constructor(
     readonly store: StateStore,
     private app: Outcry,
-    private parts: { router: ModelRouter; orch: Orchestrator; sessions: Map<string, string>; transcripts?: Map<string, unknown>; recaps?: Map<string, unknown>; auth?: AuthService; live?: LivePilot; telegram?: { links: Map<string, number> }; launcher?: { launches: Map<string, unknown> } },
+    private parts: { router: ModelRouter; orch: Orchestrator; sessions: Map<string, string>; transcripts?: DirtyMap<unknown>; recaps?: Map<string, unknown>; auth?: AuthService; live?: LivePilot; telegram?: { links: Map<string, number> }; launcher?: { launches: Map<string, unknown> } },
   ) {}
 
   private holders() {
@@ -34,7 +34,6 @@ export class Persistence {
       users: { obj: a.users, fields: ["users", "mainWalletIds", "positions"] },
       desk: { obj: a.desk, fields: ["tickets"] },
       agents: { obj: a.agents, fields: ["agents", "positions", "seenTokens", "pendingTickets", "paperSince", "limitNotified", "history", "trades", "startUsd"] },
-      lab: { obj: a.lab, fields: ["strategies"] },
       marketplace: { obj: a.marketplace, fields: ["listings", "subs"] },
       growth: { obj: a.growth, fields: ["volume", "rebates", "referralRewards", "referredBy", "access", "subs", "spreadAlerts"] },
       registry: { obj: a.registry, fields: ["byMint"] },
@@ -44,12 +43,30 @@ export class Persistence {
       router: { obj: this.parts.router, fields: ["spend", "daily"] },
       chat: { obj: this.parts.orch, fields: ["sessions"] },
       sessions: { obj: { tokens: this.parts.sessions }, fields: ["tokens"] },
-      ...(this.parts.transcripts ? { transcripts: { obj: { lines: this.parts.transcripts }, fields: ["lines"] } } : {}),
       ...(this.parts.recaps ? { recaps: { obj: { items: this.parts.recaps }, fields: ["items"] } } : {}),
       ...(this.parts.auth ? { auth: { obj: this.parts.auth, fields: ["credentials"] } } : {}),
       ...(this.parts.launcher ? { realLaunches: { obj: this.parts.launcher, fields: ["launches"] } } : {}),
       ...(this.parts.telegram ? { telegram: { obj: this.parts.telegram, fields: ["links"] } } : {}),
       ...(this.parts.live ? { live: { obj: this.parts.live, fields: ["trades", "withdrawals"] }, liveWallets: { obj: this.parts.live.wallets, fields: ["wallets"] } } : {}),
+    };
+  }
+
+  /**
+   * Big per-user collections, stored one row per key and written only when
+   * they change (a 2,000-user snapshot was 113 MB, mostly these two).
+   */
+  private rowSets(): Record<string, DirtyMap<unknown>> {
+    return {
+      strategies: this.app.lab.strategies as DirtyMap<unknown>,
+      ...(this.parts.transcripts ? { transcripts: this.parts.transcripts } : {}),
+    };
+  }
+
+  /** Where these collections lived inside the snapshot before rows existed. */
+  private legacyHolders() {
+    return {
+      lab: { obj: this.app.lab, fields: ["strategies"] },
+      ...(this.parts.transcripts ? { transcripts: { obj: { lines: this.parts.transcripts }, fields: ["lines"] } } : {}),
     };
   }
 
@@ -70,8 +87,14 @@ export class Persistence {
     }
     this.lastSeq = this.auditRepair ? this.app.audit.length - 1 : this.app.audit.length;
     if (state) {
-      restore(this.holders(), decode(state));
+      const data = decode<Record<string, Record<string, unknown>>>(state);
+      restore(this.holders(), data);
+      // One-time move: collections still inside an old snapshot become rows (they're marked changed, so the next save writes them).
+      restore(this.legacyHolders(), data);
       this.lastState = state;
+    }
+    for (const [ns, map] of Object.entries(this.rowSets())) {
+      for (const [k, v] of await this.store.loadRows(ns)) map.load(k, decode(v));
     }
     return { users: (this.app.users as unknown as { users: Map<string, unknown> }).users.size, agents: this.app.agents.agents.size, auditEntries: audit.length };
   }
@@ -99,9 +122,18 @@ export class Persistence {
     try {
       const state = encode(snapshot(this.holders()));
       const seq = this.app.audit.length;
-      if (state === this.lastState && seq === this.lastSeq) return;
+      const sets = this.rowSets();
+      const rows: Row[] = [];
+      for (const [ns, map] of Object.entries(sets)) for (const key of map.drain()) rows.push({ ns, key, data: map.has(key) ? encode(map.get(key)) : null });
+      if (state === this.lastState && seq === this.lastSeq && !rows.length) return;
       if (this.fenced) return;
-      const ok = await this.store.save(state, this.app.audit.since(this.lastSeq), this.instanceId);
+      let ok: boolean;
+      try {
+        ok = await this.store.save(state, this.app.audit.since(this.lastSeq), this.instanceId, rows);
+      } catch (e) {
+        for (const r of rows) sets[r.ns]!.touch(r.key); // retry these next time
+        throw e;
+      }
       if (!ok) {
         this.fenced = true;
         if (this.timer) clearInterval(this.timer);

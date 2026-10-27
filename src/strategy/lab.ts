@@ -8,6 +8,7 @@ import { TF_MS, type Candle, type MarketData } from "../data/market.js";
 import type { HistoryProvider } from "../data/history.js";
 import { backtest, summarize, type BacktestReport } from "./backtest.js";
 import { describe, DslError } from "./evaluator.js";
+import { DirtyMap } from "../core/persist.js";
 
 export interface SavedStrategy {
   id: string;
@@ -63,7 +64,8 @@ export interface TestOptions {
 }
 
 export class StrategyLab {
-  private strategies = new Map<string, SavedStrategy>();
+  /** Persisted row by row (see DirtyMap). */
+  readonly strategies = new DirtyMap<SavedStrategy>();
   constructor(private market: MarketData, private audit: AuditLog, private history?: HistoryProvider) {}
 
   async compileAndTest(userId: string, input: unknown, existingId?: string, opts: TestOptions = {}): Promise<{ ok: true; strategy: SavedStrategy } | { ok: false; error: string }> {

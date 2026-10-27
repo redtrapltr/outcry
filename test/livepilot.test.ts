@@ -74,6 +74,16 @@ describe("live trading pilot", () => {
     expect(s2.pilot.status(s2.u.id, false).reason).toMatch(/passkey/);
   });
 
+  it("stops opening new real wallets at the configured cap, with a friendly message", async () => {
+    const { u, pilot, wallets } = setup();
+    (pilot as unknown as { cfg: { maxWallets?: number } }).cfg.maxWallets = 0;
+    await expect(pilot.createWallet(u.id, true)).rejects.toThrow(/spots are full/);
+    (pilot as unknown as { cfg: { maxWallets?: number } }).cfg.maxWallets = 1;
+    await pilot.createWallet(u.id, true);
+    expect(wallets.wallets.size).toBe(1);
+    await pilot.createWallet(u.id, true); // the same user is never blocked
+  });
+
   it("creates one Turnkey sub-org per user with the server key as root", async () => {
     const { u, pilot, calls } = setup();
     const [a, b] = await Promise.all([pilot.createWallet(u.id, true), pilot.createWallet(u.id, true)]);

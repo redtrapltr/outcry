@@ -48,6 +48,8 @@ export interface PilotConfig {
   reserveSol: number;
   /** Max budget for one real-money agent. */
   maxAgentUsd?: number;
+  /** Stop creating new real wallets past this many (e.g. your Turnkey plan's wallet limit). */
+  maxWallets?: number;
 }
 
 export interface TokenInfo {
@@ -186,6 +188,10 @@ export class LivePilot {
 
   async createWallet(userId: string, hasPasskey: boolean) {
     this.must(userId, hasPasskey);
+    if (this.cfg.maxWallets !== undefined && !this.d.wallets.get(userId) && this.d.wallets.wallets.size >= this.cfg.maxWallets) {
+      this.d.growth?.requestAccess(userId, undefined, "Real wallets were full when I tried");
+      throw Object.assign(new Error("Real-money spots are full right now. You're on the list and we'll let you in as soon as one opens; paper trading works meanwhile."), { status: 503 });
+    }
     const w = await this.d.wallets.ensure(userId);
     this.d.audit.append(`user:${userId}`, "live.wallet_created", { address: w.address, subOrgId: w.subOrgId });
     return { address: w.address, createdAt: w.createdAt };
@@ -724,5 +730,6 @@ export function pilotConfigFromEnv(env: Record<string, string | undefined>): Pil
     reserveSol: Number(env.OUTCRY_LIVE_RESERVE_SOL ?? 0.01),
     // No per-agent cap unless set: the user decides how much an agent trades.
     maxAgentUsd: env.OUTCRY_LIVE_AGENT_MAX_USD ? Number(env.OUTCRY_LIVE_AGENT_MAX_USD) : undefined,
+    maxWallets: env.OUTCRY_LIVE_MAX_WALLETS ? Number(env.OUTCRY_LIVE_MAX_WALLETS) : undefined,
   };
 }

@@ -188,3 +188,71 @@ describe("persistence never takes the site down", () => {
     await pool.end();
   });
 });
+
+describe("chats and strategies are stored row by row", () => {
+  const PG = process.env.TEST_DATABASE_URL;
+  async function scenario(makeStore: () => Promise<StateStore>, rowsInDb?: () => Promise<number>) {
+    const s1 = await buildServer({ store: await makeStore(), tickMs: 0, simLaunchEveryMs: 0 });
+    const inj = (s: typeof s1, method: string, url: string, token?: string, payload?: unknown) =>
+      s.f.inject({ method: method as never, url, headers: token ? { authorization: `Bearer ${token}` } : {}, payload: payload as never });
+    const { token } = (await inj(s1, "POST", "/api/session", undefined, {})).json();
+    await inj(s1, "POST", "/api/chat", token, { sessionId: "c1", text: "buy 1 SOL" });
+    const st = (await inj(s1, "POST", "/api/chat", token, { sessionId: "c2", text: "backtest buy SOL on 4h when RSI crosses above 30, stop 8%" })).json();
+    expect(st.cards[0].type).toBe("strategy");
+    await s1.persistence!.flush();
+    // The snapshot no longer carries them; an unrelated save writes no rows.
+    const saved = await s1.persistence!.store.load();
+    expect(saved.state).not.toContain("\"transcripts\":");
+    expect(saved.state).not.toContain("\"lab\":");
+    const spy: number[] = [];
+    const orig = s1.persistence!.store.save.bind(s1.persistence!.store);
+    (s1.persistence!.store as { save: typeof orig }).save = (a, b, c, rows) => { spy.push(rows?.length ?? 0); return orig(a, b, c, rows); };
+    await inj(s1, "PATCH", "/api/chat/c1", token, { title: "Orders" });
+    await s1.persistence!.flush();
+    expect(spy.at(-1)).toBe(1); // only the renamed chat
+    await s1.f.close();
+    if (rowsInDb) expect(await rowsInDb()).toBeGreaterThanOrEqual(3);
+
+    const s2 = await buildServer({ store: await makeStore(), tickMs: 0, simLaunchEveryMs: 0 });
+    const list = (await inj(s2, "GET", "/api/chat", token)).json();
+    expect(list.map((c: { sessionId: string }) => c.sessionId).sort()).toEqual(["c1", "c2"]);
+    expect(list.find((c: { sessionId: string }) => c.sessionId === "c1").title).toBe("Orders");
+    expect(s2.app.lab.strategies.size).toBeGreaterThan(0);
+    await s2.f.close();
+  }
+
+  it("file store", async () => {
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "outcry-rows-")), "state.json");
+    await scenario(async () => new FileStore(file));
+  });
+
+  it("moves chats out of an old snapshot", async () => {
+    const fs = await import("node:fs/promises");
+    const file = path.join(mkdtempSync(path.join(tmpdir(), "outcry-legacy-")), "state.json");
+    const s1 = await buildServer({ store: new FileStore(file), tickMs: 0, simLaunchEveryMs: 0 });
+    const { token } = (await s1.f.inject({ method: "POST", url: "/api/session", payload: {} })).json();
+    await s1.f.inject({ method: "POST", url: "/api/chat", headers: { authorization: `Bearer ${token}` }, payload: { sessionId: "old", text: "buy 1 SOL" } });
+    await s1.f.close();
+    // Rewrite the file the way the previous version stored it: chats inside the snapshot, no rows.
+    const raw = JSON.parse(await fs.readFile(file, "utf8"));
+    const { decode, encode } = await import("../src/core/persist.js");
+    const state = decode<Record<string, Record<string, unknown>>>(raw.state);
+    const t = raw.rows.transcripts;
+    state.transcripts = { lines: new Map(Object.entries(t).map(([k, v]) => [k, decode(v as string)])) };
+    await fs.writeFile(file, JSON.stringify({ state: encode(state), audit: raw.audit }));
+    const s2 = await buildServer({ store: new FileStore(file), tickMs: 0, simLaunchEveryMs: 0 });
+    expect((await s2.f.inject({ method: "GET", url: "/api/chat", headers: { authorization: `Bearer ${token}` } })).json()[0].sessionId).toBe("old");
+    await s2.f.close();
+    const after = JSON.parse(await fs.readFile(file, "utf8"));
+    expect(Object.keys(after.rows.transcripts)).toHaveLength(1);
+    expect(after.state).not.toContain('"transcripts"');
+  });
+
+  it.skipIf(!PG)("postgres", async () => {
+    const pg = await import("pg");
+    const pool = new pg.default.Pool({ connectionString: PG });
+    await pool.query("drop table if exists outcry_state; drop table if exists outcry_audit; drop table if exists outcry_audit_quarantine; drop table if exists outcry_rows");
+    await scenario(() => PostgresStore.connect(PG!), async () => Number((await pool.query("select count(*) from outcry_rows")).rows[0].count));
+    await pool.end();
+  }, 40_000);
+});
