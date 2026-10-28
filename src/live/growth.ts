@@ -72,6 +72,8 @@ export class Growth {
   readonly subs = new Map<string, Subscription>();
   /** Pro perk: Telegram ping when an xStocks/Ondo gap passes the user's threshold. */
   readonly spreadAlerts = new Map<string, { minPct: number; sizeUsd: number; since: string }>();
+  /** AI fuel payments waiting for on-chain confirmation (withdrawal id -> order). Persisted so a restart can't lose one. */
+  readonly fuelOrders = new Map<string, { userId: string; pack: string; mint: string | null; amount: number; used?: boolean; at: string }>();
   /** The user's active plan (free when none or expired). */
   planOf(userId: string, now = Date.now()): Plan {
     const s = this.subs.get(userId);

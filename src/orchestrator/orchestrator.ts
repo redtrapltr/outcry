@@ -14,7 +14,7 @@ import { ToolExecutor, type Card } from "./tools-exec.js";
 export interface TurnResult {
   reply: string;
   cards: Card[];
-  meta: { tier: Tier; intent: string; model: string; costUsd: number; toolCalls: string[]; escalated: boolean; notice?: string };
+  meta: { tier: Tier; intent: string; model: string; costUsd: number; toolCalls: string[]; escalated: boolean; notice?: string; outOfFuel?: boolean };
 }
 
 interface Session {
@@ -82,9 +82,11 @@ export class Orchestrator {
     // Candidates for this tier: primary, fallback, then the offline engine.
     // Over budget, go straight to offline so a public link can't run up costs.
     let notice: string | undefined;
+    let outOfFuel = false;
     const candidatesFor = (tier: Tier) => {
       if (this.router.overBudget(userId)) {
-        notice = "Daily AI budget reached: answering with the offline engine.";
+        outOfFuel = this.router.hasModels;
+        notice = "Out of AI fuel: answering with the basic engine. Refuel to get the full AI back.";
         return this.router.chainFor(tier).filter((c) => c.offline);
       }
       return this.router.chainFor(tier);
@@ -175,7 +177,7 @@ export class Orchestrator {
     }
 
     this.app.audit.append(`user:${userId}`, "chat.turn", { sessionId, tier: route.tier, intent: route.intent, model, toolCalls, costUsd: totalCost, escalated });
-    return { reply, cards, meta: { tier: route.tier, intent: route.intent, model, costUsd: totalCost, toolCalls, escalated, notice } };
+    return { reply, cards, meta: { tier: route.tier, intent: route.intent, model, costUsd: totalCost, toolCalls, escalated, notice, ...(outOfFuel ? { outOfFuel } : {}) } };
   }
 }
 

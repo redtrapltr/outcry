@@ -13,6 +13,7 @@ import type { AuthService, RequestMeta } from "./auth.js";
 import { blueprint } from "../orchestrator/tools-exec.js";
 import { redactAgent } from "../market/listings.js";
 import { DirtyMap } from "../core/persist.js";
+import { FUEL_PACKS, fuelPack } from "../live/fuel.js";
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -139,7 +140,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     tokens.set(token, user.id);
     return { token, user, llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" };
   }, false);
-  route("GET", "/api/me", ({ uid }) => ({ isAdmin: isAdminEarly(uid), telegram: { available: !!opts.telegram, linked: !!opts.telegram?.isLinked(uid) }, user: app.users.get(uid), portfolio: app.users.portfolio(uid), usage: router.spendOf(uid), llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" }));
+  route("GET", "/api/me", ({ uid }) => ({ isAdmin: isAdminEarly(uid), telegram: { available: !!opts.telegram, linked: !!opts.telegram?.isLinked(uid) }, user: app.users.get(uid), portfolio: app.users.portfolio(uid), usage: router.spendOf(uid), fuel: router.fuel(uid), llm: llmStatus(router), market: opts.marketMode?.() ?? "simulated" }));
 
   // --- chat -------------------------------------------------------------------
   route("POST", "/api/chat", async ({ uid, body }) => {
@@ -148,7 +149,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     pushLine(key, { role: "user", text: b.text, at: new Date().toISOString() });
     const r = await orch.handle(uid, b.sessionId, b.text);
     pushLine(key, { role: "ai", text: r.reply, at: new Date().toISOString(), cards: r.cards, meta: r.meta });
-    return r;
+    return { ...r, fuel: router.fuel(uid) };
   });
   route("GET", "/api/chat/:sessionId/history", ({ uid, params }) => {
     const lines = transcripts.get(`${uid}:${params.sessionId}`) ?? [];
@@ -394,6 +395,70 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     const w = await live().prepareWithdrawal(uid, secured(uid), { to, token: "USDC", amount: usd });
     pendingPlans.set(w.id, { userId: uid, plan: b.plan, months: b.months, usd });
     return { withdrawal: w, usd, plan: PLANS[b.plan] };
+  });
+  // --- AI fuel: refill the AI when the free daily tank runs dry -----------------
+  const pendingFuel = app.growth.fuelOrders;
+  route("GET", "/api/fuel", async ({ uid }) => {
+    const refilled = settleFuel(uid).length;
+    const f = router.fuel(uid);
+    const st = opts.live?.status(uid, secured(uid));
+    return {
+      ...f,
+      packs: FUEL_PACKS.map((p) => ({ ...p, messages: Math.floor(p.creditUsd / f.avgTurnUsd) })),
+      payable: !!treasury() && !!opts.live,
+      wallet: !!st?.wallet,
+      eligible: !!st?.eligible,
+      refilled,
+    };
+  });
+  route("POST", "/api/fuel/buy", async ({ uid, body }) => {
+    const b = z.object({ pack: z.string() }).parse(body);
+    const pack = fuelPack(b.pack);
+    if (!pack) throw new HttpError(404, "Unknown fuel pack");
+    const to = treasury();
+    if (!to) throw new HttpError(501, "Refuelling isn't switched on yet (OUTCRY_TREASURY_ADDRESS)");
+    const p = live();
+    const port = await p.portfolio(uid);
+    if (!port) throw new HttpError(409, "Create your real wallet and add funds first");
+    const usdc = port.tokens.find((t) => t.mint === "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")?.amount ?? 0;
+    let w;
+    if (usdc >= pack.usd) {
+      w = await p.prepareWithdrawal(uid, secured(uid), { to, token: "USDC", amount: pack.usd });
+      pendingFuel.set(w.id, { userId: uid, pack: pack.id, mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount: pack.usd, at: new Date().toISOString() });
+    } else {
+      const solPrice = port.sol > 0 ? port.solUsd / port.sol : 0;
+      if (!(solPrice > 0)) throw new HttpError(409, `Add at least $${pack.usd} of SOL or USDC to your real wallet first`);
+      const sol = Math.ceil((pack.usd / solPrice) * 1e6) / 1e6;
+      w = await p.prepareWithdrawal(uid, secured(uid), { to, token: "SOL", amount: sol });
+      pendingFuel.set(w.id, { userId: uid, pack: pack.id, mint: null, amount: sol, at: new Date().toISOString() });
+    }
+    return { withdrawal: w, pack, payWith: usdc >= pack.usd ? "USDC" : "SOL" };
+  });
+  /** Credit every paid, confirmed fuel order of this user (also catches payments whose page was closed). */
+  const settleFuel = (uid: string) => {
+    if (!opts.live) return [];
+    const done: string[] = [];
+    for (const [id, pf] of pendingFuel) {
+      if (pf.userId !== uid || pf.used) continue;
+      const paid = opts.live.withdrawalHistory(uid).find((w) => w.id === id);
+      if (!paid) continue;
+      if (paid.status === "failed") { pendingFuel.delete(id); continue; }
+      if (paid.status !== "confirmed" || paid.to !== treasury() || (paid.mint ?? null) !== pf.mint || paid.amount + 1e-6 < pf.amount) continue;
+      pf.used = true;
+      pendingFuel.set(id, pf);
+      const pack = fuelPack(pf.pack)!;
+      router.addCredit(uid, pack.creditUsd);
+      app.audit.append(`user:${uid}`, "fuel.refilled", { pack: pack.id, usd: pack.usd, creditUsd: pack.creditUsd, signature: paid.signature });
+      done.push(id);
+    }
+    return done;
+  };
+  route("POST", "/api/fuel/confirm", ({ uid, body }) => {
+    const b = z.object({ withdrawalId: z.string() }).parse(body);
+    const pf = pendingFuel.get(b.withdrawalId);
+    if (!pf || pf.userId !== uid) throw new HttpError(404, "Payment not found");
+    if (!pf.used && !settleFuel(uid).includes(b.withdrawalId)) throw new HttpError(402, "Payment not confirmed on-chain yet");
+    return { pack: fuelPack(pf.pack), fuel: router.fuel(uid) };
   });
   route("POST", "/api/plans/confirm", ({ uid, body }) => {
     const b = z.object({ withdrawalId: z.string() }).parse(body);

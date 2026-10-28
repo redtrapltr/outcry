@@ -101,7 +101,8 @@ describe("Claude integration (mocked API)", () => {
     const calls = api.requests.length;
     const r2 = await orch.handle(user.id, "s", "build me a careful agent that snipes new tokens");
     expect(api.requests.length).toBe(calls);
-    expect(r2.meta.notice).toMatch(/budget/);
+    expect(r2.meta.notice).toMatch(/fuel/);
+    expect(r2.meta.outOfFuel).toBe(true);
   });
 
   it("runs every tier on Claude when only an Anthropic key is set", () => {

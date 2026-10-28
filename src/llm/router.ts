@@ -48,6 +48,8 @@ export class ModelRouter {
   readonly tiers: Record<Tier, TierConfig>;
   private spend = new Map<string, { usd: number; turns: number; byTier: Record<Tier, number> }>();
   private daily = new Map<string, number>(); // `${day}:${userId}` and `${day}:*`
+  /** Paid AI fuel per user, in USD of model cost. Used once the free daily tank is empty. Persisted. */
+  readonly credits = new Map<string, number>();
   readonly budgets: Budgets;
 
   constructor(private opts: RouterOptions) {
@@ -61,6 +63,7 @@ export class ModelRouter {
 
   /** True when this user (or the deployment) has used up today's AI budget. */
   overBudget(userId: string): boolean {
+    if ((this.credits.get(userId) ?? 0) > 0) return false; // paid fuel keeps the AI on
     const d = this.day();
     return (this.daily.get(`${d}:${userId}`) ?? 0) >= this.budgets.perUserDailyUsd || (this.daily.get(`${d}:*`) ?? 0) >= this.budgets.globalDailyUsd;
   }
@@ -162,9 +165,59 @@ export class ModelRouter {
     s.byTier[tier] += cost;
     this.spend.set(userId, s);
     const d = this.day();
+    // Whatever the free daily tank can't cover comes out of paid fuel.
+    const credit = this.credits.get(userId) ?? 0;
+    if (credit > 0 && cost > 0) {
+      const freeLeft = this.globalEmpty() ? 0 : Math.max(0, this.budgets.perUserDailyUsd - (this.daily.get(`${d}:${userId}`) ?? 0));
+      const overflow = Math.max(0, cost - freeLeft);
+      if (overflow > 0) this.credits.set(userId, Math.max(0, credit - overflow));
+    }
     this.daily.set(`${d}:${userId}`, (this.daily.get(`${d}:${userId}`) ?? 0) + cost);
     this.daily.set(`${d}:*`, (this.daily.get(`${d}:*`) ?? 0) + cost);
     return cost;
+  }
+
+  private globalEmpty() {
+    return (this.daily.get(`${this.day()}:*`) ?? 0) >= this.budgets.globalDailyUsd;
+  }
+
+  /** True when a real model is configured (otherwise there's no fuel to show). */
+  get hasModels() {
+    return Object.keys(this.opts.providers).some((p) => p !== "offline");
+  }
+
+  addCredit(userId: string, usd: number) {
+    if (!(usd > 0)) throw new Error("Nothing to add");
+    this.credits.set(userId, (this.credits.get(userId) ?? 0) + usd);
+    return this.credits.get(userId)!;
+  }
+
+  /** The user's AI fuel: today's free tank plus paid fuel, and roughly how many messages that is. */
+  fuel(userId: string) {
+    const d = this.day();
+    const free = this.budgets.perUserDailyUsd;
+    const used = this.daily.get(`${d}:${userId}`) ?? 0;
+    const globalEmpty = this.globalEmpty();
+    const freeLeftUsd = globalEmpty || !Number.isFinite(free) ? (Number.isFinite(free) ? 0 : Infinity) : Math.max(0, free - used);
+    const creditUsd = this.credits.get(userId) ?? 0;
+    const s = this.spendOf(userId);
+    const avgTurnUsd = s.turns >= 3 && s.usd > 0 ? Math.max(0.001, s.usd / s.turns) : 0.01;
+    const leftUsd = freeLeftUsd + creditUsd;
+    const tomorrow = new Date(`${d}T00:00:00Z`).getTime() + 86_400_000;
+    return {
+      enabled: this.hasModels,
+      unlimited: !Number.isFinite(free) && !Number.isFinite(this.budgets.globalDailyUsd),
+      freeDailyUsd: Number.isFinite(free) ? free : null,
+      freeLeftUsd: Number.isFinite(freeLeftUsd) ? freeLeftUsd : null,
+      creditUsd,
+      /** 0..1: how full the tank looks (free tank on top of any paid fuel). */
+      level: Number.isFinite(leftUsd) ? Math.min(1, leftUsd / Math.max(Number.isFinite(free) ? free : 0, leftUsd, 0.0001)) : 1,
+      messagesLeft: Number.isFinite(leftUsd) ? Math.floor(leftUsd / avgTurnUsd) : null,
+      avgTurnUsd,
+      empty: this.overBudget(userId),
+      globalEmpty,
+      refillsAt: new Date(tomorrow).toISOString(),
+    };
   }
 
   spendOf(userId: string) {
