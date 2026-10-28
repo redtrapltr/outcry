@@ -284,23 +284,58 @@ button,input{font:inherit;color:inherit}
 .fz-pack .fz-bonus{position:absolute;top:10px;right:10px;font:700 10px var(--mono);background:#3DDC97;color:#0b1a12;border-radius:99px;padding:2px 7px}
 .fz-pack .fz-nozzle{font-size:20px}
 @media (max-width:640px){.fz-stamp{font-size:15px}.fz-pack{padding:10px 8px;gap:3px}.fz-pack b{font-size:15px}.fz-pack .fz-price{font-size:18px}.fz-pack small+small{display:none}.fz-pack .fz-bonus{top:6px;right:6px}.fz-pack .fz-nozzle{font-size:16px}.fz-big{font-size:26px}.fz-top{grid-template-columns:auto 1fr;gap:14px}.fz-tank{width:76px;height:120px}.fz-read .fuel-g{width:110px;height:68px}.fuel-t b{display:none}.fuel{padding:3px 10px 3px 6px}}
-.onboard{margin:12px 24px 0;border:1px solid var(--line2);border-radius:16px;background:linear-gradient(180deg,var(--card2),var(--card));padding:10px 14px}
-.ob-head{display:flex;align-items:center;gap:8px}
-.ob-toggle{flex:1;display:flex;align-items:center;gap:12px;background:transparent;border:0;color:inherit;font:inherit;cursor:pointer;padding:4px 0;text-align:left}
-.ob-toggle b{font:900 20px var(--display);letter-spacing:.02em}
-.ob-count{font:12px var(--mono);color:var(--soft);white-space:nowrap}
-.ob-bar{flex:1;height:6px;border-radius:99px;background:var(--bg);overflow:hidden;min-width:60px}.ob-bar i{display:block;height:100%;background:linear-gradient(90deg,var(--voice),#3DDC97)}
-.ob-more{background:transparent;border:0;color:var(--soft);font:12px var(--mono);cursor:pointer;padding:2px 8px 4px}
-.ob-x{background:transparent;border:0;color:var(--muted);font-size:20px;cursor:pointer;padding:0 4px}
-.ob-steps{list-style:none;margin:8px 0 4px;padding:0;display:flex;flex-direction:column;gap:6px}
-.ob-steps li{display:grid;grid-template-columns:28px 1fr auto;gap:10px;align-items:center;padding:8px;border-radius:10px}
-.ob-steps li.next{background:rgba(47,60,255,.14)}
-.ob-steps li.done{opacity:.55}
-.ob-n{width:26px;height:26px;border-radius:50%;display:grid;place-items:center;border:1px solid var(--line2);font:700 12px var(--mono)}
-.ob-steps li.done .ob-n{background:#3DDC97;border-color:#3DDC97;color:#0b1a12}
-.ob-t{display:flex;flex-direction:column;gap:2px;min-width:0}.ob-t b{font-size:14px}.ob-t em{font:11px var(--mono);color:var(--muted);font-style:normal;margin-left:6px}
-.ob-t small{font-size:12px;color:var(--soft)}
-@media (max-width:820px){.onboard{margin:10px 12px 0}.ob-steps li{grid-template-columns:24px 1fr}.ob-steps li .btn{grid-column:2;justify-self:start}}
+.onboard{margin:14px 24px 0}
+.ob{display:grid;grid-template-columns:200px minmax(0,1fr);gap:22px;align-items:stretch;padding:18px;border:1px solid var(--line2);border-radius:20px;background:var(--card)}
+.ob-pass{position:relative;background:var(--paper);color:var(--ink);border-radius:14px;padding:16px 14px 12px;display:flex;flex-direction:column;align-items:center;gap:10px;box-shadow:0 1px 0 rgba(255,255,255,.4) inset,0 14px 30px rgba(0,0,0,.35);transform:rotate(-2deg)}
+.ob-pass::before{content:"";position:absolute;top:8px;left:50%;width:34px;height:7px;margin-left:-17px;border-radius:99px;background:var(--bg);box-shadow:inset 0 1px 2px rgba(0,0,0,.5)}
+.ob-pass-k{margin-top:10px;font:600 10px var(--sans);letter-spacing:.04em;color:#6b6656}
+.ob-badge{min-width:96px;padding:6px 12px;border-radius:10px;background:var(--jc,#F76FB0);color:var(--ink);font:900 46px/1 var(--display);text-align:center;border:2px solid var(--ink)}
+.ob-name{font:700 15px var(--sans);min-height:22px}
+.ob-blank{display:inline-block;width:110px;border-bottom:1.5px dashed #9a937f;color:#9a937f;font:500 12px var(--sans);text-align:center}
+.ob-stamps{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;width:100%;padding-top:10px;border-top:1px dashed #c9c1ab}
+.ob-stamp{aspect-ratio:1;border-radius:50%;border:1.5px dashed #c9c1ab;display:grid;place-items:center;color:transparent}
+.ob-stamp svg{width:60%;height:60%;fill:none;stroke:currentColor;stroke-width:2;stroke-linecap:round;stroke-linejoin:round}
+.ob-stamp.on{border:2px solid var(--voice);color:var(--voice);background:rgba(47,60,255,.07);transform:rotate(var(--rot,-8deg))}
+.ob-stamp.on.new{animation:obStamp .55s cubic-bezier(.2,1.7,.4,1) both}
+@keyframes obStamp{0%{transform:scale(2.4) rotate(18deg);opacity:0}60%{opacity:1}100%{transform:scale(1) rotate(var(--rot,-8deg))}}
+.ob-done-stamp{position:absolute;inset:auto 6px 46px 6px;text-align:center;font:900 22px/1 var(--display);color:#1a8f5a;border:3px solid #1a8f5a;border-radius:8px;padding:4px 0;transform:rotate(-10deg);background:rgba(243,239,228,.85)}
+.ob-done-stamp.new{animation:obStamp .6s cubic-bezier(.2,1.7,.4,1) both}
+.ob-main{display:flex;flex-direction:column;gap:14px;min-width:0}
+.ob-top{display:flex;align-items:flex-start;gap:12px}
+.ob-top h2{margin:0;font:900 32px/1 var(--display);text-transform:uppercase}
+.ob-top p{margin:4px 0 0;color:var(--soft);font-size:14px}
+.ob-tools{margin-left:auto;display:flex;gap:2px}
+.ob-tools button{background:transparent;border:0;color:var(--muted);font-size:13px;cursor:pointer;padding:6px 8px;border-radius:8px}
+.ob-tools button:hover{color:var(--text);background:var(--card2)}
+.ob-next{display:grid;grid-template-columns:52px minmax(0,1fr) auto;gap:16px;align-items:center;padding:16px;border-radius:16px;background:linear-gradient(135deg,rgba(47,60,255,.28),rgba(47,60,255,.08));border:1px solid rgba(142,149,255,.35)}
+.ob-ico{width:52px;height:52px;border-radius:14px;background:var(--voice);display:grid;place-items:center;color:#fff}
+.ob-ico svg{width:26px;height:26px;fill:none;stroke:currentColor;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.ob-next h3{margin:0;font:700 19px/1.25 var(--sans)}
+.ob-next p{margin:4px 0 0;color:var(--soft);font-size:14px;line-height:1.45;max-width:62ch}
+.ob-go{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.ob-go .btn{padding:12px 20px;font-weight:600;white-space:nowrap}
+.ob-go small{color:var(--muted);font-size:12px}
+.ob-next.is-done{background:rgba(61,220,151,.08);border-color:rgba(61,220,151,.35)}.ob-next.is-done .ob-ico{background:#3DDC97;color:#0b1a12}
+.ob-track{list-style:none;margin:0;padding:0;display:grid;grid-template-columns:repeat(var(--n),minmax(0,1fr));position:relative}
+.ob-track::before{content:"";position:absolute;left:calc(100%/var(--n)/2);right:calc(100%/var(--n)/2);top:11px;height:2px;background:var(--line2)}
+.ob-track::after{content:"";position:absolute;left:calc(100%/var(--n)/2);top:11px;height:2px;width:calc((100% - 100%/var(--n)) * var(--p));background:#3DDC97;transition:width .6s ease}
+.ob-track button{position:relative;z-index:1;width:100%;display:flex;flex-direction:column;align-items:center;gap:6px;background:transparent;border:0;color:var(--muted);font:500 12px var(--sans);cursor:pointer;padding:0 2px;border-radius:8px}
+.ob-dot{width:24px;height:24px;border-radius:50%;background:var(--card);border:2px solid var(--line2);display:grid;place-items:center;font:700 11px var(--mono);color:var(--muted)}
+.ob-track .done .ob-dot{background:#3DDC97;border-color:#3DDC97;color:#0b1a12}
+.ob-track .cur .ob-dot{border-color:var(--voice-text);color:var(--text);box-shadow:0 0 0 4px rgba(142,149,255,.18)}
+.ob-track .cur,.ob-track .focus{color:var(--text)}
+.ob-track .focus .ob-dot{border-color:var(--text)}
+.ob-reward{display:flex;align-items:center;gap:10px;font-size:13px;color:var(--soft)}
+.ob-reward .fuel-g{width:34px;height:22px;flex:none}
+.ob-mini{display:flex;align-items:center;gap:12px;padding:10px 12px 10px 10px;border:1px solid var(--line2);border-radius:16px;background:var(--card)}
+.ob-mini .ob-badge{min-width:0;font-size:20px;padding:3px 7px;border-width:1.5px;border-radius:7px}
+.ob-mini-t{flex:1;min-width:0;display:flex;flex-direction:column;line-height:1.25}
+.ob-mini-t b{font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.ob-mini-t small{color:var(--muted);font-size:12px}
+.ob-mini .btn{white-space:nowrap}
+.ob :focus-visible,.ob-mini :focus-visible{outline:2px solid var(--voice-text);outline-offset:2px}
+@media (max-width:980px){.ob{grid-template-columns:1fr}.ob-pass{display:none}}
+@media (max-width:820px){.onboard{margin:10px 12px 0}.ob{padding:14px;gap:14px;border-radius:18px}.ob-top h2{font-size:26px}.ob-next{grid-template-columns:44px minmax(0,1fr);padding:14px;gap:12px}.ob-ico{width:44px;height:44px;border-radius:12px}.ob-go{grid-column:1/-1;flex-direction:row;align-items:center;justify-content:space-between}.ob-go .btn{flex:1}.ob-track button{font-size:11px}}
+@media (prefers-reduced-motion:reduce){.ob-stamp.on.new,.ob-done-stamp.new{animation:none}.ob-track::after{transition:none}}
 @media (max-width:820px){.log{padding:16px}.chat-head{padding:10px 16px}}
 .msg-user{align-self:flex-end;max-width:min(78%,640px);background:var(--voice);color:#F3EFE4;border-radius:14px 14px 3px 14px;padding:12px 15px;white-space:pre-wrap}
 .msg-ai{display:flex;gap:12px;max-width:min(100%,780px)}
@@ -655,7 +690,7 @@ async function openFuel() {
     body.querySelectorAll('[data-pack]').forEach(btn => btn.onclick = async () => {
       if (!f.payable) { pay.innerHTML = '<p class="meta">Refuelling isn\'t switched on yet on this server.</p>'; return; }
       if (!f.eligible || !f.wallet) {
-        pay.innerHTML = `<div class="fund-chat"><span><b>Fuel is paid from your real wallet</b><small>Add a little SOL or USDC first: card, Apple Pay or a transfer from an exchange.</small></span><button type="button" class="btn btn-primary">Add funds</button></div>`;
+        pay.innerHTML = `<div class="fund-chat"><span><b>Fuel is paid from your real wallet</b><small>Add a little SOL or USDC first: card, Apple Pay or a transfer from an exchange.</small></span><button type="button" class="btn btn-primary">Add money</button></div>`;
         pay.querySelector('button').onclick = () => { close(); openFund(); };
         return;
       }
@@ -690,34 +725,103 @@ async function openFuel() {
 }
 $('fuelBtn').onclick = () => openFuel();
 
-// ---------------- onboarding: "Start here" ----------------
-const obState = { me: null, agents: 0, live: null, liveAt: 0, open: !matchMedia('(max-width: 820px)').matches };
-async function updateOnboarding() {
+// ---------------- onboarding: the floor pass ----------------
+const OB_ICONS = {
+  handle: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V4h6v3M7 12h6M7 16h10"/>',
+  passkey: '<rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3M12 15v2"/>',
+  trade: '<path d="M4 7h16v3a2 2 0 0 0 0 4v3H4v-3a2 2 0 0 0 0-4z"/><path d="M14 8v1M14 12v1M14 16v.5"/>',
+  agent: '<rect x="5" y="8" width="14" height="11" rx="3"/><path d="M12 4v4M9.5 13v.5M14.5 13v.5M9.5 16.5h5"/>',
+  money: '<rect x="3" y="6" width="18" height="12" rx="2"/><path d="M3 10h18M7 15h4"/>',
+};
+const obIcon = id => `<svg viewBox="0 0 24 24" aria-hidden="true">${OB_ICONS[id]}</svg>`;
+const obPref = { get() { try { return localStorage.getItem('outcry.ob.min') === '1'; } catch { return false; } }, set(v) { try { localStorage.setItem('outcry.ob.min', v ? '1' : '0'); } catch {} } };
+const obState = { me: null, agents: 0, live: null, liveAt: 0, focus: null, min: obPref.get(), prevDone: null, claimed: false };
+function obSteps(me, live) {
+  const cash = me.portfolio?.walletUsd ?? me.portfolio?.balances?.USDC;
+  const steps = [
+    { id: 'handle', label: 'Name', done: !!me.user.handle, title: 'Pick your trader name', why: 'It goes on your badge, the leaderboard and your invite link.', cta: 'Pick a name', time: '10 sec', run: () => chooseHandle().then(refresh) },
+    { id: 'passkey', label: 'Lock', done: !!secured, title: 'Lock your account', why: 'Use Face ID or your fingerprint instead of a password. It also signs you in on your other devices.', cta: 'Lock with Face ID', time: '20 sec', run: () => $('secureBtn').onclick() },
+    { id: 'trade', label: 'Practice', done: (me.portfolio?.positions || []).length > 0, title: 'Make a practice trade', why: `You have ${cash ? usd(cash) : 'free'} of practice money. Say your order like you'd say it out loud, then tap Sign & fill. Nothing real moves.`, cta: 'Buy $100 of SOL', time: '15 sec', run: () => send('Buy $100 of SOL') },
+    { id: 'agent', label: 'AI trader', done: obState.agents > 0, title: 'Build your AI trader', why: 'Tell it how to trade in plain words. It trades your practice money around the clock and you watch every move.', cta: 'Build my AI trader', time: '30 sec', run: () => send('Build me an AI trading agent') },
+  ];
+  if (live && live.enabled !== false) {
+    const waiting = live.reasonCode === 'access' && live.access === 'pending';
+    steps.push({ id: 'money', label: 'Add money', optional: true, done: !!live.wallet && (live.portfolio?.totalUsd ?? 0) >= 1,
+      title: 'Add money to trade for real',
+      why: waiting ? "You're on the list for real money. We'll let you in soon; everything else already works." : 'Pay by card, Apple Pay or Google Pay, or send crypto from an exchange. Start small: $20 is plenty.',
+      cta: waiting ? "You're on the list" : 'Add money', disabled: waiting, time: '2 min', run: () => openFund() });
+  }
+  return steps;
+}
+async function claimFloorPass() {
+  if (obState.claimed) return;
+  obState.claimed = true;
+  try {
+    const r = await api('/api/onboarding/claim', { method: 'POST' });
+    obState.me.user.onboardingRewardUsd = r.rewardUsd;
+    if (r.already) return;
+    if (r.fuel) updateFuel(r.fuel);
+    const msgs = r.fuel && r.rewardUsd > 0 ? Math.floor(r.rewardUsd / r.fuel.avgTurnUsd) : 0;
+    celebrateFill({ side: 'buy', symbol: 'FLOOR', stamp: 'ON THE FLOOR', received: 'Floor pass complete', sub: msgs ? `Bonus AI fuel added: about ${msgs} messages` : 'Your badge is stamped. Go trade.' });
+    feed('Floor pass complete');
+    updateOnboarding(true);
+  } catch { obState.claimed = false; }
+}
+async function updateOnboarding(force) {
   const host = $('onboard'); const me = obState.me;
   if (!host || !me || mode !== 'server') return;
   if (me.user.onboardingDismissed) { host.hidden = true; return; }
-  if (Date.now() - obState.liveAt > 60_000) { obState.liveAt = Date.now(); try { obState.live = await api('/api/live'); } catch { obState.live = null; } }
-  const live = obState.live;
-  const steps = [
-    { id: 'handle', done: !!me.user.handle, title: 'Pick your @handle', why: 'Your name on the marketplace, leaderboard and invite link.', cta: 'Choose', run: () => chooseHandle().then(refresh) },
-    { id: 'passkey', done: !!secured, title: 'Secure your account with a passkey', why: 'Face ID / Touch ID instead of a password. It signs your trades and keeps your account on every device.', cta: 'Secure', run: () => $('secureBtn').click() },
-    { id: 'trade', done: (me.portfolio?.positions || []).length > 0, title: 'Make a practice trade', why: 'You start with 24 SOL and 2,480 USDC of paper money. Just type what you want.', cta: 'Try “buy $100 of SOL”', run: () => send('Buy $100 of SOL') },
-    { id: 'agent', done: obState.agents > 0, title: 'Build an AI trading agent', why: 'It trades paper money for you 24/7 and you watch every move. Change its rules any time in plain words.', cta: 'Build my agent', run: () => send('Build me an AI trading agent') },
-    ...(live && live.enabled !== false ? [live.eligible
-      ? { id: 'fund', done: !!live.wallet && ((live.portfolio?.totalUsd ?? 0) >= 1), optional: true, title: 'Add money for real trading', why: 'Card, Apple Pay, Google Pay or a transfer from an exchange, straight into your own wallet. Start small: $20 is plenty.', cta: 'Add funds', run: () => openFund() }
-      : { id: 'real', done: false, optional: true, title: 'Unlock real-money trading', why: 'Real money is invite-only for now. Ask in one tap; you\'ll be able to add funds by card once you\'re in.', cta: live.access === 'pending' ? 'Request sent' : 'Request access', run: () => openLive() }] : []),
-    ...(me.telegram?.available ? [{ id: 'tg', done: !!me.telegram.linked, optional: true, title: 'Get alerts on Telegram', why: 'Fills, withdrawals and your agents, straight to your phone.', cta: 'Connect', run: () => $('tgBtn').click() }] : []),
-  ];
-  const done = steps.filter(x => x.done).length;
-  if (done === steps.length) { host.hidden = true; return; }
+  if (force !== true && Date.now() - obState.liveAt > 60_000) { obState.liveAt = Date.now(); try { obState.live = await api('/api/live'); } catch { obState.live = null; } }
+  const steps = obSteps(me, obState.live);
+  const core = steps.filter(x => !x.optional);
+  const coreDone = core.every(x => x.done);
+  const allDone = steps.every(x => x.done);
+  if (coreDone && me.user.onboardingRewardUsd === undefined) claimFloorPass();
+  if (allDone && me.user.onboardingRewardUsd !== undefined) { host.hidden = true; return; }
+  const doneIds = steps.filter(x => x.done).map(x => x.id);
+  const fresh = obState.prevDone ? doneIds.filter(id => !obState.prevDone.includes(id)) : [];
+  obState.prevDone = doneIds;
   const next = steps.find(x => !x.done);
+  const focus = steps.find(x => x.id === obState.focus) || next || steps[steps.length - 1];
+  const left = core.filter(x => !x.done).length;
+  const jc = J[me.user.jacket]?.[1] || '#F76FB0';
+  const head = coreDone ? "You're on the floor" : 'Get on the floor';
+  const sub = coreDone
+    ? (me.user.onboardingRewardUsd > 0 ? 'Badge complete and bonus AI fuel added. Add money whenever you want to trade for real.' : 'Badge complete. Add money whenever you want to trade for real.')
+    : `${left} quick step${left === 1 ? '' : 's'} to your first AI trade${left > 1 ? ', about a minute' : ''}.`;
   host.hidden = false;
-  host.innerHTML = `<div class="ob-head"><button type="button" class="ob-toggle" aria-expanded="${obState.open}"><b>Start here</b><span class="ob-count">${done} of ${steps.length} done</span><span class="ob-bar"><i style="width:${(done / steps.length) * 100}%"></i></span></button><button type="button" class="ob-x" aria-label="Hide the checklist" title="Hide">×</button></div>
-    ${`<ol class="ob-steps">${steps.map((x, i) => (!obState.open && x !== next) ? '' : `<li class="${x.done ? 'done' : ''} ${x === next ? 'next' : ''}"><span class="ob-n">${x.done ? '✓' : i + 1}</span><span class="ob-t"><b>${esc(x.title)}${x.optional ? ' <em>optional</em>' : ''}</b><small>${esc(x.why)}</small></span>${x.done ? '' : `<button type="button" class="btn btn-sm ${x === next ? 'btn-primary' : ''}" data-ob="${x.id}">${esc(x.cta)}</button>`}</li>`).join('')}</ol>`}${obState.open ? '' : '<button type="button" class="ob-more">See all steps ▾</button>'}`;
-  host.querySelector('.ob-toggle').onclick = () => { obState.open = !obState.open; updateOnboarding(); };
-  host.querySelector('.ob-more')?.addEventListener('click', () => { obState.open = true; updateOnboarding(); });
-  host.querySelector('.ob-x').onclick = async () => { host.hidden = true; try { await api('/api/me', { method: 'PATCH', body: { onboardingDismissed: true } }); obState.me.user.onboardingDismissed = true; } catch {} toast('Checklist hidden. Everything stays in the sidebar.'); };
-  host.querySelectorAll('[data-ob]').forEach(b => b.onclick = () => { const st = steps.find(x => x.id === b.dataset.ob); try { st?.run(); } catch (e) { toast(e.message); } setTimeout(refresh, 4000); });
+  if (fresh.length && !matchMedia('(prefers-reduced-motion: reduce)').matches) { try { pitSound(true); } catch {} }
+  if (obState.min) {
+    host.innerHTML = `<div class="ob-mini"><span class="ob-badge" style="--jc:${jc}">${esc(me.user.badge)}</span><span class="ob-mini-t"><b>${next ? esc(next.title) : head}</b><small>Floor pass · ${doneIds.length} of ${steps.length} stamped</small></span>${next && !next.disabled ? `<button type="button" class="btn btn-primary" data-ob-run="${next.id}">${esc(next.cta)}</button>` : ''}<span class="ob-tools"><button type="button" data-ob-expand aria-label="Show setup steps">Show</button></span></div>`;
+  } else {
+    const rot = [-8, 6, -4, 9, -11];
+    host.innerHTML = `<section class="ob" aria-label="Get started">
+      <div class="ob-pass" aria-hidden="true">
+        <span class="ob-pass-k">Outcry floor pass</span>
+        <span class="ob-badge" style="--jc:${jc}">${esc(me.user.badge)}</span>
+        <span class="ob-name">${me.user.handle ? '@' + esc(me.user.handle) : '<span class="ob-blank">your name</span>'}</span>
+        <span class="ob-stamps">${steps.map((x, i) => `<span class="ob-stamp ${x.done ? 'on' : ''} ${fresh.includes(x.id) ? 'new' : ''}" style="--rot:${rot[i]}deg">${obIcon(x.id)}</span>`).join('')}</span>
+        ${coreDone ? `<span class="ob-done-stamp ${fresh.length || !obState.stampShown ? 'new' : ''}">ON THE FLOOR</span>` : ''}
+      </div>
+      <div class="ob-main">
+        <div class="ob-top"><div><h2>${head}</h2><p>${esc(sub)}</p></div><span class="ob-tools"><button type="button" data-ob-min>Minimize</button><button type="button" data-ob-x aria-label="Hide setup for good">✕</button></span></div>
+        <div class="ob-next ${focus.done ? 'is-done' : ''}">
+          <span class="ob-ico">${focus.done ? '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>' : obIcon(focus.id)}</span>
+          <div><h3>${esc(focus.title)}${focus.optional ? ' <small style="color:var(--muted);font-weight:500;font-size:13px">optional</small>' : ''}</h3><p>${focus.done ? 'Done. Nice work.' : esc(focus.why)}</p></div>
+          <div class="ob-go">${focus.done ? (next ? `<button type="button" class="btn" data-ob-focus="${next.id}">Next: ${esc(next.label)}</button>` : '') : `<button type="button" class="btn btn-primary" data-ob-run="${focus.id}" ${focus.disabled ? 'disabled' : ''}>${esc(focus.cta)}</button><small>${esc(focus.time)}</small>`}</div>
+        </div>
+        <ol class="ob-track" style="--n:${steps.length};--p:${Math.max(0, steps.findIndex(x => !x.done) === -1 ? 1 : steps.findIndex(x => !x.done) / (steps.length - 1))}">${steps.map((x, i) => `<li class="${x.done ? 'done' : ''} ${x === next ? 'cur' : ''} ${x === focus && x !== next ? 'focus' : ''}"><button type="button" data-ob-focus="${x.id}" aria-current="${x === focus ? 'step' : 'false'}" aria-label="${esc(x.title)}${x.done ? ', done' : ''}"><span class="ob-dot">${x.done ? '✓' : i + 1}</span>${esc(x.label)}</button></li>`).join('')}</ol>
+        ${!coreDone && fuelState?.enabled && !fuelState.unlimited ? `<div class="ob-reward">${gaugeSvg()}<span>Finish the first four steps and we'll top up your AI fuel.</span></div>` : ''}
+      </div>
+    </section>`;
+    const g = host.querySelector('.ob-reward svg'); if (g) paintGauge(g, 1);
+    if (coreDone) obState.stampShown = true;
+  }
+  host.querySelectorAll('[data-ob-run]').forEach(b => b.onclick = async () => { const st = steps.find(x => x.id === b.dataset.obRun); obState.focus = null; try { await st?.run(); } catch (e) { toast(e.message); } setTimeout(refresh, 2500); });
+  host.querySelectorAll('[data-ob-focus]').forEach(b => b.onclick = () => { obState.focus = b.dataset.obFocus; updateOnboarding(true); });
+  host.querySelector('[data-ob-min]')?.addEventListener('click', () => { obState.min = true; obPref.set(true); updateOnboarding(true); });
+  host.querySelector('[data-ob-expand]')?.addEventListener('click', () => { obState.min = false; obPref.set(false); updateOnboarding(true); });
+  host.querySelector('[data-ob-x]')?.addEventListener('click', async () => { host.hidden = true; try { await api('/api/me', { method: 'PATCH', body: { onboardingDismissed: true } }); obState.me.user.onboardingDismissed = true; } catch {} toast('Setup hidden. Everything is still in the sidebar.'); });
 }
 
 async function refresh() {
@@ -1093,7 +1197,7 @@ async function renderCards(body, cards, instant = false) {
     if (c.type === 'order') body.appendChild(orderCard(c.ticket));
     else if (c.type === 'live_order') body.appendChild(liveTicket(c.quote));
     else if (c.type === 'live_withdraw') body.appendChild(withdrawTicket(c.withdrawal));
-    else if (c.type === 'fund_wallet') { const d = document.createElement('div'); d.className = 'fund-chat'; d.innerHTML = '<span><b>Add money to your real wallet</b><small>Card · Apple Pay · Google Pay · or from an exchange</small></span><button type="button" class="btn btn-primary">Add funds</button>'; d.querySelector('button').onclick = () => openFund({ amountUsd: c.amountUsd }); body.appendChild(d); }
+    else if (c.type === 'fund_wallet') { const d = document.createElement('div'); d.className = 'fund-chat'; d.innerHTML = '<span><b>Add money to your real wallet</b><small>Card, Apple Pay, Google Pay, or from an exchange</small></span><button type="button" class="btn btn-primary">Add money</button>'; d.querySelector('button').onclick = () => openFund({ amountUsd: c.amountUsd }); body.appendChild(d); }
     else if (c.type === 'launch') body.appendChild(launchCard(c.ticket, c.devSharePct));
     else if (c.type === 'agent') body.appendChild(await agentCard(c, instant));
     else if (c.type === 'strategy') body.appendChild(strategyCard(c));
@@ -1599,7 +1703,7 @@ function celebrateFill(r) {
       <div class="fx-hand"><svg width="64" height="76" viewBox="0 0 40 48" fill="currentColor" aria-hidden="true"><rect x="7" y="6" width="6" height="24" rx="3"/><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="28" y="8" width="6" height="22" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/></svg></div>
       <div class="fx-stamp">${esc(r.stamp || (buy ? 'BOUGHT' : 'SOLD'))}</div>
       <div class="fx-what">${esc(r.received || r.symbol)}</div>
-      <div class="fx-sub">${r.usd ? usd(r.usd) + ' · ' : ''}confirmed on Solana${r.costs ? ` · fees ${r.costs.totalCostUsd < 0.01 ? '$' + r.costs.totalCostUsd.toFixed(4) : usd(r.costs.totalCostUsd)}` : ''}</div>
+      <div class="fx-sub">${r.sub ? esc(r.sub) : `${r.usd ? usd(r.usd) + ' · ' : ''}confirmed on Solana${r.costs ? ` · fees ${r.costs.totalCostUsd < 0.01 ? '$' + r.costs.totalCostUsd.toFixed(4) : usd(r.costs.totalCostUsd)}` : ''}`}</div>
       <div class="fx-tap">tap to close</div>
     </div>`;
   document.body.appendChild(o);
@@ -1757,7 +1861,7 @@ function holdings(s) {
   return { sol: p.sol || 0, usdc: u ? Number(u.amount) || 0 : 0, solUsd: p.solUsd, sol1: p.sol ? p.solUsd / p.sol : 0 };
 }
 async function openFund(opts = {}) {
-  const { body, close } = sheet('Add funds');
+  const { body, close } = sheet('Add money');
   let poll = null, start = null, amount = opts.amountUsd || 50, fiat = fiatGuess();
   const stop = () => { if (poll) clearInterval(poll); poll = null; };
   const arrived = (s, got) => {
@@ -1788,7 +1892,23 @@ async function openFund(opts = {}) {
     let s;
     try { s = await api('/api/live'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
     if (!s.enabled) { body.innerHTML = '<div class="lw"><section class="lw-card"><b>Real money isn\'t switched on yet</b><span class="meta">You can keep trading with paper money in the meantime.</span></section></div>'; return; }
-    if (!s.eligible) { close(); openLive(); return; }
+    if (!s.eligible) {
+      const me = obState.me;
+      const items = [
+        { id: 'handle', label: 'Pick your trader name', done: !!me?.user.handle && s.reasonCode !== 'handle', why: 'Your real wallet is tied to your name.', cta: 'Pick a name', run: async () => { await chooseHandle(); } },
+        ...(s.reasonCode === 'access' ? [{ id: 'access', label: 'Get your spot', done: false, pending: s.access === 'pending',
+          why: s.access === 'pending' ? "You're on the list. We let traders in every day; practice trading and AI traders already work." : 'Real money is opening to traders in waves. Join the list and we\'ll let you in.',
+          cta: s.access === 'pending' ? "You're on the list" : 'Join the list', run: async () => { await api('/api/live/access', { method: 'POST', body: { note: '' } }); toast("You're on the list"); } }] : []),
+        { id: 'passkey', label: 'Lock your account', done: !!secured, why: 'Every real trade and withdrawal is approved with Face ID or your fingerprint.', cta: 'Lock with Face ID', run: async () => { await $('secureBtn').onclick(); } },
+        { id: 'wallet', label: 'Get your wallet and add money', done: false, why: 'One tap creates your own Solana wallet, then pay by card or send from an exchange.', cta: '', run: null },
+      ];
+      const cur = items.find(x => !x.done);
+      body.innerHTML = `<div class="lw fund"><p class="meta" style="margin:0">A few quick things before your first real deposit.</p>
+        ${items.map((x, i) => `<section class="lw-card fund-step ${x === cur ? '' : 'fund-later'}"><div class="lw-row"><b>${x.done ? '✓' : (i + 1) + '.'} ${esc(x.label)}</b>${x.done ? '<span class="lw-pill">Done</span>' : ''}</div>${x === cur ? `<span class="meta">${esc(x.why)}</span>${x.run ? `<button class="btn btn-primary lw-go" type="button" data-step ${x.pending ? 'disabled' : ''}>${esc(x.cta)}</button>` : ''}` : ''}</section>`).join('')}</div>`;
+      const b = body.querySelector('[data-step]');
+      if (b) b.onclick = async () => { b.disabled = true; try { await cur.run(); } catch (e) { toast(e.message); } await refresh(); render(); };
+      return;
+    }
     if (!s.wallet) {
       body.innerHTML = `<div class="lw fund"><section class="lw-card"><div class="lw-row"><b>Step 1 · Your own wallet</b><span class="lw-pill">10 seconds</span></div><span class="meta">Outcry makes you a personal Solana wallet. The money you add lands there, and sending it out always needs your passkey.</span><button class="btn btn-primary lw-go" type="button" data-mk>Create my wallet</button></section>
         <section class="lw-card fund-later"><b>Step 2 · Add money</b><span class="meta">Card, Apple Pay, Google Pay, or a transfer from an exchange.</span></section></div>`;
@@ -1874,11 +1994,11 @@ async function openLive() {
         <div class="lw-row"><span class="eyebrow">Balance</span><button class="lw-icon" type="button" data-reload title="Refresh" aria-label="Refresh balance">↻</button></div>
         <div class="lw-total">${p ? usd(p.totalUsd) : '—'}</div>
         <div class="meta">${p ? `${fmt(p.sol, 4)} SOL · ${usd(p.solUsd)}` : 'Balance unavailable right now'}</div>
-        <div class="lw-addr"><code title="${esc(addr)}">${esc(shortAddr)}</code><button class="btn btn-sm btn-primary" type="button" data-fund>+ Add funds</button><button class="btn btn-sm" type="button" data-copy>Copy address</button><a class="btn btn-sm" href="https://solscan.io/account/${esc(addr)}" target="_blank" rel="noopener">Solscan ↗</a><button class="btn btn-sm" type="button" data-wdopen>Withdraw ↗</button></div>
+        <div class="lw-addr"><code title="${esc(addr)}">${esc(shortAddr)}</code><button class="btn btn-sm btn-primary" type="button" data-fund>+ Add money</button><button class="btn btn-sm" type="button" data-copy>Copy address</button><a class="btn btn-sm" href="https://solscan.io/account/${esc(addr)}" target="_blank" rel="noopener">Solscan ↗</a><button class="btn btn-sm" type="button" data-wdopen>Withdraw ↗</button></div>
         <div class="lw-custody ${s.custody === 'passkey' ? 'ok' : ''}">${s.custody === 'passkey'
           ? '<span>🔐 <b>Passkey-owned.</b> Withdrawals need your wallet passkey. Outcry\'s server can still sign swaps for you (direct transfers out are blocked), so keep here only what you trade.</span>'
           : `<span>Custody: <b>${s.custody === 'enrolled' ? 'passkey enrolled, not verified yet' : "Outcry's server key (pilot)"}</b>. Hand ownership to your passkey so withdrawals need it.</span><button class="btn btn-sm" type="button" data-custody>${s.custody === 'enrolled' ? 'Finish setup' : 'Make it self-custodial'}</button>`}</div>
-        <p class="meta lw-hint">${p && p.sol < 0.02 ? 'To start, tap <b>+ Add funds</b>: pay by card or Apple Pay, or send SOL from an exchange (Solana network).' : 'Tap <b>+ Add funds</b> to top up by card or from an exchange.'}</p>
+        <p class="meta lw-hint">${p && p.sol < 0.02 ? 'To start, tap <b>+ Add money</b>: pay by card or Apple Pay, or send SOL from an exchange (Solana network).' : 'Tap <b>+ Add money</b> to top up by card or from an exchange.'}</p>
         ${err ? `<p class="meta lw-warn">Some balances couldn't load: ${esc(err)}</p>` : ''}
         ${s.reclaimable?.count ? `<div class="lw-reclaim"><span class="meta">${s.reclaimable.count} empty token account${s.reclaimable.count > 1 ? 's' : ''} hold${s.reclaimable.count > 1 ? '' : 's'} ${fmt(s.reclaimable.sol, 4)} SOL of deposits${p?.sol ? ` (≈ ${usd(s.reclaimable.sol * p.solUsd / p.sol)})` : ''}.</span><button class="btn btn-sm" type="button" data-reclaim>Reclaim</button></div><div class="lw-reclaim-rev"></div>` : ''}
       </section>

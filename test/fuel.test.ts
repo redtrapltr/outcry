@@ -60,6 +60,10 @@ describe("AI fuel", () => {
     expect(f.payable).toBe(false);
     const buy = await s.f.inject({ method: "POST", url: "/api/fuel/buy", headers: h, payload: { pack: "shout" } });
     expect(buy.statusCode).toBeGreaterThanOrEqual(400);
+    // The floor-pass bonus needs the four core steps first.
+    const early = await s.f.inject({ method: "POST", url: "/api/onboarding/claim", headers: h });
+    expect(early.statusCode).toBe(409);
+    expect(early.json().error).toMatch(/trader name.*passkey.*practice trade.*AI trader/);
     await s.f.close();
   });
 });

@@ -67,11 +67,14 @@ describe("live trading pilot", () => {
   it("blocks users who aren't allowlisted or have no passkey", async () => {
     const { u, pilot } = setup({ allow: ["someoneelse"] });
     expect(pilot.status(u.id, true).reason).toMatch(/pilot list/);
+    expect(pilot.status(u.id, true).reasonCode).toBe("access");
     await expect(pilot.createWallet(u.id, true)).rejects.toThrow(/pilot list/);
     const open = setup({ allow: ["*"] });
     expect(open.pilot.status(open.u.id, true).eligible).toBe(true);
     const s2 = setup();
     expect(s2.pilot.status(s2.u.id, false).reason).toMatch(/passkey/);
+    expect(s2.pilot.status(s2.u.id, false).reasonCode).toBe("passkey");
+    expect(s2.pilot.status(s2.u.id, true).reasonCode).toBeNull();
   });
 
   it("stops opening new real wallets at the configured cap, with a friendly message", async () => {

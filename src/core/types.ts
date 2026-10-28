@@ -326,6 +326,8 @@ export interface UserProfile {
   bio?: string;
   /** The user hid the "Start here" checklist. */
   onboardingDismissed?: boolean;
+  /** AI fuel given for finishing the floor pass (set once). */
+  onboardingRewardUsd?: number;
   mainWallet: { solana: string; evm: string };
   balances: WalletBalance;
   /** Median order size in USD, used by the amount-sanity check. */

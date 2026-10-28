@@ -396,6 +396,25 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     pendingPlans.set(w.id, { userId: uid, plan: b.plan, months: b.months, usd });
     return { withdrawal: w, usd, plan: PLANS[b.plan] };
   });
+  // --- onboarding: finishing the floor pass tops up the AI fuel once ------------
+  const onboardingReward = () => Math.max(0, Math.min(5, Number(process.env.OUTCRY_ONBOARDING_FUEL_USD ?? 0.25)));
+  route("POST", "/api/onboarding/claim", ({ uid }) => {
+    const u = app.users.get(uid);
+    if (u.onboardingRewardUsd !== undefined) return { ok: true, already: true, rewardUsd: u.onboardingRewardUsd, fuel: router.fuel(uid) };
+    const missing = [
+      !u.handle && "pick your trader name",
+      !secured(uid) && "lock your account with a passkey",
+      !app.users.portfolio(uid).positions.length && "make a practice trade",
+      !app.agents.listForUser(uid).length && "build an AI trader",
+    ].filter(Boolean);
+    if (missing.length) throw new HttpError(409, `Almost there: ${missing.join(", ")}`);
+    const usd = router.hasModels ? onboardingReward() : 0;
+    if (usd > 0) router.addCredit(uid, usd);
+    u.onboardingRewardUsd = usd;
+    app.audit.append(`user:${uid}`, "onboarding.completed", { rewardUsd: usd });
+    return { ok: true, rewardUsd: usd, fuel: router.fuel(uid) };
+  });
+
   // --- AI fuel: refill the AI when the free daily tank runs dry -----------------
   const pendingFuel = app.growth.fuelOrders;
   route("GET", "/api/fuel", async ({ uid }) => {

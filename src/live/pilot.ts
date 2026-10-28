@@ -163,6 +163,16 @@ export class LivePilot {
     return undefined;
   }
 
+  /** What's missing before this user can use real money, as a code the UI can act on. */
+  blockedCode(userId: string, hasPasskey: boolean): "off" | "handle" | "access" | "passkey" | null {
+    if (!this.cfg.enabled) return "off";
+    const h = this.d.users.get(userId).handle;
+    if (!h) return "handle";
+    if (!this.cfg.allowlist.includes("*") && !this.cfg.allowlist.includes(h) && !this.d.growth?.isApproved(userId)) return "access";
+    if (!hasPasskey) return "passkey";
+    return null;
+  }
+
   status(userId: string, hasPasskey: boolean) {
     const reason = this.blockedReason(userId, hasPasskey);
     const w = this.d.wallets.get(userId);
@@ -170,6 +180,7 @@ export class LivePilot {
       enabled: this.cfg.enabled,
       eligible: !reason,
       reason: reason ?? null,
+      reasonCode: this.blockedCode(userId, hasPasskey),
       wallet: w ? { address: w.address, createdAt: w.createdAt } : null,
       limits: { maxOrderUsd: this.cfg.maxOrderUsd, maxDailyUsd: this.cfg.maxDailyUsd, spentTodayUsd: this.spentToday(userId), reserveSol: this.cfg.reserveSol, maxAgentUsd: this.cfg.maxAgentUsd ?? null },
       custody: w?.custody ?? (w ? "server" : null),
