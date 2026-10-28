@@ -12,3 +12,12 @@ describe("web pages", () => {
     });
   }
 });
+
+describe("browser bundles", () => {
+  // Render runs `npm run build:web`; server-only imports (fs, pg) in shared code break it and stop every deploy.
+  it("the in-browser demo bundles for the browser", async () => {
+    const { build } = await import("esbuild");
+    const r = await build({ entryPoints: ["src/browser/entry.ts", "src/browser/qr.ts"], bundle: true, platform: "browser", format: "esm", target: "es2020", write: false, outdir: "out", logLevel: "silent" });
+    expect(r.errors).toHaveLength(0);
+  }, 60_000);
+});

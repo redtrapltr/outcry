@@ -12,7 +12,7 @@ import { Growth, PLANS } from "../live/growth.js";
 import type { AuthService, RequestMeta } from "./auth.js";
 import { blueprint } from "../orchestrator/tools-exec.js";
 import { redactAgent } from "../market/listings.js";
-import { DirtyMap } from "../core/persist.js";
+import { DirtyMap } from "../core/dirtymap.js";
 import { FUEL_PACKS, fuelPack } from "../live/fuel.js";
 
 export class HttpError extends Error {

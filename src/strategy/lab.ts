@@ -8,7 +8,7 @@ import { TF_MS, type Candle, type MarketData } from "../data/market.js";
 import type { HistoryProvider } from "../data/history.js";
 import { backtest, summarize, type BacktestReport } from "./backtest.js";
 import { describe, DslError } from "./evaluator.js";
-import { DirtyMap } from "../core/persist.js";
+import { DirtyMap } from "../core/dirtymap.js";
 
 export interface SavedStrategy {
   id: string;
