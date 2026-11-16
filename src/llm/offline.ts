@@ -196,7 +196,7 @@ export function parseRealOrder(text: string) {
   const names: Record<string, string> = { microsoft: "MSFT", apple: "AAPL", tesla: "TSLA", nvidia: "NVDA", amazon: "AMZN", google: "GOOGL", alphabet: "GOOGL", meta: "META", coinbase: "COIN" };
   const named = Object.entries(names).find(([k]) => new RegExp(`\\b${k}\\b`, "i").test(text))?.[1];
   const caps = text.match(/\b([A-Z]{2,5}(?:x|on)?)\b/g)?.find((w) => !["USD", "SOL", "I"].includes(w));
-  const token = mint ?? (/\busdc\b/i.test(text) ? "USDC" : text.match(/\$([A-Za-z][A-Za-z0-9]{1,9})\b/)?.[1] ?? named ?? caps ?? "");
+  const token = mint ?? (/\busdc\b/i.test(text) ? "USDC" : text.match(/\$([A-Za-z][A-Za-z0-9]{1,9})\b/)?.[1] ?? named ?? caps ?? (side === "buy" && /\bsol(ana)?\b/i.test(text) && !/\b(with|using|for)\s+sol\b/i.test(text) ? "SOL" : ""));
   const usd = Number(text.match(/\$\s*(\d+(?:\.\d+)?)/)?.[1] ?? text.match(/(\d+(?:\.\d+)?)\s*(?:\$|usd\b|dollars?\b|bucks\b)/i)?.[1] ?? NaN);
   const pct = Number(text.match(/(\d{1,3})\s*%/)?.[1] ?? (/\b(half)\b/i.test(text) ? 50 : 100));
   return side === "buy" ? { side, token, ...(Number.isFinite(usd) ? { usd } : {}) } : { side, token, pct };
@@ -220,6 +220,8 @@ export class OfflineProvider implements ModelProvider {
     }
     const raw = typeof last.content === "string" ? last.content : last.content.map((b) => (b.type === "text" ? b.text : "")).join(" ");
     const text = raw.replace(/<context>[\s\S]*?<\/context>/g, "").trim();
+    // On the real-money screen, plain orders are real unless the user says practice/paper.
+    const realScreen = /Screen: REAL MONEY/.test(raw) && !/\b(paper|practice|demo|fake|simulat\w*)\b/i.test(text);
     const intent = classify(text);
     const call = (name: string, input: unknown): ChatResponse => ({ content: [{ type: "tool_use", id: id(), name, input }], stopReason: "tool_use", usage, model: "offline" });
     if (ADD_FUNDS.test(text)) return call("open_add_funds", {});
@@ -247,12 +249,12 @@ export class OfflineProvider implements ModelProvider {
         return call("compile_strategy", { ...parseStrategy(text), ...(days ? { lookback_days: days } : {}) });
       }
       case "order": {
-        if (REAL_MONEY.test(text)) return call("propose_real_order", parseRealOrder(text));
+        if (REAL_MONEY.test(text) || realScreen) return call("propose_real_order", parseRealOrder(text));
         return call("propose_order", parseOrder(text));
       }
       case "control": return call("control_agent", parseControl(text));
       case "explain": return call("explain_agent", { agent: parseControl(text).agent });
-      case "portfolio": return call("get_portfolio", {});
+      case "portfolio": return call(realScreen ? "get_real_wallet" : "get_portfolio", {});
       case "research": {
         const tok = text.match(/\$([a-z0-9]{2,10})/i)?.[1];
         if (tok) return call("get_token_risk", { token: tok });

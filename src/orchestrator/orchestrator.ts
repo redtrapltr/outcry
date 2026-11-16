@@ -30,6 +30,9 @@ const KEEP_MESSAGES = 12; // last ~6 turns; older turns roll into the summary
 /** Phrases that tell the user a ticket exists and can be signed. */
 const CLAIMS_TICKET = /ticket (is )?(ready|created|prepared)|ticket for .{0,60}(is|waiting)|tap \**sign|sign (it |them )?(in the app|to (execute|deploy|launch))|waiting for your signature|ready to sign/i;
 
+/** Which side of the app the user is on: real money or practice (paper) money. */
+export type Screen = "real" | "practice";
+
 export class Orchestrator {
   private sessions = new Map<string, Session>();
   readonly tools: ToolExecutor;
@@ -53,11 +56,16 @@ export class Orchestrator {
     return s;
   }
 
-  private context(userId: string, s: Session): string {
+  private context(userId: string, s: Session, screen?: Screen): string {
     const p = this.app.users.portfolio(userId);
     const agents = this.app.agents.listForUser(userId).filter((a) => a.state !== "killed").map((a) => `${a.spec.name} (${a.state}, ${a.spec.mode})`);
     return [
-      `Wallet: $${p.walletUsd.toFixed(2)}; balances ${Object.entries(p.balances).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${+v.toFixed(4)}`).join(", ")}.`,
+      screen === "real"
+        ? "Screen: REAL MONEY. The user is looking at their real wallet: buy/sell orders are real-money orders (propose_real_order) and \"my wallet / portfolio / balance\" means the real wallet (get_real_wallet), unless they say practice or paper."
+        : screen === "practice"
+          ? "Screen: PRACTICE. Orders use practice (paper) money unless the user explicitly says real money."
+          : "",
+      `Practice wallet: $${p.walletUsd.toFixed(2)}; balances ${Object.entries(p.balances).filter(([, v]) => v > 0).map(([k, v]) => `${k} ${+v.toFixed(4)}`).join(", ")}.`,
       agents.length ? `Agents: ${agents.join(", ")}.` : "No agents yet.",
       (() => {
         const pending = this.app.desk.listForUser(userId).filter((t) => t.status === "needs_confirmation" || t.status === "needs_second_confirmation").slice(-5);
@@ -69,7 +77,7 @@ export class Orchestrator {
     ].filter(Boolean).join("\n");
   }
 
-  async handle(userId: string, sessionId: string, text: string): Promise<TurnResult> {
+  async handle(userId: string, sessionId: string, text: string, opts: { screen?: Screen } = {}): Promise<TurnResult> {
     const s = this.session(userId, sessionId);
     const user = this.app.users.get(userId);
     const cards: Card[] = [];
@@ -95,7 +103,7 @@ export class Orchestrator {
     let ci = 0;
     let model = candidates[0]!.model;
 
-    const turnMessages: ChatMessage[] = [{ role: "user", content: `${text}\n\n<context>\n${this.context(userId, s)}\n</context>` }];
+    const turnMessages: ChatMessage[] = [{ role: "user", content: `${text}\n\n<context>\n${this.context(userId, s, opts.screen)}\n</context>` }];
     let reply = "";
     let corrected = false;
 

@@ -4,7 +4,7 @@ import vm from "node:vm";
 
 /** Every inline <script> in the web pages must at least parse: one stray quote takes the whole terminal down. */
 describe("web pages", () => {
-  for (const page of ["terminal.html", "recap.html", "creator.html", "index.html"]) {
+  for (const page of ["terminal.html", "recap.html", "creator.html", "index.html", "gate.html"]) {
     it(`${page}: inline scripts parse`, () => {
       const html = readFileSync(new URL(`../web/${page}`, import.meta.url), "utf8");
       const scripts = [...html.matchAll(/<script(?![^>]*\bsrc=)[^>]*>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);

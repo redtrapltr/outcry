@@ -37,6 +37,7 @@ import { JupiterHolderPoller } from "../data/jupholders.js";
 import { StockCatalog } from "../data/stocks.js";
 import Fastify from "fastify";
 import fastifyStatic from "@fastify/static";
+import { AccessGate } from "./gate.js";
 import fastifyWebsocket from "@fastify/websocket";
 import { randomBytes } from "node:crypto";
 import { fileURLToPath } from "node:url";
@@ -57,6 +58,8 @@ export interface ServerOptions {
   logger?: boolean;
   /** Explicit store (tests). Default: from DATABASE_URL / OUTCRY_STATE_FILE. */
   store?: StateStore | null;
+  /** Invite-only gate; null = open even when OUTCRY_ACCESS_* is set (tests). */
+  gate?: import("./gate.js").AccessGate | null;
 }
 
 export async function buildServer(opts: ServerOptions = {}) {
@@ -289,6 +292,29 @@ export async function buildServer(opts: ServerOptions = {}) {
     try { done(null, JSON.parse(text)); } catch { const e = new Error("Invalid JSON body") as Error & { statusCode: number }; e.statusCode = 400; done(e, undefined); }
   });
   await f.register(fastifyWebsocket);
+
+  // Invite-only: everything but the landing page, share pages and assets needs the access password.
+  const gate = opts.gate === null ? undefined : opts.gate ?? AccessGate.fromEnv();
+  if (gate) {
+    console.log(`[outcry] invite-only: ${gate.size} access code(s)`);
+    f.addHook("onRequest", async (req, reply) => {
+      const path = req.url.split("?")[0]!;
+      if (gate.isPublic(path) || gate.allows(req.headers.cookie)) return;
+      if (path.startsWith("/api/") || path.startsWith("/ws/")) return reply.code(401).send({ error: "Outcry is invite-only. Enter the access password first.", gate: true });
+      return reply.redirect(`/gate.html?next=${encodeURIComponent(req.url)}`);
+    });
+  }
+  f.post("/api/gate", async (req, reply) => {
+    if (!gate) return { ok: true, open: true };
+    const ip = String(req.headers["x-forwarded-for"] ?? req.ip).split(",")[0]!.trim();
+    if (gate.limited(ip)) return reply.code(429).send({ error: "Too many tries. Wait 15 minutes and try again." });
+    const code = String((req.body as { password?: unknown } | undefined)?.password ?? "");
+    const proto = String(req.headers["x-forwarded-proto"] ?? req.protocol).split(",")[0]!.trim();
+    const cookie = code ? gate.enter(code, proto === "https") : null;
+    if (!cookie) return reply.code(403).send({ error: "That password isn't right. Check it with the person who invited you." });
+    reply.header("set-cookie", cookie);
+    return { ok: true };
+  });
   const webRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../web");
   await f.register(fastifyStatic, { root: webRoot, prefix: "/" });
 

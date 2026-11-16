@@ -242,7 +242,7 @@ export class LivePilot {
     const w = this.d.wallets.get(userId);
     if (!w) throw new Error("Create your real wallet first");
     const raw = req.token.trim();
-    let mint = raw.toUpperCase() === "USDC" ? USDC_MINT : raw;
+    let mint = raw.toUpperCase() === "USDC" ? USDC_MINT : raw.replace(/^\$/, "").toUpperCase() === "SOL" ? SOL_MINT : raw;
     if (!isMint(mint)) {
       const m = this.d.resolveMint?.(raw.replace(/^\$/, ""));
       if (m && isMint(m) && !m.startsWith("sim")) mint = m;
@@ -259,7 +259,11 @@ export class LivePilot {
       }
     }
     if (!isMint(mint)) throw new Error(`I don't know a real Solana token for "${raw}". Paste its mint address, or use USDC or a stock ticker like MSFT`);
-    if (mint === SOL_MINT) throw new Error("Pick a token other than SOL: trades are against SOL");
+    if (mint === SOL_MINT) {
+      // Buying SOL itself means paying in USDC (trades are otherwise priced against SOL).
+      if (req.side === "sell") throw new Error('To turn SOL into dollars, buy USDC instead, e.g. "buy $10 of USDC"');
+      req = { ...req, payWith: "USDC" };
+    }
     const solUsd = this.d.solUsd();
     if (!(solUsd > 0)) throw new Error("No SOL price right now, try again in a few seconds");
     const info = (await this.d.tokenInfo([mint]).catch(() => ({} as Record<string, TokenInfo>)))[mint];

@@ -61,6 +61,11 @@ services:
         sync: false
       - key: TELEGRAM_BOT_USERNAME
         sync: false
+      # Invite-only: a shared password, or one code per person (comma-separated).
+      - key: OUTCRY_ACCESS_PASSWORD
+        sync: false
+      - key: OUTCRY_ACCESS_CODES
+        sync: false
       # Card / Apple Pay deposits via MoonPay (pk_test_/sk_test_ = sandbox).
       - key: MOONPAY_API_KEY
         sync: false

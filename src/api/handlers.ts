@@ -62,7 +62,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
   const tokens = new Map<string, string>();
   const auth = opts.auth;
   /** What the user saw in each chat (text + cards), keyed `${userId}:${sessionId}`. Persisted. */
-  type Line = { role: "user" | "ai"; text: string; at: string; cards?: unknown[]; meta?: unknown };
+  type Line = { role: "user" | "ai"; text: string; at: string; cards?: unknown[]; meta?: unknown; screen?: "real" | "practice" };
   const transcripts = new DirtyMap<Line[]>();
   /** Public recap snapshots (shareable links). No user ids or wallet addresses inside. Persisted. */
   const recaps = new Map<string, Record<string, unknown>>();
@@ -144,10 +144,10 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
 
   // --- chat -------------------------------------------------------------------
   route("POST", "/api/chat", async ({ uid, body }) => {
-    const b = z.object({ sessionId: z.string().max(64).default("main"), text: z.string().min(1).max(4_000) }).parse(body);
+    const b = z.object({ sessionId: z.string().max(64).default("main"), text: z.string().min(1).max(4_000), screen: z.enum(["real", "practice"]).optional() }).parse(body);
     const key = `${uid}:${b.sessionId}`;
-    pushLine(key, { role: "user", text: b.text, at: new Date().toISOString() });
-    const r = await orch.handle(uid, b.sessionId, b.text);
+    pushLine(key, { role: "user", text: b.text, at: new Date().toISOString(), ...(b.screen ? { screen: b.screen } : {}) });
+    const r = await orch.handle(uid, b.sessionId, b.text, { screen: b.screen });
     pushLine(key, { role: "ai", text: r.reply, at: new Date().toISOString(), cards: r.cards, meta: r.meta });
     return { ...r, fuel: router.fuel(uid) };
   });

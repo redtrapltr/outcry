@@ -313,7 +313,7 @@ describe("realistic paper fills", () => {
     const app = createOutcry({ mode: "paper", paperFillDelayMs: delayMs } as never);
     const sock = { readyState: 1, send() {}, close() {}, onopen: null, onmessage: null, onclose: null, onerror: null } as never;
     const feed = new PumpPortalFeed(app.market, { makeSocket: () => sock }).start();
-    feed.handle({ mint: MINT, txType: "create", traderPublicKey: "c", initialBuy: 1e7, marketCapSol: 30, vSolInBondingCurve: 300, symbol: "REAL1" });
+    feed.handle({ mint: MINT, txType: "create", traderPublicKey: "c", initialBuy: 1e7, marketCapSol: 30, vSolInBondingCurve: 30, symbol: "REAL1" });
     const u = app.users.create({ badge: "T", jacket: "memes", residence: "CH" });
     return { app, feed, u };
   };

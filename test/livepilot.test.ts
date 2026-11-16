@@ -185,6 +185,19 @@ describe("pay with USDC and stock spreads", () => {
     expect(s.calls.orders.at(-1)!.get("amount")).toBe("4000000");
   });
 
+  it("buys SOL itself by paying USDC (the real-money screen's 'buy $4 of SOL')", async () => {
+    const s = setup({ tokenRaw: "0" });
+    await s.pilot.createWallet(s.u.id, true);
+    const rpc = (s.pilot as unknown as { d: { rpc: { tokens: () => Promise<unknown[]> } } }).d.rpc;
+    rpc.tokens = async () => [{ mint: "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v", amount: 50, decimals: 6, raw: "50000000" }];
+    const q = await s.pilot.quote(s.u.id, true, { side: "buy", token: "SOL", usd: 4 });
+    expect(q.payAsset).toBe("USDC");
+    expect(q.mint).toBe(SOL_MINT);
+    expect(s.calls.orders.at(-1)!.get("inputMint")).toBe("EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v");
+    expect(s.calls.orders.at(-1)!.get("outputMint")).toBe(SOL_MINT);
+    await expect(s.pilot.quote(s.u.id, true, { side: "sell", token: "SOL", pct: 50 })).rejects.toThrow(/buy USDC instead/);
+  });
+
   it("scans executable spreads and nets Outcry's fee on both legs", async () => {
     const { SpreadScanner } = await import("../src/live/spreads.js");
     // MSFTon is cheaper: $100 buys 0.2 shares ($500/sh); selling 0.2 MSFTx returns $102 ($510/sh).
