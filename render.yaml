@@ -74,4 +74,4 @@ databases:
   - name: outcry-db
     databaseName: outcry
     region: frankfurt
-    plan: free   # free Postgres is deleted after 30 days; switch to basic-256mb (~$6/month) to keep data
+    plan: basic-256mb   # paid: free Postgres expires after 30 days and is then deleted
