@@ -484,14 +484,13 @@ input[type=range]{width:100%;accent-color:var(--voice)}
       <button class="linkbtn" type="button" id="handleBtn">Choose your @handle</button>
       <button class="btn" type="button" id="secureBtn">Secure with a passkey</button>
       <button class="linkbtn" type="button" id="signInBtn">Sign in with a passkey</button>
+      <button class="linkbtn" type="button" id="tgBtn" hidden>Phone alerts: off</button>
       <button class="linkbtn" type="button" id="signOutBtn" hidden>Sign out</button>
     </div>
     <button class="btn btn-primary" type="button" id="newSession">+ New chat</button>
     <button class="btn" type="button" id="marketBtn">◆ Marketplace</button>
-    <button class="btn" type="button" id="plansBtn">★ Plans · Pro & Sniper</button>
-    <button class="btn" type="button" id="tgBtn">🔔 Telegram alerts</button>
+    <button class="btn" type="button" id="plansBtn">★ Plans & fees</button>
     <button class="btn" type="button" id="adminBtn" hidden>⚑ Admin · access requests</button>
-    <button class="btn" type="button" id="liveBtn">● Real wallet <span class="mono" style="font-size:10px;opacity:.7">PILOT</span></button>
     <div class="list" id="chatsBox" hidden>
       <span class="eyebrow" style="padding:0 10px 6px">Chats</span>
       <div id="chats"></div>
@@ -501,7 +500,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
       <div id="agents"><div class="empty">No agents yet.</div></div>
     </div>
     <button class="btn btn-danger" type="button" id="panic">Pause all agents</button>
-    <div class="tiers" id="tiers"><span class="eyebrow">Model tiers</span></div>
+    <div class="tiers" id="tiers" hidden><span class="eyebrow">Model tiers</span></div>
   </aside>
 
   <main class="chat">
@@ -511,7 +510,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
       <button class="fuel" id="fuelBtn" type="button" hidden aria-label="AI fuel"><svg class="fuel-g" viewBox="0 0 48 30" aria-hidden="true"><path class="fg-track" d="M5 26 A19 19 0 0 1 43 26"/><path class="fg-fill" d="M5 26 A19 19 0 0 1 43 26" pathLength="100"/><text class="fg-l" x="1" y="29.5">E</text><text class="fg-l" x="43.5" y="29.5">F</text><line class="fg-needle" x1="24" y1="26" x2="24" y2="10"/><circle class="fg-hub" cx="24" cy="26" r="2.6"/></svg><span class="fuel-t"><b>AI FUEL</b><small id="fuelSub">…</small></span></button>
       <div class="screen-sw" id="screenSw" role="radiogroup" aria-label="Which money" hidden>
         <button type="button" role="radio" data-screen="real" aria-checked="true"><i class="sw-dot" aria-hidden="true"></i>Real money</button>
-        <button type="button" role="radio" data-screen="practice" aria-checked="false">Practice</button>
+        <button type="button" role="radio" data-screen="practice" aria-checked="false">Paper trading</button>
       </div>
       <span class="pill" id="modePill">PAPER MODE · NO REAL TRANSACTIONS</span>
     </div>
@@ -544,7 +543,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
       <div id="realTrades"></div>
     </div>
     <div class="p-sec only-practice">
-      <span class="eyebrow">Practice wallet</span>
+      <span class="eyebrow">Paper wallet</span>
       <span class="big" id="walletUsd">$0</span>
       <span class="mono" style="font-size:12px;color:var(--muted)" id="balances"></span>
     </div>
@@ -558,10 +557,14 @@ input[type=range]{width:100%;accent-color:var(--voice)}
       <div id="agentPerf"></div>
     </div>
     <div class="p-sec only-practice">
-      <span class="eyebrow">Positions by jacket</span>
+      <span class="eyebrow">Your positions</span>
       <div id="positions"><div class="empty" style="padding:0">No positions yet.</div></div>
     </div>
-    <div class="p-sec">
+    <div class="p-sec only-practice" id="paperTradeSec" hidden>
+      <span class="eyebrow">Recent paper trades</span>
+      <div id="paperTrades"></div>
+    </div>
+    <div class="p-sec" hidden>
       <span class="eyebrow">AI spend this session</span>
       <span class="mono" style="font-size:13px" id="spend">$0.0000 · 0 turns</span>
     </div>
@@ -574,6 +577,8 @@ input[type=range]{width:100%;accent-color:var(--voice)}
 
 <script src="outcry-local.js"></script>
 <script>
+/** Plain names for what a position is (the internal "jacket" categories). */
+const KIND = { memes: 'Memecoin', stocks: 'Stock', swaps: 'Crypto', launch: 'Your launch', strategies: 'Strategy', research: 'Research' };
 const J = { memes:['Memes','#F76FB0','#121426'], stocks:['Stocks','#8E2C48','#F3EFE4'], swaps:['Swaps','#2FA6E8','#121426'], launch:['Launch','#B5D93A','#121426'], strategies:['Strategies','#8B6CF6','#121426'], research:['Research','#C9A46C','#121426'] };
 const HAND = '<svg width="14" height="17" viewBox="0 0 40 48" fill="currentColor" aria-hidden="true"><rect x="7" y="6" width="6" height="24" rx="3"/><rect x="14" y="2" width="6" height="28" rx="3"/><rect x="21" y="3" width="6" height="27" rx="3"/><rect x="28" y="8" width="6" height="22" rx="3"/><rect x="7" y="20" width="27" height="24" rx="9"/><rect x="0" y="22" width="6" height="16" rx="3" transform="rotate(-28 3 30)"/></svg>';
 const RM = matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -607,7 +612,7 @@ function drawAccount(st) {
 }
 async function loadAccount() {
   try { drawAccount(await api('/api/auth/status')); } catch { /* ignore */ }
-  try { const me = await api('/api/me'); myHandle = me.user.handle || null; $('adminBtn').hidden = !me.isAdmin; tgState = me.telegram; $('tgBtn').textContent = me.telegram?.linked ? '🔔 Telegram alerts · on' : '🔔 Telegram alerts'; $('handleBtn').textContent = myHandle ? `@${myHandle} · change` : 'Choose your @handle'; } catch {}
+  try { const me = await api('/api/me'); myHandle = me.user.handle || null; $('adminBtn').hidden = !me.isAdmin; tgState = me.telegram; $('tgBtn').hidden = !me.telegram?.available; $('tgBtn').textContent = me.telegram?.linked ? 'Phone alerts: on' : 'Phone alerts: off'; $('handleBtn').textContent = myHandle ? `@${myHandle} · change` : 'Choose your @handle'; } catch {}
 }
 let myHandle = null;
 async function chooseHandle() {
@@ -665,7 +670,11 @@ function feed(text) {
 // ---------------- portfolio & agents ----------------
 async function loadPending() {
   try {
-    const list = (await api('/api/tickets')).filter(t => t.status === 'needs_confirmation' || t.status === 'needs_second_confirmation');
+    const all = await api('/api/tickets');
+    const done = all.filter(t => t.kind === 'order' && t.status === 'filled').sort((a, b) => b.updatedAt.localeCompare(a.updatedAt)).slice(0, 5);
+    $('paperTradeSec').hidden = !done.length;
+    $('paperTrades').innerHTML = done.map(t => { const l = t.legs[0]; const sym = String(l.asset).length > 12 ? String(l.asset).slice(0, 4) + '…' : l.asset; return `<div class="rh"><span>${l.side === 'buy' ? 'Bought' : 'Sold'} <b>${esc(sym)}</b>${t.legs.length > 1 ? ` +${t.legs.length - 1}` : ''}<small>${new Date(t.updatedAt).toLocaleString([], { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}${t.source?.type === 'agent' ? ' · agent' : ''}</small></span><span class="r">${usd(t.totalUsd)}<small>paper</small></span></div>`; }).join('');
+    const list = all.filter(t => t.status === 'needs_confirmation' || t.status === 'needs_second_confirmation');
     $('pendingSec').hidden = !list.length;
     $('pending').innerHTML = list.slice(-6).reverse().map(t => {
       const what = t.kind === 'launch' ? `LAUNCH $${esc(t.request.ticker)} · ${fmt(t.totalSol || 0)} SOL` : t.legs.map(l => `${l.side.toUpperCase()} ${esc(l.asset)}`).join(' + ') + ` · $${fmt(t.totalUsd)}`;
@@ -788,8 +797,8 @@ function obSteps(me, live) {
   const steps = [
     { id: 'handle', label: 'Name', done: !!me.user.handle, title: 'Pick your trader name', why: 'It goes on your badge, the leaderboard and your invite link.', cta: 'Pick a name', time: '10 sec', run: () => chooseHandle().then(refresh) },
     { id: 'passkey', label: 'Lock', done: !!secured, title: 'Lock your account', why: 'Use Face ID or your fingerprint instead of a password. It also signs you in on your other devices.', cta: 'Lock with Face ID', time: '20 sec', run: () => $('secureBtn').onclick() },
-    { id: 'trade', label: 'Practice', done: (me.portfolio?.positions || []).length > 0, title: 'Make a practice trade', why: `You have ${cash ? usd(cash) : 'free'} of practice money. Say your order like you'd say it out loud, then tap Sign & fill. Nothing real moves.`, cta: 'Buy $100 of SOL', time: '15 sec', run: () => send('Buy $100 of SOL') },
-    { id: 'agent', label: 'AI trader', done: obState.agents > 0, title: 'Build your AI trader', why: 'Tell it how to trade in plain words. It trades your practice money around the clock and you watch every move.', cta: 'Build my AI trader', time: '30 sec', run: () => send('Build me an AI trading agent') },
+    { id: 'trade', label: 'Paper trade', done: (me.portfolio?.positions || []).length > 0, title: 'Make a paper trade', why: `You have ${cash ? usd(cash) : 'free'} of pretend money for paper trading. Say your order like you'd say it out loud, then tap Sign & fill. Nothing real moves.`, cta: 'Buy $100 of SOL', time: '15 sec', run: () => send('Buy $100 of SOL') },
+    { id: 'agent', label: 'AI trader', done: obState.agents > 0, title: 'Build your AI trader', why: 'Tell it how to trade in plain words. It trades your paper money around the clock and you watch every move.', cta: 'Build my AI trader', time: '30 sec', run: () => send('Build me an AI trading agent') },
   ];
   if (live && live.enabled !== false) {
     const waiting = live.reasonCode === 'access' && live.access === 'pending';
@@ -881,7 +890,7 @@ async function refresh() {
     const p = me.portfolio;
     $('walletUsd').textContent = '$' + fmt(p.walletUsd);
     $('balances').textContent = Object.entries(p.balances).filter(([, v]) => v > 1e-9).map(([k, v]) => `${k} ${amt(v)}`).join(' · ');
-    $('positions').innerHTML = p.positions.length ? p.positions.map(x => `<div class="pos"><div class="pos-l"><i style="background:${(J[x.jacket] || J.swaps)[1]}"></i><div style="min-width:0"><div style="font-weight:500">${esc(x.symbol)}</div><div class="mono" style="font-size:11px;color:var(--muted)">${esc((J[x.jacket] || J.swaps)[0])}${x.note ? ' · ' + esc(x.note) : ''}</div></div></div><div class="pos-r"><div>$${fmt(x.valueUsd)}</div><div style="color:${x.pnlUsd >= 0 ? 'var(--up)' : 'var(--down)'}">${x.pnlUsd >= 0 ? '+' : ''}${fmt(x.pnlUsd)}</div></div></div>`).join('') : '<div class="empty" style="padding:0">No positions yet.</div>';
+    $('positions').innerHTML = p.positions.length ? p.positions.map(x => `<div class="pos"><div class="pos-l"><i style="background:${(J[x.jacket] || J.swaps)[1]}"></i><div style="min-width:0"><div style="font-weight:500">${esc(x.symbol)}</div><div class="mono" style="font-size:11px;color:var(--muted)">${esc(KIND[x.jacket] || 'Crypto')}${x.note ? ' · ' + esc(x.note) : ''}</div></div></div><div class="pos-r"><div>$${fmt(x.valueUsd)}</div><div style="color:${x.pnlUsd >= 0 ? 'var(--up)' : 'var(--down)'}">${x.pnlUsd >= 0 ? '+' : ''}${fmt(x.pnlUsd)}</div></div></div>`).join('') : '<div class="empty" style="padding:0">No positions yet.</div>';
     $('spend').textContent = `$${me.usage.usd.toFixed(4)} · ${me.usage.turns} model call${me.usage.turns === 1 ? '' : 's'}`;
   } catch (e) { /* ignore transient */ }
   try {
@@ -1256,8 +1265,11 @@ async function renderCards(body, cards, instant = false) {
 // ---------------- chat ----------------
 function metaLine(body, meta) {
   if (!meta) return;
+  // Keep replies clean: only show a notice when there is one (the out-of-fuel card covers that case).
+  if (!meta.notice || meta.outOfFuel) return;
   const m = document.createElement('span'); m.className = 'meta';
-  m.textContent = `${meta.tier} · ${meta.model}${meta.escalated ? ' · escalated' : ''} · $${meta.costUsd.toFixed(4)}${meta.notice ? ' · ' + meta.notice : ''}`;
+  m.textContent = meta.notice;
+  m.title = `${meta.tier} · ${meta.model} · $${meta.costUsd.toFixed(4)}`;
   body.appendChild(m);
 }
 const CHAT_KEY = 'outcry.chat';
@@ -1345,7 +1357,7 @@ function setScreen(next, quiet) {
   $('screenSw').querySelectorAll('[data-screen]').forEach(b => b.setAttribute('aria-checked', String(b.dataset.screen === next)));
   drawSugs();
   if (next === 'real') drawReal(true);
-  if (!quiet) toast(next === 'real' ? 'Real money: orders use your real wallet and need your approval' : 'Practice: paper money, nothing real moves');
+  if (!quiet) toast(next === 'real' ? 'Real money: orders use your real wallet and need your approval' : 'Paper trading: pretend money, nothing real moves');
 }
 $('screenSw').addEventListener('click', e => { const b = e.target.closest('[data-screen]'); if (b && b.dataset.screen !== screen) setScreen(b.dataset.screen); });
 $('screenSw').addEventListener('keydown', e => { if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') { e.preventDefault(); setScreen(screen === 'real' ? 'practice' : 'real'); $('screenSw').querySelector(`[data-screen="${screen}"]`).focus(); } });
@@ -1372,7 +1384,7 @@ async function drawReal(force) {
   $('realBal').textContent = ready && p ? [`SOL ${fmt(p.sol, 4)}`, usdc ? `USDC ${fmt(usdc.amount, 2)}` : ''].filter(Boolean).join(' · ') : (waiting ? "You're on the list for real money" : 'Not set up yet');
   const acts = ready
     ? `<button class="btn btn-primary btn-sm" type="button" data-ra="fund">+ Add money</button><button class="btn btn-sm" type="button" data-ra="withdraw">Withdraw</button><button class="btn btn-sm" type="button" data-ra="open">Wallet details</button>`
-    : waiting ? `<span class="real-note">We'll let you in soon. Practice works in the meantime.</span>`
+    : waiting ? `<span class="real-note">We'll let you in soon. Paper trading works in the meantime.</span>`
     : `<span class="real-note">Add money to start trading for real. Takes about 2 minutes: card, Apple Pay, or a transfer from an exchange.</span><button class="btn btn-primary btn-sm" type="button" data-ra="fund">Add money</button>`;
   $('realActs').innerHTML = acts;
   const toks = (p?.tokens || []).filter(t => (t.usd ?? 0) >= 0.01 || t.amount > 0);
@@ -1491,8 +1503,8 @@ $('agents').addEventListener('click', async (e) => {
 $('panic').onclick = async () => { try { await api('/api/panic', { method: 'POST' }); feed('All agents paused'); refresh(); } catch (e) { toast(e.message); } };
 
 function welcome() {
-  if (screen === 'real') return addAI(`<p><b style="color:var(--text)">Welcome to the floor.</b> You're on <b>real money</b>: orders here use your own Solana wallet, and every trade waits for your approval. Say what you want, like "buy $5 of SOL". Want to try things first? Switch to <b>Practice</b> at the top: same app, paper money.</p>`);
-  addAI(`<p><b style="color:var(--text)">Welcome to practice.</b> Your paper wallet holds 24 SOL and 2,480 USDC. Launch a token with a disclosed multi-wallet dev buy, place orders, describe an agent and watch it get built, or backtest an indicator strategy. Tap a suggestion or type your own order.</p>`);
+  if (screen === 'real') return addAI(`<p><b style="color:var(--text)">Welcome to the floor.</b> You're on <b>real money</b>: orders here use your own Solana wallet, and every trade waits for your approval. Say what you want, like "buy $5 of SOL". Want to try things first? Switch to <b>Paper trading</b> at the top: same app, pretend money.</p>`);
+  addAI(`<p><b style="color:var(--text)">Welcome to paper trading.</b> Your paper wallet holds 24 SOL and 2,480 USDC. Launch a token with a disclosed multi-wallet dev buy, place orders, describe an agent and watch it get built, or backtest an indicator strategy. Tap a suggestion or type your own order.</p>`);
 }
 
 // ---------------- agent performance ----------------
@@ -2018,7 +2030,7 @@ async function openFund(opts = {}) {
       const items = [
         { id: 'handle', label: 'Pick your trader name', done: !!me?.user.handle && s.reasonCode !== 'handle', why: 'Your real wallet is tied to your name.', cta: 'Pick a name', run: async () => { await chooseHandle(); } },
         ...(s.reasonCode === 'access' ? [{ id: 'access', label: 'Get your spot', done: false, pending: s.access === 'pending',
-          why: s.access === 'pending' ? "You're on the list. We let traders in every day; practice trading and AI traders already work." : 'Real money is opening to traders in waves. Join the list and we\'ll let you in.',
+          why: s.access === 'pending' ? "You're on the list. We let traders in every day; paper trading and AI traders already work." : 'Real money is opening to traders in waves. Join the list and we\'ll let you in.',
           cta: s.access === 'pending' ? "You're on the list" : 'Join the list', run: async () => { await api('/api/live/access', { method: 'POST', body: { note: '' } }); toast("You're on the list"); } }] : []),
         { id: 'passkey', label: 'Lock your account', done: !!secured, why: 'Every real trade and withdrawal is approved with Face ID or your fingerprint.', cta: 'Lock with Face ID', run: async () => { await $('secureBtn').onclick(); } },
         { id: 'wallet', label: 'Get your wallet and add money', done: false, why: 'One tap creates your own Solana wallet, then pay by card or send from an exchange.', cta: '', run: null },
@@ -2275,7 +2287,7 @@ async function openPlans() {
   try { d = await api('/api/plans'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
   let months = 1;
   const draw = () => {
-    body.innerHTML = `<div class="plans-top"><p class="meta" style="margin:0">Paper trading stays free. Plans lower your fee on real trades and unlock more real-money agents. Paid in USDC from your real wallet, signed with your passkey.${d.until ? ` Your plan runs until ${new Date(d.until).toLocaleDateString()}.` : ''}</p>
+    body.innerHTML = `<div class="plans-top"><p class="meta" style="margin:0">Real-money trading is free to start: you only pay a small fee on each trade. A plan lowers that fee and lets more AI agents trade for you. Paper trading is always free. Plans are paid in USDC from your real wallet, approved with your passkey.${d.until ? ` Your plan runs until ${new Date(d.until).toLocaleDateString()}.` : ''}</p>
       <div class="lw-seg plans-seg"><button type="button" data-m="1" class="${months === 1 ? 'on' : ''}">Monthly</button><button type="button" data-m="12" class="${months === 12 ? 'on' : ''}">Yearly · 2 months free</button></div></div>
       <div class="plans">${d.plans.map(p => `<div class="plan ${p.id === d.current ? 'cur' : ''} ${p.id === 'sniper' ? 'hot' : ''}">
         <span class="eyebrow">${esc(p.name)}</span>
@@ -2305,20 +2317,19 @@ $('marketBtn').onclick = () => openMarket();
 $('plansBtn').onclick = () => openPlans();
 $('adminBtn').onclick = () => openAdmin();
 let tgState = null;
-$('tgBtn').onclick = async () => {
-  if (tgState?.linked) {
-    if (!confirm('Turn off Telegram alerts?')) return;
-    await api('/api/telegram', { method: 'DELETE' }).catch(() => {});
-    toast('Telegram alerts off'); loadAccount(); return;
-  }
-  try {
-    const { url } = await api('/api/telegram/link', { method: 'POST' });
-    window.open(url, '_blank', 'noopener');
-    toast('Press Start in Telegram to connect');
-    setTimeout(loadAccount, 15_000);
-  } catch (e) { toast(e.message); }
+$('tgBtn').onclick = () => {
+  const { body, close } = sheet('Phone alerts');
+  const on = !!tgState?.linked;
+  body.innerHTML = `<div class="lw"><section class="lw-card">
+    <div class="lw-row"><b>Get a message on your phone when something happens</b>${on ? '<span class="lw-pill">On</span>' : ''}</div>
+    <span class="meta">A real trade fills, a withdrawal arrives, or one of your AI agents buys, sells or stops. Messages come through the free Telegram app, so you need Telegram on your phone.</span>
+    ${on ? '<button class="btn lw-go" type="button" data-tg="off">Turn phone alerts off</button>' : '<button class="btn btn-primary lw-go" type="button" data-tg="on">Connect Telegram</button><span class="meta" style="font-size:12px">Telegram opens; tap <b>Start</b> and you\'re done.</span>'}
+  </section></div>`;
+  body.querySelector('[data-tg]').onclick = async e => {
+    if (e.target.dataset.tg === 'off') { await api('/api/telegram', { method: 'DELETE' }).catch(() => {}); toast('Phone alerts off'); close(); loadAccount(); return; }
+    try { const { url } = await api('/api/telegram/link', { method: 'POST' }); window.open(url, '_blank', 'noopener'); toast('Tap Start in Telegram to finish'); close(); setTimeout(loadAccount, 15_000); } catch (err) { toast(err.message); }
+  };
 };
-$('liveBtn').onclick = () => openLive();
 $('handleBtn').onclick = () => chooseHandle();
 
 async function openRecap(agentId) {
@@ -2423,7 +2434,7 @@ function connectEvents() {
     if (!s) { s = await api('/api/session', { method: 'POST', body: { badge: 'LOUD', jacket: 'memes', residence: 'CH', ...(ref ? { ref } : {}) } }); token = s.token; if (mode === 'server') store.set(TOKEN_KEY, token); }
     $('badge').textContent = s.user.badge;
     loadAccount();
-    $('memberSub').textContent = 'Memes jacket · paper wallet';
+    $('memberSub').textContent = 'Paper + real trading';
     $('tiers').innerHTML = '<span class="eyebrow">Model tiers</span>' + s.llm.map(t => `<span><b>${t.tier}</b> ${esc(t.model)}</span>`).join('');
     if (mode === 'server') $('modePill').textContent = (s.market === 'real' ? 'PAPER MONEY · REAL MARKET' : 'PAPER MODE · SIMULATED MARKET') + (s.llm.some(t => t.live) ? ' · LIVE AI' : '');
     if (mode === 'server') {

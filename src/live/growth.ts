@@ -38,9 +38,9 @@ export interface Plan {
 }
 
 export const PLANS: Record<PlanId, Plan> = {
-  free: { id: "free", name: "Floor", priceUsd: 0, feeBps: 50, realAgents: 2, perks: ["Paper trading, unlimited", "Real trading at 0.5%", "2 real-money agents", "Volume tiers and referrals"] },
-  pro: { id: "pro", name: "Pro", priceUsd: 49, feeBps: 35, realAgents: 10, perks: ["Fee 0.35% (rebated)", "10 real-money agents", "Telegram alerts", "Stock spread alerts on Telegram", "Priority execution (soon)"] },
-  sniper: { id: "sniper", name: "Sniper", priceUsd: 199, feeBps: 25, realAgents: 25, perks: ["Fee 0.25% (rebated)", "25 real-money agents", "Everything in Pro", "Sub-second launch detection (soon)", "Jito bundles for snipes (soon)", "Real pump.fun launches with disclosed multi-wallet Jito bundles"] },
+  free: { id: "free", name: "Free", priceUsd: 0, feeBps: 50, realAgents: 2, perks: ["Real-money trading, 0.5% fee per trade", "Unlimited paper trading", "2 AI agents trading real money", "Fees drop as your volume grows"] },
+  pro: { id: "pro", name: "Pro", priceUsd: 49, feeBps: 35, realAgents: 10, perks: ["0.35% fee per trade", "10 AI agents trading real money", "Price-gap alerts on tokenized stocks", "Priority execution (soon)"] },
+  sniper: { id: "sniper", name: "Sniper", priceUsd: 199, feeBps: 25, realAgents: 25, perks: ["0.25% fee per trade", "25 AI agents trading real money", "Everything in Pro", "Sub-second launch detection (soon)", "Jito bundles for snipes (soon)", "Real pump.fun launches with disclosed multi-wallet Jito bundles"] },
 };
 
 export interface Subscription {
