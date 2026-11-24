@@ -57,6 +57,8 @@ export interface TokenInfo {
   name?: string;
   usdPrice?: number;
   decimals?: number;
+  /** Logo URL (from Jupiter's token list). */
+  icon?: string;
 }
 
 export interface PilotDeps {
@@ -182,7 +184,7 @@ export class LivePilot {
       reason: reason ?? null,
       reasonCode: this.blockedCode(userId, hasPasskey),
       wallet: w ? { address: w.address, createdAt: w.createdAt } : null,
-      limits: { maxOrderUsd: this.cfg.maxOrderUsd, maxDailyUsd: this.cfg.maxDailyUsd, spentTodayUsd: this.spentToday(userId), reserveSol: this.cfg.reserveSol, maxAgentUsd: this.cfg.maxAgentUsd ?? null },
+      limits: { maxOrderUsd: Number.isFinite(this.cfg.maxOrderUsd) ? this.cfg.maxOrderUsd : null, maxDailyUsd: Number.isFinite(this.cfg.maxDailyUsd) ? this.cfg.maxDailyUsd : null, spentTodayUsd: this.spentToday(userId), reserveSol: this.cfg.reserveSol, maxAgentUsd: this.cfg.maxAgentUsd ?? null },
       custody: w?.custody ?? (w ? "server" : null),
       tier: this.d.growth?.tierFor(userId) ?? null,
       referrals: this.d.growth?.referralStats(userId) ?? null,
@@ -217,15 +219,15 @@ export class LivePilot {
       this.d.rpc.solBalance(w.address),
       this.d.rpc.tokens(w.address).catch((e: Error) => ((tokenError = e.message.slice(0, 160)), [])),
     ]);
-    const info = toks.length ? await this.d.tokenInfo(toks.map((t) => t.mint)).catch(() => ({} as Record<string, TokenInfo>)) : {};
+    const info = await this.d.tokenInfo([SOL_MINT, ...toks.map((t) => t.mint)]).catch(() => ({} as Record<string, TokenInfo>));
     const solUsd = this.d.solUsd();
     const tokens = toks.map((t) => {
       const i = info[t.mint];
       if (i?.symbol) this.symbolCache.set(t.mint, i.symbol);
-      return { mint: t.mint, symbol: i?.symbol ?? short(t.mint), amount: t.amount, usd: i?.usdPrice !== undefined ? t.amount * i.usdPrice : null };
+      return { mint: t.mint, symbol: i?.symbol ?? short(t.mint), name: i?.name ?? null, icon: i?.icon ?? null, amount: t.amount, usd: i?.usdPrice !== undefined ? t.amount * i.usdPrice : null };
     }).sort((a, b) => (b.usd ?? 0) - (a.usd ?? 0));
     const totalUsd = sol * solUsd + tokens.reduce((s, t) => s + (t.usd ?? 0), 0);
-    return { address: w.address, sol, solUsd: sol * solUsd, tokens, tokenError, totalUsd, explorer: `https://solscan.io/account/${w.address}` };
+    return { address: w.address, sol, solUsd: sol * solUsd, solIcon: info[SOL_MINT]?.icon ?? null, tokens, tokenError, totalUsd, explorer: `https://solscan.io/account/${w.address}` };
   }
 
   spentToday(userId: string) {
@@ -322,9 +324,9 @@ export class LivePilot {
     if (req.side === "buy") {
       const usd = Number(req.usd);
       if (!(usd > 0)) throw new Error("How many dollars should go into this buy?");
-      if (usd > this.cfg.maxOrderUsd + 1e-9) throw new Error(`Pilot limit: $${this.cfg.maxOrderUsd} per buy`);
+      if (usd > this.cfg.maxOrderUsd + 1e-9) throw new Error(`Limit: $${this.cfg.maxOrderUsd} per buy`);
       const spent = this.spentToday(userId);
-      if (spent + usd > this.cfg.maxDailyUsd + 1e-9) throw new Error(`Pilot limit: $${this.cfg.maxDailyUsd} of buys per day ($${spent.toFixed(2)} used)`);
+      if (spent + usd > this.cfg.maxDailyUsd + 1e-9) throw new Error(`Limit: $${this.cfg.maxDailyUsd} of buys per day ($${spent.toFixed(2)} used)`);
       let amount: bigint, payAmount: number;
       if (base === "SOL") {
         payAmount = usd / solUsd;
@@ -384,7 +386,7 @@ export class LivePilot {
     if (q.used) throw new Error("This quote was already used");
     if (Date.now() > q.expiresAt) throw new Error("Quote expired, get a new one");
     if (this.busy.has(userId)) throw new Error("Another trade is still being sent");
-    if (q.side === "buy" && this.spentToday(userId) + q.usd > this.cfg.maxDailyUsd + 1e-9) throw new Error(`Pilot limit: $${this.cfg.maxDailyUsd} of buys per day`);
+    if (q.side === "buy" && this.spentToday(userId) + q.usd > this.cfg.maxDailyUsd + 1e-9) throw new Error(`Limit: $${this.cfg.maxDailyUsd} of buys per day`);
     q.used = true;
     this.busy.add(userId);
     const t: LiveTrade = {
@@ -740,8 +742,9 @@ export function pilotConfigFromEnv(env: Record<string, string | undefined>): Pil
   return {
     enabled: env.OUTCRY_LIVE_TRADING === "1",
     allowlist: String(env.OUTCRY_LIVE_ALLOWLIST ?? "").split(/[\s,]+/).map((h) => h.replace(/^@/, "").toLowerCase().trim()).filter(Boolean),
-    maxOrderUsd: Number(env.OUTCRY_LIVE_MAX_ORDER_USD ?? 25),
-    maxDailyUsd: Number(env.OUTCRY_LIVE_MAX_DAILY_USD ?? 100),
+    // No caps by default; set these to add a safety limit per buy / per day.
+    maxOrderUsd: env.OUTCRY_LIVE_MAX_ORDER_USD ? Number(env.OUTCRY_LIVE_MAX_ORDER_USD) : Infinity,
+    maxDailyUsd: env.OUTCRY_LIVE_MAX_DAILY_USD ? Number(env.OUTCRY_LIVE_MAX_DAILY_USD) : Infinity,
     reserveSol: Number(env.OUTCRY_LIVE_RESERVE_SOL ?? 0.01),
     // No per-agent cap unless set: the user decides how much an agent trades.
     maxAgentUsd: env.OUTCRY_LIVE_AGENT_MAX_USD ? Number(env.OUTCRY_LIVE_AGENT_MAX_USD) : undefined,

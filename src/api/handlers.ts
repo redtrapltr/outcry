@@ -616,7 +616,7 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     const a = own(app.agents.get(params.id!), uid, "Agent");
     if (app.marketplace.isCopy(a.id)) throw new HttpError(400, "Real money for copied agents comes later");
     if (a.real) throw new HttpError(400, `${a.spec.name} already trades real money`);
-    if (b.budgetUsd > maxAgentUsd) throw new HttpError(400, `Pilot limit: $${maxAgentUsd} per agent`);
+    if (b.budgetUsd > maxAgentUsd) throw new HttpError(400, `Limit: $${maxAgentUsd} per agent`);
     const plan = app.growth.planOf(uid);
     const realNow = app.agents.listForUser(uid).filter((x) => x.real && x.state !== "killed").length;
     if (realNow >= plan.realAgents) throw new HttpError(402, `Your ${plan.name} plan runs ${plan.realAgents} real-money agents at once. Stop one, or upgrade.`);

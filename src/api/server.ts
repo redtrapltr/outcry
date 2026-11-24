@@ -27,8 +27,8 @@ async function jupiterTokenInfo(mints: string[]): Promise<Record<string, TokenIn
   for (let i = 0; i < mints.length; i += 100) {
     const r = await fetch(`https://lite-api.jup.ag/tokens/v2/search?query=${mints.slice(i, i + 100).join(",")}`, { signal: AbortSignal.timeout(8_000) });
     if (!r.ok) continue;
-    for (const t of (await r.json()) as { id: string; symbol?: string; name?: string; decimals?: number; usdPrice?: number }[]) {
-      out[t.id] = { symbol: t.symbol ?? t.id.slice(0, 4), name: t.name, decimals: t.decimals, usdPrice: t.usdPrice };
+    for (const t of (await r.json()) as { id: string; symbol?: string; name?: string; decimals?: number; usdPrice?: number; icon?: string }[]) {
+      out[t.id] = { symbol: t.symbol ?? t.id.slice(0, 4), name: t.name, decimals: t.decimals, usdPrice: t.usdPrice, icon: /^https:\/\//.test(t.icon ?? "") ? t.icon : undefined };
     }
   }
   return out;
@@ -211,7 +211,7 @@ export async function buildServer(opts: ServerOptions = {}) {
     const refresh = async () => {
       const ref = process.env.JUPITER_REFERRAL_ACCOUNT?.trim();
       liveStatus = {
-        configured: true, enabled: pilotCfg.enabled, allowlist: pilotCfg.allowlist.length, maxOrderUsd: pilotCfg.maxOrderUsd, maxDailyUsd: pilotCfg.maxDailyUsd,
+        configured: true, enabled: pilotCfg.enabled, allowlist: pilotCfg.allowlist.length, maxOrderUsd: Number.isFinite(pilotCfg.maxOrderUsd) ? pilotCfg.maxOrderUsd : "none", maxDailyUsd: Number.isFinite(pilotCfg.maxDailyUsd) ? pilotCfg.maxDailyUsd : "none",
         turnkey: await turnkey.status(),
         outcryFee: ref ? { referralAccount: ref, bps: Math.min(255, Math.max(50, Number(process.env.JUPITER_REFERRAL_FEE_BPS ?? 50))), lastMissed: livePilot.referralMiss ?? null } : "off (set JUPITER_REFERRAL_ACCOUNT)",
       };
