@@ -307,6 +307,7 @@ body:not([data-screen]) .only-real{display:none !important}
 .rwz-claims{display:flex;flex-direction:column;border-top:1px solid var(--line);margin-top:4px}
 .rwz-claims div{display:flex;justify-content:space-between;padding:8px 0;font-size:14px;border-bottom:1px solid var(--line)}
 .rwz-claims div:last-child{border-bottom:0}.rwz-claims small{color:var(--muted);margin-left:6px}.rwz-claims a{color:var(--voice-text)}
+.adm-pay{display:flex;flex-direction:column;gap:6px;align-items:flex-end}.adm-pay input{width:200px;max-width:100%;background:var(--bg);border:1px solid var(--line2);border-radius:8px;padding:7px 9px;color:var(--text);font:12px var(--mono)}
 .rwz-how{list-style:none;counter-reset:s;margin:0;padding:0;display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
 .rwz-how li{counter-increment:s;display:flex;flex-direction:column;gap:4px;padding:14px;border-radius:14px;border:1px dashed var(--line2)}
 .rwz-how li::before{content:counter(s);width:24px;height:24px;border-radius:50%;background:var(--card2);display:grid;place-items:center;font:700 12px var(--mono);margin-bottom:4px}
@@ -582,7 +583,7 @@ input[type=range]{width:100%;accent-color:var(--voice)}
     <button class="btn rw-side" type="button" id="rewardsBtn">🎁 Rewards<span class="rw-badge" id="rwBadge" hidden></span></button>
     <button class="btn" type="button" id="marketBtn">◆ Marketplace</button>
     <button class="btn" type="button" id="plansBtn">★ Plans & fees</button>
-    <button class="btn" type="button" id="adminBtn" hidden>⚑ Admin · access requests</button>
+    <button class="btn" type="button" id="adminBtn" hidden>⚑ Admin</button>
     <div class="list" id="chatsBox" hidden>
       <span class="eyebrow" style="padding:0 10px 6px">Chats</span>
       <div id="chats"></div>
@@ -2487,13 +2488,28 @@ async function openLive(opts = {}) {
   if (opts.withdraw) body.querySelector('[data-wdopen]')?.click();
 }
 async function openAdmin() {
-  const { body } = sheet('Live access requests');
+  const { body } = sheet('Admin');
   const load = async () => {
-    let list;
-    try { list = await api('/api/admin/access'); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
-    body.innerHTML = list.length ? `<div class="lw"><div class="lw-card"><div class="lw-list">${list.map(r => `<div><span><b>@${esc(r.handle || '?')}</b> ${r.secured ? '<span class="lw-pill">passkey ✓</span>' : '<span class="lw-pill red">no passkey</span>'}<br><span class="meta">${new Date(r.at).toLocaleString()}${r.note ? ' · ' + esc(r.note) : ''}</span></span><span><button class="btn btn-sm" type="button" data-ok="${r.userId}">Approve</button> <button class="btn btn-sm" type="button" data-no="${r.userId}">Deny</button></span></div>`).join('')}</div></div></div>` : '<p class="meta">No pending requests.</p>';
+    let list = [], claims = [];
+    try { [list, claims] = await Promise.all([api('/api/admin/access'), api('/api/admin/claims')]); } catch (e) { body.innerHTML = `<p class="meta">${esc(e.message)}</p>`; return; }
+    body.innerHTML = `<div class="lw">
+      <section class="lw-card"><b>Reward payouts</b><span class="meta">Send each amount in USDC from your treasury wallet (e.g. Phantom) to the address shown, then paste the transaction signature.</span>
+        ${claims.length ? `<div class="lw-list">${claims.map(c => `<div><span><b>${usd(c.usd)}</b> to @${esc(c.handle || '?')}<br><span class="meta">${new Date(c.at).toLocaleString()} · referrals ${usd(c.referralUsd)}${c.rebateUsd > 0.005 ? ` · rebates ${usd(c.rebateUsd)}` : ''}</span><br><button class="linkbtn" type="button" data-copyaddr="${esc(c.address)}">${esc(c.address.slice(0, 6) + '…' + c.address.slice(-6))} · copy</button></span><span class="adm-pay"><input placeholder="Transaction signature" data-sig="${c.id}" aria-label="Transaction signature for ${usd(c.usd)} to @${esc(c.handle || '?')}"><button class="btn btn-sm btn-primary" type="button" data-paid="${c.id}">Mark paid</button></span></div>`).join('')}</div>` : '<span class="meta">No payouts waiting.</span>'}
+      </section>
+      <section class="lw-card"><b>Live access requests</b>
+        ${list.length ? `<div class="lw-list">${list.map(r => `<div><span><b>@${esc(r.handle || '?')}</b> ${r.secured ? '<span class="lw-pill">passkey ✓</span>' : '<span class="lw-pill red">no passkey</span>'}<br><span class="meta">${new Date(r.at).toLocaleString()}${r.note ? ' · ' + esc(r.note) : ''}</span></span><span><button class="btn btn-sm" type="button" data-ok="${r.userId}">Approve</button> <button class="btn btn-sm" type="button" data-no="${r.userId}">Deny</button></span></div>`).join('')}</div>` : '<span class="meta">No pending requests.</span>'}
+      </section></div>`;
   };
   body.addEventListener('click', async e => {
+    const cp = e.target.closest('[data-copyaddr]');
+    if (cp) { try { await navigator.clipboard.writeText(cp.dataset.copyaddr); toast('Address copied'); } catch { prompt('Address', cp.dataset.copyaddr); } return; }
+    const pd = e.target.closest('[data-paid]');
+    if (pd) {
+      const sig = body.querySelector(`[data-sig="${pd.dataset.paid}"]`).value.trim();
+      if (sig.length < 32) return toast('Paste the transaction signature first');
+      try { await api(`/api/admin/claims/${pd.dataset.paid}/paid`, { method: 'POST', body: { signature: sig } }); toast('Marked paid'); load(); } catch (err) { toast(err.message); }
+      return;
+    }
     const b = e.target.closest('[data-ok],[data-no]'); if (!b) return;
     try { await api(`/api/admin/access/${b.dataset.ok || b.dataset.no}`, { method: 'POST', body: { approve: !!b.dataset.ok } }); toast(b.dataset.ok ? 'Approved' : 'Denied'); load(); } catch (err) { toast(err.message); }
   });
