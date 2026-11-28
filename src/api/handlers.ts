@@ -14,6 +14,7 @@ import { blueprint } from "../orchestrator/tools-exec.js";
 import { redactAgent } from "../market/listings.js";
 import { DirtyMap } from "../core/dirtymap.js";
 import { FUEL_PACKS, fuelPack } from "../live/fuel.js";
+import { MIN_CLAIM_USD } from "../live/growth.js";
 
 export class HttpError extends Error {
   constructor(public status: number, message: string) {
@@ -555,6 +556,39 @@ export function createHandlers(app: Outcry, orch: Orchestrator, router: ModelRou
     app.audit.append(`user:${uid}`, b.approve ? "growth.access_approved" : "growth.access_denied", { userId: params.userId });
     app.bus.publish({ type: "agent.activity", userId: params.userId!, agentId: "", message: b.approve ? "You're approved for real-money trading. Open Real wallet to start." : "Your real-money access request wasn't approved yet." });
     return r;
+  });
+  // --- rewards: referrals + fee rebates, cashed out to the user's own wallet --------------
+  route("GET", "/api/rewards", ({ uid }) => {
+    const u = app.users.get(uid);
+    return {
+      handle: u.handle ?? null,
+      ...app.growth.referralStats(uid),
+      claimable: app.growth.claimable(uid),
+      minClaimUsd: MIN_CLAIM_USD,
+      tier: app.growth.tierFor(uid),
+      claims: app.growth.claimsOf(uid).slice(0, 10).map((c) => ({ id: c.id, usd: c.usd, at: c.at, status: c.status, signature: c.signature ?? null })),
+      hasWallet: !!opts.live?.status(uid, secured(uid)).wallet,
+    };
+  });
+  route("POST", "/api/rewards/claim", ({ uid }) => {
+    const w = opts.live?.status(uid, secured(uid)).wallet;
+    if (!w) throw new HttpError(409, "Open your real wallet first: rewards are paid into it");
+    let c;
+    try { c = app.growth.claim(uid, app.users.get(uid).handle, w.address); } catch (e) { throw new HttpError(400, (e as Error).message); }
+    app.audit.append(`user:${uid}`, "rewards.claimed", { id: c.id, usd: c.usd });
+    return c;
+  });
+  route("GET", "/api/admin/claims", ({ uid }) => {
+    if (!isAdmin(uid)) throw new HttpError(403, "Admins only");
+    return app.growth.pendingClaims();
+  });
+  route("POST", "/api/admin/claims/:id/paid", ({ uid, params, body }) => {
+    if (!isAdmin(uid)) throw new HttpError(403, "Admins only");
+    const b = z.object({ signature: z.string().min(32).max(120) }).parse(body);
+    const c = app.growth.markClaimPaid(params.id!, b.signature.trim());
+    app.audit.append(`user:${uid}`, "rewards.paid", { id: c.id, usd: c.usd, signature: c.signature });
+    app.bus.publish({ type: "agent.activity", userId: c.userId, agentId: "", message: `Your rewards payout of $${c.usd.toFixed(2)} was sent to your real wallet.` });
+    return c;
   });
   route("POST", "/api/live/wallet", ({ uid }) => live().createWallet(uid, secured(uid)));
   route("POST", "/api/live/quote", ({ uid, body }) => {

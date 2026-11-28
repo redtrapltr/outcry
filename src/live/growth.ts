@@ -59,6 +59,23 @@ export interface AccessRequest {
   decidedBy?: string;
 }
 
+export interface RewardClaim {
+  id: string;
+  userId: string;
+  handle?: string;
+  usd: number;
+  referralUsd: number;
+  rebateUsd: number;
+  address: string;
+  at: string;
+  status: "pending" | "paid";
+  paidAt?: string;
+  signature?: string;
+}
+
+/** Smallest cash-out, so network fees stay a rounding error. */
+export const MIN_CLAIM_USD = 5;
+
 export class Growth {
   /** userId -> trades (time, USD notional), last 30 days are what count. */
   readonly volume = new Map<string, { t: number; usd: number }[]>();
@@ -72,6 +89,10 @@ export class Growth {
   readonly subs = new Map<string, Subscription>();
   /** Pro perk: Telegram ping when an xStocks/Ondo gap passes the user's threshold. */
   readonly spreadAlerts = new Map<string, { minPct: number; sizeUsd: number; since: string }>();
+  /** Everything a referrer has ever earned (referralRewards is what's still unclaimed). */
+  readonly lifetimeRewards = new Map<string, number>();
+  /** Cash-out requests for rewards (referrals + fee rebates), paid by an admin to the user's Outcry wallet. */
+  readonly rewardClaims = new Map<string, RewardClaim>();
   /** AI fuel payments waiting for on-chain confirmation (withdrawal id -> order). Persisted so a restart can't lose one. */
   readonly fuelOrders = new Map<string, { userId: string; pack: string; mint: string | null; amount: number; used?: boolean; at: string }>();
   /** The user's active plan (free when none or expired). */
@@ -142,7 +163,10 @@ export class Growth {
         // Jupiter keeps 20% of the referral fee; the referrer gets a share of what Outcry keeps after the rebate.
         const outcryNet = (usd * chargedBps) / 10_000 * 0.8 - rebateUsd;
         referralUsd = Math.max(0, outcryNet * REFERRAL_SHARE);
-        if (referralUsd > 0) this.referralRewards.set(ref, (this.referralRewards.get(ref) ?? 0) + referralUsd);
+        if (referralUsd > 0) {
+          this.referralRewards.set(ref, (this.referralRewards.get(ref) ?? 0) + referralUsd);
+          this.lifetimeRewards.set(ref, (this.lifetimeRewards.get(ref) ?? 0) + referralUsd);
+        }
       }
     }
     return { rebateUsd, referralUsd };
@@ -156,9 +180,50 @@ export class Growth {
   }
 
   referralStats(userId: string) {
-    let invited = 0;
-    for (const r of this.referredBy.values()) if (r === userId) invited++;
-    return { invited, rewardsUsd: this.referralRewards.get(userId) ?? 0, sharePct: REFERRAL_SHARE * 100 };
+    let invited = 0, trading = 0;
+    for (const [friend, r] of this.referredBy) {
+      if (r !== userId) continue;
+      invited++;
+      if ((this.volume.get(friend) ?? []).length) trading++;
+    }
+    return { invited, trading, rewardsUsd: this.referralRewards.get(userId) ?? 0, lifetimeUsd: this.lifetimeRewards.get(userId) ?? 0, sharePct: REFERRAL_SHARE * 100 };
+  }
+
+  /** Unclaimed rewards: referral share plus volume-tier rebates. */
+  claimable(userId: string) {
+    const referralUsd = this.referralRewards.get(userId) ?? 0;
+    const rebateUsd = this.rebates.get(userId) ?? 0;
+    return { referralUsd, rebateUsd, usd: referralUsd + rebateUsd };
+  }
+
+  /** Move the unclaimed balance into a payout request to the user's own wallet. */
+  claim(userId: string, handle: string | undefined, address: string, now = new Date()) {
+    const c = this.claimable(userId);
+    if (c.usd + 1e-9 < MIN_CLAIM_USD) throw new Error(`You can cash out from $${MIN_CLAIM_USD} (you have $${c.usd.toFixed(2)})`);
+    const id = `rw_${now.getTime().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
+    const r: RewardClaim = { id, userId, handle, usd: c.usd, referralUsd: c.referralUsd, rebateUsd: c.rebateUsd, address, at: now.toISOString(), status: "pending" };
+    this.rewardClaims.set(id, r);
+    this.referralRewards.set(userId, 0);
+    this.rebates.set(userId, 0);
+    return r;
+  }
+
+  claimsOf(userId: string) {
+    return [...this.rewardClaims.values()].filter((c) => c.userId === userId).sort((a, b) => b.at.localeCompare(a.at));
+  }
+
+  pendingClaims() {
+    return [...this.rewardClaims.values()].filter((c) => c.status === "pending").sort((a, b) => a.at.localeCompare(b.at));
+  }
+
+  markClaimPaid(id: string, signature: string) {
+    const c = this.rewardClaims.get(id);
+    if (!c) throw new Error("No such payout");
+    c.status = "paid";
+    c.paidAt = nowIso();
+    c.signature = signature;
+    this.rewardClaims.set(id, c);
+    return c;
   }
 
   // --- live access -----------------------------------------------------------
